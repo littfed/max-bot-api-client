@@ -1,0 +1,36 @@
+# ── Stage 1: Build AI Bot Binary ───────────────────────────────────
+FROM golang:alpine AS builder
+
+ENV GOTOOLCHAIN=auto
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /src
+
+# Copy go module definitions
+COPY go.mod ./
+# If go.sum exists, copy it
+COPY go.su[m] ./
+
+# Copy full source tree (including certs/ with embedded Минцифры TLS certs)
+COPY . .
+
+# Build static binary without CGO
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" \
+    -o /bin/ai-bot ./cmd/ai-bot
+
+# ── Stage 2: Minimal Runtime Image ───────────────────────────────────
+FROM alpine:3.20
+
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /app
+
+# Run as unprivileged user
+RUN adduser -D -g '' appuser
+
+COPY --from=builder /bin/ai-bot /app/ai-bot
+
+USER appuser
+
+ENTRYPOINT ["/app/ai-bot"]

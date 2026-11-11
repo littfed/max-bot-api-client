@@ -1,0 +1,23 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Environment & credentials
+.env
+*.local
+
+# Test outputs & reports
+*.test
+*.out
+coverage.html
+reports/
+logs/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
