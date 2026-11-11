@@ -109,7 +109,7 @@ func main() {
 
 // loadTokenFromDotEnv reads MAX_BOT_TOKEN from local .env files.
 func loadTokenFromDotEnv() string {
-	paths := []string{".env", ".env.local", ".env.ai-bot"}
+	paths := []string{".env", ".env.local", ".env.ai-bot", "../../.env", "../.env"}
 	for _, p := range paths {
 		f, err := os.Open(p)
 		if err != nil {
