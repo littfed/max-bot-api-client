@@ -159,19 +159,7 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 	})
 
 	// Fallback for user messages sent when not inside a command or active FSM wizard state
-	b.OnMessage(func(c *bot.Context) error {
-		// Ignore if it's a command (handled by OnCommand/OnStart) or callback
-		if c.IsCommand() || c.Callback() != nil {
-			return nil
-		}
-
-		// If user has an active FSM state (e.g. QUIZ, ECOM, AI_STEP_CHAT), let state handlers take it
-		if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
-			if st, _ := fsmCtx.GetState(); st != "" {
-				return nil
-			}
-		}
-
+	b.OnIdleMessage(func(c *bot.Context) error {
 		userText := strings.TrimSpace(c.Text())
 		if userText == "" {
 			return nil

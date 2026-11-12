@@ -120,6 +120,11 @@ func (b *Bot) OnMessage(handler HandlerFunc) {
 	b.router.OnMessage(handler)
 }
 
+// OnIdleMessage registers a handler for plain incoming messages when no FSM state is active.
+func (b *Bot) OnIdleMessage(handler HandlerFunc) {
+	b.router.OnIdleMessage(handler)
+}
+
 // OnCallback registers a handler for any callback query.
 func (b *Bot) OnCallback(handler HandlerFunc) {
 	b.router.OnCallback(handler)

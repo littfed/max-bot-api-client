@@ -88,6 +88,28 @@ func (r *Router) OnMessage(handler HandlerFunc) {
 	}, handler)
 }
 
+// OnIdleMessage registers a handler for plain incoming messages when the user is not in any active FSM dialog state and not running a command.
+func (r *Router) OnIdleMessage(handler HandlerFunc) {
+	r.addRoute(func(c *Context) bool {
+		if c.Update == nil || c.Update.UpdateType != maxbot.UpdateTypeMessageCreated {
+			return false
+		}
+		if c.IsCommand() || c.Callback() != nil {
+			return false
+		}
+		val, ok := c.Get("fsm_context")
+		if ok && val != nil {
+			if sg, ok := val.(interface{ GetState() (string, error) }); ok {
+				st, err := sg.GetState()
+				if err == nil && st != "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, handler)
+}
+
 // OnCallback registers a handler for any callback query event.
 func (r *Router) OnCallback(handler HandlerFunc) {
 	r.addRoute(func(c *Context) bool {
