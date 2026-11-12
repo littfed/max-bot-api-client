@@ -22,6 +22,8 @@ import (
 )
 
 func main() {
+	loadDotEnv()
+
 	tokenFlag := flag.String("token", "", "MAX Bot API Token")
 	portFlag := flag.String("port", "8080", "HTTP Server Port for Webhooks and Mini App")
 	flag.Parse()
@@ -29,9 +31,6 @@ func main() {
 	token := strings.TrimSpace(*tokenFlag)
 	if token == "" {
 		token = strings.TrimSpace(os.Getenv("MAX_BOT_TOKEN"))
-	}
-	if token == "" {
-		token = loadTokenFromDotEnv()
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -81,17 +80,49 @@ func main() {
 	// 5. Setup AI Model Gateway Client (OpenAI-compatible)
 	aiGatewayURL := strings.TrimSpace(os.Getenv("AI_GATEWAY_URL"))
 	if aiGatewayURL == "" {
+		aiGatewayURL = strings.TrimSpace(os.Getenv("GMA_BASE_URL"))
+	}
+	if aiGatewayURL != "" && !strings.HasSuffix(aiGatewayURL, "/v1") {
+		aiGatewayURL = aiGatewayURL + "/v1"
+	}
+	if aiGatewayURL == "" {
 		aiGatewayURL = "http://localhost:8080/v1"
 	}
+
 	aiGatewayKey := strings.TrimSpace(os.Getenv("AI_GATEWAY_KEY"))
+	if aiGatewayKey == "" {
+		aiGatewayKey = strings.TrimSpace(os.Getenv("GMA_API_KEY"))
+	}
+
+	chatModel := strings.TrimSpace(os.Getenv("AI_CHAT_MODEL"))
+	if chatModel == "" {
+		chatModel = strings.TrimSpace(os.Getenv("GMA_CHAT_MODEL"))
+	}
+	if chatModel == "" {
+		chatModel = "@scout"
+	}
+
+	imageModel := strings.TrimSpace(os.Getenv("AI_IMAGE_MODEL"))
+	if imageModel == "" {
+		imageModel = strings.TrimSpace(os.Getenv("GMA_IMAGE_MODEL"))
+	}
+	if imageModel == "" {
+		imageModel = "flux"
+	}
+
+	voiceModel := strings.TrimSpace(os.Getenv("AI_VOICE_MODEL"))
+	if voiceModel == "" {
+		voiceModel = "whisper-1"
+	}
+
 	aiClient := ai.NewClient(aiGatewayURL, aiGatewayKey, ai.WithTimeout(30*time.Second))
 
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := aiClient.Ping(pingCtx); err == nil {
 		hood.SetAIAvailable(true)
-		logger.Info("AI Gateway успешно подключен", slog.String("url", aiGatewayURL))
+		logger.Info("AI Gateway успешно подключен", slog.String("url", aiGatewayURL), slog.String("chat_model", chatModel))
 	} else {
-		logger.Info("AI Gateway оффлайн или не запущен при старте (AI раздел скрыт из меню)", slog.String("url", aiGatewayURL))
+		logger.Info("AI Gateway оффлайн или не запущен при старте (AI раздел скрыт из меню)", slog.String("url", aiGatewayURL), slog.Any("error", err))
 	}
 	pingCancel()
 
@@ -110,9 +141,9 @@ func main() {
 	RegisterWebappScenario(b, hood, httpMux, token, *portFlag)
 	RegisterGuardScenario(b, hood, client)
 	RegisterAIScenario(b, hood, aiClient, AIConfig{
-		ChatModel:  os.Getenv("AI_CHAT_MODEL"),
-		ImageModel: os.Getenv("AI_IMAGE_MODEL"),
-		VoiceModel: os.Getenv("AI_VOICE_MODEL"),
+		ChatModel:  chatModel,
+		ImageModel: imageModel,
+		VoiceModel: voiceModel,
 	})
 
 	// Telemetry stats command
@@ -211,15 +242,13 @@ func registerBaseTechCards(h *HoodEngine) {
 	})
 }
 
-func loadTokenFromDotEnv() string {
+func loadDotEnv() {
 	paths := []string{".env", "../../.env", "../.env"}
 	for _, p := range paths {
 		file, err := os.Open(p)
 		if err != nil {
 			continue
 		}
-		defer file.Close()
-
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
@@ -229,10 +258,10 @@ func loadTokenFromDotEnv() string {
 			parts := strings.SplitN(line, "=", 2)
 			key := strings.TrimSpace(parts[0])
 			val := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
-			if key == "MAX_BOT_TOKEN" && val != "" {
-				return val
+			if os.Getenv(key) == "" && val != "" {
+				_ = os.Setenv(key, val)
 			}
 		}
+		_ = file.Close()
 	}
-	return ""
 }
