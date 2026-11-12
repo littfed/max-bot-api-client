@@ -14,7 +14,9 @@ bin/
 *.test
 *.out
 coverage.html
-reports/
+reports/*
+!reports/audit/
+internal/livetest/reports/
 logs/
 
 # IDEs

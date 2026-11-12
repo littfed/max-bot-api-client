@@ -131,6 +131,7 @@ func loadTokenFromDotEnv() string {
 				}
 			}
 		}
+		_ = scanner.Err()
 		_ = f.Close()
 	}
 	return ""
