@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -33,7 +34,14 @@ func main() {
 		token = strings.TrimSpace(os.Getenv("MAX_BOT_TOKEN"))
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	_ = os.MkdirAll("logs", 0755)
+	var logOutput io.Writer = os.Stdout
+	if logFile, err := os.OpenFile("logs/showcase-bot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		defer logFile.Close()
+		logOutput = io.MultiWriter(os.Stdout, logFile)
+	}
+
+	logger := slog.New(slog.NewTextHandler(logOutput, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 
@@ -74,6 +82,7 @@ func main() {
 
 	b := bot.NewWithClient(client, bot.WithLogger(logger))
 	b.Use(bot.Recovery(logger))
+	b.Use(bot.Logger(logger))
 	b.Use(fsm.Middleware(fsmStorage))
 	b.Use(telemetry.Middleware(collector))
 
@@ -99,7 +108,7 @@ func main() {
 		chatModel = strings.TrimSpace(os.Getenv("GMA_CHAT_MODEL"))
 	}
 	if chatModel == "" {
-		chatModel = "@scout"
+		chatModel = "gemini-2.5-flash"
 	}
 
 	imageModel := strings.TrimSpace(os.Getenv("AI_IMAGE_MODEL"))
@@ -107,17 +116,20 @@ func main() {
 		imageModel = strings.TrimSpace(os.Getenv("GMA_IMAGE_MODEL"))
 	}
 	if imageModel == "" {
-		imageModel = "flux"
+		imageModel = "gemini-2.5-flash-image"
 	}
 
 	voiceModel := strings.TrimSpace(os.Getenv("AI_VOICE_MODEL"))
 	if voiceModel == "" {
-		voiceModel = "whisper-1"
+		voiceModel = strings.TrimSpace(os.Getenv("GMA_VOICE_MODEL"))
+	}
+	if voiceModel == "" {
+		voiceModel = "scout-audio"
 	}
 
 	aiClient := ai.NewClient(aiGatewayURL, aiGatewayKey, ai.WithTimeout(30*time.Second))
 
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := aiClient.Ping(pingCtx); err == nil {
 		hood.SetAIAvailable(true)
 		logger.Info("AI Gateway успешно подключен", slog.String("url", aiGatewayURL), slog.String("chat_model", chatModel))
@@ -134,7 +146,7 @@ func main() {
 
 	// 7. Register Core Routes, Menu & Scenarios
 	hood.RegisterRoutes(b.Router())
-	RegisterMenuRoutes(b, hood)
+	RegisterMenuRoutes(b, hood, aiClient)
 	RegisterEcomScenario(b, hood, paymentRouter)
 	RegisterBookingScenario(b, hood)
 	RegisterQuizScenario(b, hood)

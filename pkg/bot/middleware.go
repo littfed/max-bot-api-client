@@ -43,6 +43,11 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 				username = sender.Username
 			}
 
+			cbPayload := ""
+			if cb := c.Callback(); cb != nil {
+				cbPayload = cb.Payload
+			}
+
 			err := next(c)
 			duration := time.Since(start)
 
@@ -51,6 +56,7 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 					slog.Int64("user_id", senderID),
 					slog.String("username", username),
 					slog.String("text", c.Text()),
+					slog.String("payload", cbPayload),
 					slog.Duration("duration", duration),
 					slog.Any("error", err),
 				)
@@ -59,6 +65,7 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 					slog.Int64("user_id", senderID),
 					slog.String("username", username),
 					slog.String("text", c.Text()),
+					slog.String("payload", cbPayload),
 					slog.Duration("duration", duration),
 				)
 			}

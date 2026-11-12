@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
@@ -51,7 +53,12 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 }
 
 // RegisterMenuRoutes installs main menu command and callback handlers.
-func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine) {
+func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
+	var aiCli *ai.Client
+	if len(aiClient) > 0 {
+		aiCli = aiClient[0]
+	}
+
 	sendMenu := func(c *bot.Context) error {
 		userID := int64(0)
 		userName := "Гость"
@@ -149,5 +156,56 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine) {
 		_, err := c.ReplyKeyboard(infoText, kb)
 		_ = c.AnswerCallback(nil)
 		return err
+	})
+
+	// Fallback for user messages sent when not inside a command or active FSM wizard state
+	b.OnMessage(func(c *bot.Context) error {
+		// Ignore if it's a command (handled by OnCommand/OnStart) or callback
+		if c.IsCommand() || c.Callback() != nil {
+			return nil
+		}
+
+		// If user has an active FSM state (e.g. QUIZ, ECOM, AI_STEP_CHAT), let state handlers take it
+		if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
+			if st, _ := fsmCtx.GetState(); st != "" {
+				return nil
+			}
+		}
+
+		userText := strings.TrimSpace(c.Text())
+		if userText == "" {
+			return nil
+		}
+
+		userID := int64(0)
+		if sender := c.Sender(); sender != nil {
+			userID = sender.UserID
+		}
+
+		// If AI is available and configured, answer as smart assistant!
+		if hood.IsAIAvailable() && aiCli != nil {
+			_ = c.Typing()
+			chatReq := &ai.ChatRequest{
+				Model: "gemini-2.5-flash",
+				Messages: []ai.ChatMessage{
+					{Role: ai.RoleSystem, Content: aiSystemPrompt},
+					{Role: ai.RoleUser, Content: userText},
+				},
+			}
+			chatResp, err := aiCli.Chat(c.Ctx(), chatReq)
+			if err == nil && chatResp.Content != "" {
+				kb := maxbot.NewInlineKeyboard().
+					Row(
+						maxbot.NewCallbackButton("💬 Начать диалог с памятью", "ai:chat:start"),
+						maxbot.NewCallbackButton("🛍️ Главное меню", "nav:menu"),
+					)
+				formatted := hood.Format(userID, chatResp.Content, "ai_chat")
+				_, rErr := c.ReplyKeyboard(formatted, kb)
+				return rErr
+			}
+		}
+
+		// Otherwise show main menu
+		return sendMenu(c)
 	})
 }

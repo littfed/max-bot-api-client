@@ -234,6 +234,12 @@ func (c *Context) Command() (string, string) {
 	return strings.ToLower(cmd), args
 }
 
+// IsCommand returns true if the incoming message is a slash command.
+func (c *Context) IsCommand() bool {
+	cmd, _ := c.Command()
+	return cmd != ""
+}
+
 // StartPayload extracts the start parameter from bot_started or "/start <payload>".
 func (c *Context) StartPayload() string {
 	if c.Update != nil && c.Update.Payload != "" {
