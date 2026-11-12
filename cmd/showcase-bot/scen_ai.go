@@ -472,12 +472,31 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		sttLatency := time.Duration(0)
 
 		if err != nil {
+			// Try fallback STT models if primary model fails
+			for _, fbModel := range []string{"Fanar-Aura-STT-LF-1", "whisper-1"} {
+				if fbModel != config.VoiceModel {
+					fbResp, fbErr := aiClient.TranscribeAudio(c.Ctx(), &ai.AudioRequest{
+						AudioBytes: audioBytes,
+						Filename:   filename,
+						Model:      fbModel,
+					})
+					if fbErr == nil && strings.TrimSpace(fbResp.Text) != "" {
+						audioResp = fbResp
+						err = nil
+						break
+					}
+				}
+			}
+		}
+
+		if err != nil {
 			if filename == "demo_voice.wav" {
 				transcribedText = "Привет! Расскажи о возможностях бота и мессенджера MAX."
 				sttLatency = 120 * time.Millisecond
 			} else {
-				errText := fmt.Sprintf("⚠️ **Ошибка распознавания речи:** %s\n\nПопробуйте записать аудио еще раз.", err.Error())
+				errText := fmt.Sprintf("⚠️ **Распознавание речи:**\n\nАудиосообщение успешно получено (размер: %d байт), но внешний STT-шлюз вернул ошибку транскрибации:\n`%s`\n\nПопробуйте записать аудио еще раз или нажмите кнопку ниже для мгновенного демо-теста:", len(audioBytes), err.Error())
 				kb := maxbot.NewInlineKeyboard().
+					Row(maxbot.NewCallbackButton("🎙️ Протестировать демо-запись", "ai:voice:demo")).
 					Row(maxbot.NewCallbackButton("🔄 Попробовать снова", "ai:voice:start")).
 					Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 				_, rErr := c.ReplyKeyboard(errText, kb)
@@ -600,7 +619,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 	// Handle Voice / Audio in AI_STEP_VOICE state
 	b.OnState("AI_STEP_VOICE", func(c *bot.Context) error {
-		audioBytes, filename, found := extractAudioAttachmentBytes(c.Message())
+		audioBytes, filename, found := extractAudioAttachmentBytes(c)
 		if found {
 			return processVoiceAudio(c, audioBytes, filename)
 		}
@@ -765,6 +784,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 		return deliverVoiceMessage(c, textToSpeak, "Голосовое сообщение по вашему тексту")
 	})
+
+	// 8. Global Voice / Audio handler for speech recognition anywhere in the bot!
+	b.OnAudio(func(c *bot.Context) error {
+		audioBytes, filename, found := extractAudioAttachmentBytes(c)
+		if found && len(audioBytes) > 0 {
+			return processVoiceAudio(c, audioBytes, filename)
+		}
+		_, err := c.Reply("🎙️ Аудиосообщение получено, но не удалось извлечь звуковой поток. Попробуйте еще раз.")
+		return err
+	})
 }
 
 // Helpers for chat history and media resolution
@@ -824,21 +853,34 @@ func downloadMediaBytes(ctx context.Context, u string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func extractAudioAttachmentBytes(msg *maxbot.Message) ([]byte, string, bool) {
+func extractAudioAttachmentBytes(c *bot.Context) ([]byte, string, bool) {
+	if c == nil {
+		return nil, "", false
+	}
+	msg := c.Message()
 	if msg == nil {
 		return nil, "", false
 	}
 	for _, att := range msg.Body.Attachments {
-		if att.Type == maxbot.UploadTypeAudio || att.Type == "voice" || att.Type == "audio" {
+		if att.Type == maxbot.UploadTypeAudio || att.Type == "voice" || att.Type == "audio" || att.Type == "file" {
 			if pMap, ok := att.Payload.(map[string]any); ok {
-				if u, ok := pMap["url"].(string); ok && u != "" {
-					resp, err := http.Get(u)
-					if err == nil {
-						defer resp.Body.Close()
-						b, err := io.ReadAll(resp.Body)
-						if err == nil {
+				var u string
+				for _, key := range []string{"url", "download_url", "link", "file_url"} {
+					if val, ok := pMap[key].(string); ok && val != "" {
+						u = val
+						break
+					}
+				}
+				if u != "" {
+					if c.Client() != nil {
+						b, err := c.Client().DownloadFile(c.Ctx(), u)
+						if err == nil && len(b) > 0 {
 							return b, "voice.ogg", true
 						}
+					}
+					b, err := downloadMediaBytes(c.Ctx(), u)
+					if err == nil && len(b) > 0 {
+						return b, "voice.ogg", true
 					}
 				}
 			}

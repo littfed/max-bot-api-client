@@ -88,6 +88,17 @@ func (r *Router) OnMessage(handler HandlerFunc) {
 	}, handler)
 }
 
+// OnAudio registers a handler for messages containing audio/voice attachments.
+func (r *Router) OnAudio(handler HandlerFunc) {
+	r.addRoute(func(c *Context) bool {
+		if c.Update == nil || c.Update.UpdateType != maxbot.UpdateTypeMessageCreated {
+			return false
+		}
+		_, hasAudio := c.AudioAttachment()
+		return hasAudio
+	}, handler)
+}
+
 // OnIdleMessage registers a handler for plain incoming messages when the user is not in any active FSM dialog state and not running a command.
 func (r *Router) OnIdleMessage(handler HandlerFunc) {
 	r.addRoute(func(c *Context) bool {
@@ -95,6 +106,9 @@ func (r *Router) OnIdleMessage(handler HandlerFunc) {
 			return false
 		}
 		if c.IsCommand() || c.Callback() != nil {
+			return false
+		}
+		if _, hasAudio := c.AudioAttachment(); hasAudio {
 			return false
 		}
 		val, ok := c.Get("fsm_context")

@@ -42,10 +42,19 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 				senderID = sender.UserID
 				username = sender.Username
 			}
+			if senderID == 0 && c.Update != nil && c.Update.Message != nil && c.Update.Message.Sender != nil {
+				senderID = c.Update.Message.Sender.UserID
+				username = c.Update.Message.Sender.Username
+			}
 
 			cbPayload := ""
 			if cb := c.Callback(); cb != nil {
 				cbPayload = cb.Payload
+			}
+
+			updateType := ""
+			if c.Update != nil {
+				updateType = c.Update.UpdateType
 			}
 
 			err := next(c)
@@ -53,6 +62,7 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 
 			if err != nil {
 				logger.Error("update handled with error",
+					slog.String("type", updateType),
 					slog.Int64("user_id", senderID),
 					slog.String("username", username),
 					slog.String("text", c.Text()),
@@ -62,6 +72,7 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 				)
 			} else {
 				logger.Info("update handled",
+					slog.String("type", updateType),
 					slog.Int64("user_id", senderID),
 					slog.String("username", username),
 					slog.String("text", c.Text()),

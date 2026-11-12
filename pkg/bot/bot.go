@@ -165,6 +165,11 @@ func (b *Bot) OnBotRemoved(handler HandlerFunc) {
 	b.router.OnBotRemoved(handler)
 }
 
+// OnAudio registers a handler for incoming audio/voice messages.
+func (b *Bot) OnAudio(handler HandlerFunc) {
+	b.router.OnAudio(handler)
+}
+
 // OnAny registers a fallback handler matching any incoming update.
 func (b *Bot) OnAny(handler HandlerFunc) {
 	b.router.OnAny(handler)
@@ -172,6 +177,8 @@ func (b *Bot) OnAny(handler HandlerFunc) {
 
 // ProcessUpdate handles a single update (useful for both Long Polling and Webhook endpoints).
 func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
+	raw, _ := json.Marshal(u)
+	b.logger.Info("incoming update", slog.String("type", u.UpdateType), slog.String("raw", string(raw)))
 	c := NewContext(ctx, b.client, u)
 	return b.router.Handle(c)
 }

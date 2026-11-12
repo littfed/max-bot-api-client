@@ -577,3 +577,25 @@ func (c *Client) SetCommands(ctx context.Context, commands []BotCommand) error {
 	}
 	return c.execute(req, nil)
 }
+
+// HTTPClient returns the internal http.Client configured with Russian CA certificates and timeout.
+func (c *Client) HTTPClient() *http.Client {
+	return c.httpClient
+}
+
+// DownloadFile downloads binary data from a URL using the client's TLS configuration.
+func (c *Client) DownloadFile(ctx context.Context, fileURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("unexpected status code %d downloading %s", resp.StatusCode, fileURL)
+	}
+	return io.ReadAll(resp.Body)
+}

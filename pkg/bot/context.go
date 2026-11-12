@@ -87,12 +87,32 @@ func (c *Context) Text() string {
 	return msg.Body.Text
 }
 
+// AudioAttachment returns the first audio attachment from the message, if present.
+func (c *Context) AudioAttachment() (*maxbot.Attachment, bool) {
+	msg := c.Message()
+	if msg == nil {
+		return nil, false
+	}
+	for _, att := range msg.Body.Attachments {
+		if att.Type == maxbot.UploadTypeAudio || att.Type == "voice" || att.Type == "audio" {
+			return &att, true
+		}
+	}
+	return nil, false
+}
+
 // Sender returns the User who triggered the update.
 func (c *Context) Sender() *maxbot.User {
 	if c.Update == nil {
 		return nil
 	}
-	if c.Update.User != nil {
+	if c.Update.Callback != nil && c.Update.Callback.User != nil && c.Update.Callback.User.UserID != 0 {
+		return c.Update.Callback.User
+	}
+	if c.Update.Message != nil && c.Update.Message.Sender != nil && c.Update.Message.Sender.UserID != 0 {
+		return c.Update.Message.Sender
+	}
+	if c.Update.User != nil && c.Update.User.UserID != 0 {
 		return c.Update.User
 	}
 	if c.Update.Callback != nil && c.Update.Callback.User != nil {
@@ -101,11 +121,11 @@ func (c *Context) Sender() *maxbot.User {
 	if c.Update.Message != nil && c.Update.Message.Sender != nil {
 		return c.Update.Message.Sender
 	}
-	return nil
+	return c.Update.User
 }
 
 // Recipient automatically derives the target recipient to reply to.
-// In group chats/channels, it targets the chat ID. In 1-on-1 dialogs, it targets the user ID.
+// In group chats/channels, it targets the chat ID. In 1-on-1 dialogs, it targets the user ID of the sender.
 func (c *Context) Recipient() (maxbot.Recipient, error) {
 	if c.Update == nil {
 		return nil, fmt.Errorf("update is nil")
@@ -116,19 +136,24 @@ func (c *Context) Recipient() (maxbot.Recipient, error) {
 		return maxbot.ToChat(c.Update.ChatID), nil
 	}
 
-	// 2. From message recipient details
-	if msg := c.Message(); msg != nil && msg.Recipient != nil {
-		if msg.Recipient.ChatID != 0 {
-			return maxbot.ToChat(msg.Recipient.ChatID), nil
-		}
-		if msg.Recipient.UserID != 0 {
-			return maxbot.ToUser(msg.Recipient.UserID), nil
-		}
+	// 2. If message was sent in a group chat or channel, reply to that chat
+	if msg := c.Message(); msg != nil && msg.Recipient != nil && msg.Recipient.ChatID != 0 {
+		return maxbot.ToChat(msg.Recipient.ChatID), nil
 	}
 
-	// 3. Fallback to sender user_id
+	// 3. In 1-on-1 dialogs, always reply to the sender
 	if sender := c.Sender(); sender != nil && sender.UserID != 0 {
 		return maxbot.ToUser(sender.UserID), nil
+	}
+
+	// 4. From Callback user
+	if cb := c.Callback(); cb != nil && cb.User != nil && cb.User.UserID != 0 {
+		return maxbot.ToUser(cb.User.UserID), nil
+	}
+
+	// 5. Fallback from message recipient if sender is omitted
+	if msg := c.Message(); msg != nil && msg.Recipient != nil && msg.Recipient.UserID != 0 {
+		return maxbot.ToUser(msg.Recipient.UserID), nil
 	}
 
 	return nil, fmt.Errorf("cannot deduce recipient from update")
