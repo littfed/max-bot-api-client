@@ -22,9 +22,10 @@ type TechCard struct {
 
 // HoodEngine manages "Under-The-Hood" technical cards and developer mode toggling.
 type HoodEngine struct {
-	cards   map[string]TechCard
-	devMode map[int64]bool
-	mu      sync.RWMutex
+	cards       map[string]TechCard
+	devMode     map[int64]bool
+	aiAvailable bool
+	mu          sync.RWMutex
 }
 
 // NewHoodEngine creates a new Under-The-Hood explanation manager.
@@ -33,6 +34,20 @@ func NewHoodEngine() *HoodEngine {
 		cards:   make(map[string]TechCard),
 		devMode: make(map[int64]bool),
 	}
+}
+
+// SetAIAvailable sets whether AI services are currently available.
+func (h *HoodEngine) SetAIAvailable(avail bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.aiAvailable = avail
+}
+
+// IsAIAvailable returns true if AI features are enabled and reachable.
+func (h *HoodEngine) IsAIAvailable() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.aiAvailable
 }
 
 // Register adds or updates a technical card.

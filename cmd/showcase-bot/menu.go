@@ -15,7 +15,7 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 		devStatus = "ВКЛ 🟢"
 	}
 
-	return maxbot.NewInlineKeyboard().
+	kb := maxbot.NewInlineKeyboard().
 		Row(
 			maxbot.NewCallbackButton("🛍️ 1. Магазин & СБП Checkout", "scen:ecom"),
 		).
@@ -30,15 +30,24 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 		).
 		Row(
 			maxbot.NewCallbackButton("🛡️ 5. Модерация & Капча-гейт", "scen:guard"),
-		).
-		Row(
-			maxbot.NewCallbackButton(fmt.Sprintf("🛠 Режим разработчика: %s", devStatus), "nav:toggle_dev"),
-			maxbot.NewCallbackButton("📊 Метрики", "nav:stats"),
-		).
+		)
+
+	if hood.IsAIAvailable() {
+		kb.Row(
+			maxbot.NewCallbackButton("✨ 6. Искусственный Интеллект (LLM / Image / Voice)", "scen:ai"),
+		)
+	}
+
+	kb.Row(
+		maxbot.NewCallbackButton(fmt.Sprintf("🛠 Режим разработчика: %s", devStatus), "nav:toggle_dev"),
+		maxbot.NewCallbackButton("📊 Метрики", "nav:stats"),
+	).
 		Row(
 			maxbot.NewCallbackButton("🔄 Сбросить сессию", "nav:reset"),
 			maxbot.NewCallbackButton("ℹ️ О витрине", "nav:info"),
 		)
+
+	return kb
 }
 
 // RegisterMenuRoutes installs main menu command and callback handlers.

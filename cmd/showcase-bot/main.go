@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
@@ -77,13 +78,30 @@ func main() {
 	b.Use(fsm.Middleware(fsmStorage))
 	b.Use(telemetry.Middleware(collector))
 
-	// 5. Setup HTTP Server (Webhooks, Mini App, Metrics)
+	// 5. Setup AI Model Gateway Client (OpenAI-compatible)
+	aiGatewayURL := strings.TrimSpace(os.Getenv("AI_GATEWAY_URL"))
+	if aiGatewayURL == "" {
+		aiGatewayURL = "http://localhost:8080/v1"
+	}
+	aiGatewayKey := strings.TrimSpace(os.Getenv("AI_GATEWAY_KEY"))
+	aiClient := ai.NewClient(aiGatewayURL, aiGatewayKey, ai.WithTimeout(30*time.Second))
+
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if err := aiClient.Ping(pingCtx); err == nil {
+		hood.SetAIAvailable(true)
+		logger.Info("AI Gateway успешно подключен", slog.String("url", aiGatewayURL))
+	} else {
+		logger.Info("AI Gateway оффлайн или не запущен при старте (AI раздел скрыт из меню)", slog.String("url", aiGatewayURL))
+	}
+	pingCancel()
+
+	// 6. Setup HTTP Server (Webhooks, Mini App, Metrics)
 	httpMux := http.NewServeMux()
 	httpMux.Handle("/metrics", promExporter.Handler())
 	httpMux.HandleFunc("/webhook/payments/tbank", paymentRouter.HTTPHandler("tbank"))
 	httpMux.HandleFunc("/webhook/payments/yookassa", paymentRouter.HTTPHandler("yookassa"))
 
-	// 6. Register Core Routes, Menu & Scenarios
+	// 7. Register Core Routes, Menu & Scenarios
 	hood.RegisterRoutes(b.Router())
 	RegisterMenuRoutes(b, hood)
 	RegisterEcomScenario(b, hood, paymentRouter)
@@ -91,6 +109,11 @@ func main() {
 	RegisterQuizScenario(b, hood)
 	RegisterWebappScenario(b, hood, httpMux, token, *portFlag)
 	RegisterGuardScenario(b, hood, client)
+	RegisterAIScenario(b, hood, aiClient, AIConfig{
+		ChatModel:  os.Getenv("AI_CHAT_MODEL"),
+		ImageModel: os.Getenv("AI_IMAGE_MODEL"),
+		VoiceModel: os.Getenv("AI_VOICE_MODEL"),
+	})
 
 	// Telemetry stats command
 	b.OnCommand("stats", func(c *bot.Context) error {

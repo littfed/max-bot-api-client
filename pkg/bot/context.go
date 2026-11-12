@@ -158,6 +158,23 @@ func (c *Context) ReplyKeyboard(text string, kb *maxbot.InlineKeyboard) (*maxbot
 	return c.client.SendKeyboardMessage(c.Ctx(), rec, text, kb)
 }
 
+// ReplyWithAttachments sends a text message with custom attachments (e.g. media, keyboards).
+func (c *Context) ReplyWithAttachments(text string, attachments ...maxbot.Attachment) (*maxbot.Message, error) {
+	if c.client == nil {
+		return &maxbot.Message{}, nil
+	}
+	rec, err := c.Recipient()
+	if err != nil {
+		return nil, err
+	}
+	msg := &maxbot.SendMessageRequest{
+		Text:        text,
+		Format:      "markdown",
+		Attachments: attachments,
+	}
+	return c.client.SendMessage(c.Ctx(), rec, msg)
+}
+
 // AnswerCallback acknowledges an incoming button callback.
 func (c *Context) AnswerCallback(answer *maxbot.AnswerCallbackRequest) error {
 	if c.client == nil {
