@@ -252,3 +252,63 @@ func TestContextRecipientDerivation(t *testing.T) {
 		t.Errorf("expected chat:999, got %s", r2)
 	}
 }
+
+func TestContextVoiceNoteAttempt(t *testing.T) {
+	c := &Context{
+		Update: &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Body: maxbot.MessageBody{
+					Text: "[голос с микрофона]",
+					Attachments: []maxbot.Attachment{
+						{Type: "voice_note_attempt"},
+					},
+				},
+			},
+		},
+	}
+
+	if !c.IsVoiceNoteAttempt() {
+		t.Error("expected IsVoiceNoteAttempt to be true")
+	}
+
+	router := NewRouter()
+	called := false
+	router.OnVoiceNoteAttempt(func(ctx *Context) error {
+		called = true
+		return nil
+	})
+
+	if err := router.Handle(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !called {
+		t.Error("expected OnVoiceNoteAttempt handler to be called")
+	}
+}
+
+func TestContextAudioAttachmentFile(t *testing.T) {
+	c := &Context{
+		Update: &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Body: maxbot.MessageBody{
+					Attachments: []maxbot.Attachment{
+						{
+							Type: "file",
+							Payload: map[string]any{
+								"name": "voice_recording.ogg",
+								"url":  "https://example.com/audio.ogg",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	att, hasAudio := c.AudioAttachment()
+	if !hasAudio || att == nil {
+		t.Fatal("expected AudioAttachment to detect .ogg file attachment")
+	}
+}

@@ -97,8 +97,33 @@ func (c *Context) AudioAttachment() (*maxbot.Attachment, bool) {
 		if att.Type == maxbot.UploadTypeAudio || att.Type == "voice" || att.Type == "audio" {
 			return &att, true
 		}
+		if att.Type == maxbot.UploadTypeFile || att.Type == "file" {
+			if pMap, ok := att.Payload.(map[string]any); ok {
+				name, _ := pMap["name"].(string)
+				nameLower := strings.ToLower(name)
+				if strings.HasSuffix(nameLower, ".ogg") || strings.HasSuffix(nameLower, ".mp3") ||
+					strings.HasSuffix(nameLower, ".wav") || strings.HasSuffix(nameLower, ".m4a") ||
+					strings.HasSuffix(nameLower, ".aac") || strings.HasSuffix(nameLower, ".opus") ||
+					strings.HasSuffix(nameLower, ".flac") {
+					return &att, true
+				}
+			}
+		}
 	}
 	return nil, false
+}
+
+// IsVoiceNoteAttempt returns true if this update represents a microphone voice note event from MAX Messenger.
+func (c *Context) IsVoiceNoteAttempt() bool {
+	if c.Message() == nil {
+		return false
+	}
+	for _, att := range c.Message().Body.Attachments {
+		if att.Type == "voice_note_attempt" {
+			return true
+		}
+	}
+	return c.Text() == "[голос с микрофона]"
 }
 
 // Sender returns the User who triggered the update.

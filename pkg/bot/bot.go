@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
@@ -22,6 +23,7 @@ type Bot struct {
 	pollingTimeout  int
 	pollingInterval time.Duration
 	marker          int64
+	recentChats     sync.Map
 }
 
 // BotOption configures a Bot instance.
@@ -170,15 +172,141 @@ func (b *Bot) OnAudio(handler HandlerFunc) {
 	b.router.OnAudio(handler)
 }
 
+// OnVoiceNoteAttempt registers a handler invoked when a user records a voice note via the MAX mobile app microphone.
+func (b *Bot) OnVoiceNoteAttempt(handler HandlerFunc) {
+	b.router.OnVoiceNoteAttempt(handler)
+}
+
 // OnAny registers a fallback handler matching any incoming update.
 func (b *Bot) OnAny(handler HandlerFunc) {
 	b.router.OnAny(handler)
 }
 
+// RecordActiveChat registers an active chat and user ID for correlating bare events.
+func (b *Bot) RecordActiveChat(chatID, userID int64) {
+	if chatID != 0 {
+		b.recentChats.Store(chatID, userID)
+	}
+}
+
 // ProcessUpdate handles a single update (useful for both Long Polling and Webhook endpoints).
 func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
-	raw, _ := json.Marshal(u)
-	b.logger.Info("incoming update", slog.String("type", u.UpdateType), slog.String("raw", string(raw)))
+	raw := u.RawJSON
+	if raw == "" {
+		bData, _ := json.Marshal(u)
+		raw = string(bData)
+	}
+	b.logger.Info("incoming update", slog.String("type", u.UpdateType), slog.String("raw", raw))
+
+	// Track active chat from incoming messages or callbacks
+	if u.Message != nil {
+		var chatID int64
+		if u.Message.Recipient != nil {
+			chatID = u.Message.Recipient.ChatID
+		}
+		var userID int64
+		if u.Message.Sender != nil {
+			userID = u.Message.Sender.UserID
+		}
+		if chatID != 0 {
+			b.RecordActiveChat(chatID, userID)
+		}
+	} else if u.Callback != nil {
+		var chatID int64
+		if u.Callback.Message != nil && u.Callback.Message.Recipient != nil {
+			chatID = u.Callback.Message.Recipient.ChatID
+		}
+		var userID int64
+		if u.Callback.User != nil {
+			userID = u.Callback.User.UserID
+		}
+		if chatID != 0 {
+			b.RecordActiveChat(chatID, userID)
+		}
+	}
+
+	// Handle bare message_created updates (omitted body when recording voice note via mobile microphone)
+	if u.UpdateType == maxbot.UpdateTypeMessageCreated && u.Message == nil {
+		b.logger.Warn("bare message_created received without message body - resolving correlated chat",
+			slog.Int64("timestamp", u.Timestamp),
+		)
+
+		// Brief pause to allow platform backend CDN/indexing sync
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+
+		var targetChatID int64
+		var targetUserID int64
+
+		b.recentChats.Range(func(key, value any) bool {
+			cid := key.(int64)
+			uid := value.(int64)
+			chat, err := b.client.GetChat(ctx, cid)
+			if err == nil && chat != nil {
+				diff := chat.LastEventTime - u.Timestamp
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff <= 5000 {
+					targetChatID = cid
+					targetUserID = uid
+					return false
+				}
+			}
+			return true
+		})
+
+		if targetChatID == 0 {
+			b.recentChats.Range(func(key, value any) bool {
+				targetChatID = key.(int64)
+				targetUserID = value.(int64)
+				return false
+			})
+		}
+
+		if targetChatID != 0 {
+			// Query latest messages to check if audio was delayed
+			msgs, err := b.client.GetMessages(ctx, targetChatID, 3)
+			if err == nil && len(msgs) > 0 {
+				latest := msgs[0]
+				diff := latest.Timestamp - u.Timestamp
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff <= 5000 && len(latest.Body.Attachments) > 0 {
+					u.Message = &latest
+					c := NewContext(ctx, b.client, u)
+					return b.router.Handle(c)
+				}
+			}
+
+			// MAX server omitted voice payload. Construct synthetic message so bot can inform the user.
+			synthMsg := &maxbot.Message{
+				Timestamp: u.Timestamp,
+				Recipient: &maxbot.MessageRecipient{
+					ChatID:   targetChatID,
+					ChatType: "dialog",
+					UserID:   targetUserID,
+				},
+				Sender: &maxbot.User{
+					UserID: targetUserID,
+				},
+				Body: maxbot.MessageBody{
+					Text: "[голос с микрофона]",
+					Attachments: []maxbot.Attachment{
+						{
+							Type: "voice_note_attempt",
+						},
+					},
+				},
+			}
+			u.Message = synthMsg
+		}
+	}
+
 	c := NewContext(ctx, b.client, u)
 	return b.router.Handle(c)
 }

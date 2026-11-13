@@ -794,6 +794,27 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		_, err := c.Reply("🎙️ Аудиосообщение получено, но не удалось извлечь звуковой поток. Попробуйте еще раз.")
 		return err
 	})
+
+	// 9. Informative handler for mobile client microphone voice notes
+	b.OnVoiceNoteAttempt(func(c *bot.Context) error {
+		text := "🎙️ **Голосовое сообщение с микрофона получено!**\n\n" +
+			"Платформа MAX Messenger на данный момент отправляет события голосовых заметок с микрофона без вложенного аудиофайла (ограничение текущей версии Bot API платформы).\n\n" +
+			"💡 **Как протестировать работу нейросети с голосом прямо сейчас:**\n" +
+			"• **В 1 клик:** Нажмите кнопку **«🎙️ Протестировать демо-запись»** ниже — бот обработает реальную русскую речь через Whisper STT и ответит нейросетью.\n" +
+			"• **Синтез речи (TTS):** Нажмите кнопку **«🔊 Озвучить приветствие»**, чтобы бот отправил настоящее голосовое сообщение в чат!\n" +
+			"• **Файлом:** Отправьте аудиозапись через **скрепку 📎 -> Файл** (mp3, wav, ogg) — бот моментально расшифрует ее."
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("🎙️ Протестировать демо-запись (1 клик)", "ai:voice:demo")).
+			Row(maxbot.NewCallbackButton("🔊 Озвучить приветствие", "ai:tts:preset:welcome")).
+			Row(
+				maxbot.NewCallbackButton("💬 В AI Чат", "ai:chat:start"),
+				maxbot.NewCallbackButton("◀️ Главное меню", "nav:menu"),
+			)
+
+		_, err := c.ReplyKeyboard(text, kb)
+		return err
+	})
 }
 
 // Helpers for chat history and media resolution
@@ -884,7 +905,6 @@ func extractAudioAttachmentBytes(c *bot.Context) ([]byte, string, bool) {
 					}
 				}
 			}
-			return []byte("sample audio content"), "voice.ogg", true
 		}
 	}
 	return nil, "", false

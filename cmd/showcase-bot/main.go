@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -81,6 +82,10 @@ func main() {
 	}
 
 	b := bot.NewWithClient(client, bot.WithLogger(logger))
+	if testChatID, _ := strconv.ParseInt(os.Getenv("TEST_CHAT_ID"), 10, 64); testChatID != 0 {
+		testUserID, _ := strconv.ParseInt(os.Getenv("TEST_USER_ID"), 10, 64)
+		b.RecordActiveChat(testChatID, testUserID)
+	}
 	b.Use(bot.Recovery(logger))
 	b.Use(bot.Logger(logger))
 	b.Use(fsm.Middleware(fsmStorage))

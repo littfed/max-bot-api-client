@@ -99,6 +99,13 @@ func (r *Router) OnAudio(handler HandlerFunc) {
 	}, handler)
 }
 
+// OnVoiceNoteAttempt registers a handler invoked when a user records a voice note via the MAX mobile app microphone.
+func (r *Router) OnVoiceNoteAttempt(handler HandlerFunc) {
+	r.addRoute(func(c *Context) bool {
+		return c.IsVoiceNoteAttempt()
+	}, handler)
+}
+
 // OnIdleMessage registers a handler for plain incoming messages when the user is not in any active FSM dialog state and not running a command.
 func (r *Router) OnIdleMessage(handler HandlerFunc) {
 	r.addRoute(func(c *Context) bool {

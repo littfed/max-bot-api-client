@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -303,6 +304,28 @@ func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 	return c.execute(req, nil)
 }
 
+// GetMessages retrieves recent messages from a chat or channel.
+func (c *Client) GetMessages(ctx context.Context, chatID int64, count int) ([]Message, error) {
+	q := make(url.Values)
+	q.Set("chat_id", strconv.FormatInt(chatID, 10))
+	if count > 0 {
+		q.Set("count", strconv.Itoa(count))
+	}
+
+	req, err := c.newRequest(ctx, http.MethodGet, "/messages", q, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Messages []Message `json:"messages"`
+	}
+	if err := c.execute(req, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Messages, nil
+}
+
 // AnswerCallback acknowledges an interactive button click event.
 func (c *Client) AnswerCallback(ctx context.Context, callbackID string, answer *AnswerCallbackRequest) error {
 	if strings.TrimSpace(callbackID) == "" {
@@ -341,11 +364,51 @@ func (c *Client) GetUpdates(ctx context.Context, opts *GetUpdatesOptions) (*Upda
 		return nil, err
 	}
 
-	var result UpdatesResponse
-	if err := c.execute(req, &result); err != nil {
+	var rawEnvelope struct {
+		Updates []json.RawMessage `json:"updates"`
+		Marker  int64             `json:"marker"`
+	}
+	if err := c.execute(req, &rawEnvelope); err != nil {
 		return nil, err
 	}
-	return &result, nil
+
+	result := &UpdatesResponse{
+		Marker:  rawEnvelope.Marker,
+		Updates: make([]Update, 0, len(rawEnvelope.Updates)),
+	}
+
+	for _, rawU := range rawEnvelope.Updates {
+		slog.Default().Info("RAW UPDATE FROM MAX API", slog.String("json", string(rawU)))
+		var u Update
+		_ = json.Unmarshal(rawU, &u)
+		u.RawJSON = string(rawU)
+
+		// If Message is nil for message_created, investigate raw JSON fields!
+		if u.Message == nil {
+			var rawMap map[string]json.RawMessage
+			if err := json.Unmarshal(rawU, &rawMap); err == nil {
+				for _, key := range []string{"message", "msg", "data", "object", "body"} {
+					if msgRaw, ok := rawMap[key]; ok {
+						var msg Message
+						if msgErr := json.Unmarshal(msgRaw, &msg); msgErr != nil {
+							slog.Default().Error("FAILED TO UNMARSHAL MESSAGE IN UPDATE",
+								slog.String("key", key),
+								slog.Any("error", msgErr),
+								slog.String("raw_content", string(msgRaw)),
+							)
+						} else {
+							u.Message = &msg
+							break
+						}
+					}
+				}
+			}
+		}
+
+		result.Updates = append(result.Updates, u)
+	}
+
+	return result, nil
 }
 
 // GetSubscriptions lists all active webhook subscriptions.

@@ -171,6 +171,8 @@ type Update struct {
 	User       *User     `json:"user,omitempty"`
 	Payload    string    `json:"payload,omitempty"` // For bot_started
 	Marker     int64     `json:"marker,omitempty"`
+
+	RawJSON    string    `json:"-"`
 }
 
 // UpdatesResponse is the container returned by GET /updates.
