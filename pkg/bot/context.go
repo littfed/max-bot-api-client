@@ -290,6 +290,12 @@ func (c *Context) IsCommand() bool {
 	return cmd != ""
 }
 
+// CommandArgs returns the arguments string following the command name, or empty string.
+func (c *Context) CommandArgs() string {
+	_, args := c.Command()
+	return args
+}
+
 // StartPayload extracts the start parameter from bot_started or "/start <payload>".
 func (c *Context) StartPayload() string {
 	if c.Update != nil && c.Update.Payload != "" {

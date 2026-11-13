@@ -303,14 +303,20 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 	// Helper for Text-to-Image Generation and Delivery
 	deliverImageGen := func(c *bot.Context, prompt string) error {
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" {
+			return nil
+		}
+
 		userID := getUserID(c)
-		if aiClient == nil {
-			_, err := c.Reply("⚠️ AI-шлюз не настроен. Укажите переменную AI_GATEWAY_URL.")
-			return err
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx != nil {
+			_ = fsmCtx.Set("last_image_prompt", prompt)
+			_ = fsmCtx.SetState("AI_STEP_IMAGE")
 		}
 
 		_ = c.SendChatAction(maxbot.ActionSendingPhoto)
-		statusMsg, _ := c.Reply(fmt.Sprintf("🎨 **Генерирую изображение:** *«%s»*\n*(Модель: `flux`, подождите немного...)*", prompt))
+		statusMsg, _ := c.Reply(fmt.Sprintf("🎨 **Генерирую изображение:** *«%s»*\n*(Нейросеть создает арт в высоком разрешении, подождите немного...)*", prompt))
 
 		imgReq := &ai.ImageRequest{
 			Prompt: prompt,
@@ -322,33 +328,62 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		var latency time.Duration
 
 		// 1. Try primary AI client (go-model-api)
-		imgResp, err := aiClient.GenerateImage(c.Ctx(), imgReq)
-		if err == nil {
-			if len(imgResp.Data) > 0 {
-				imgBytes = imgResp.Data
-				latency = imgResp.Latency
-			} else if imgResp.URL != "" {
-				dlBytes, dlErr := downloadMediaBytes(c.Ctx(), imgResp.URL)
-				if dlErr == nil && len(dlBytes) > 1000 {
-					imgBytes = dlBytes
+		if aiClient != nil {
+			imgResp, err := aiClient.GenerateImage(c.Ctx(), imgReq)
+			if err == nil {
+				if len(imgResp.Data) > 0 {
+					imgBytes = imgResp.Data
 					latency = imgResp.Latency
+				} else if imgResp.URL != "" {
+					dlBytes, dlErr := downloadMediaBytes(c.Ctx(), imgResp.URL)
+					if dlErr == nil && len(dlBytes) > 1000 {
+						imgBytes = dlBytes
+						latency = imgResp.Latency
+					}
 				}
 			}
 		}
 
-		// 2. High-performance fallback: Flux neural engine
+		// 2. High-performance fallback: Flux/Sana neural engine with prompt enhancement
 		if len(imgBytes) == 0 {
-			fluxBytes, fluxErr := fetchFluxImage(c.Ctx(), prompt)
+			engPrompt := translatePromptToEnglish(c.Ctx(), aiClient, config.ChatModel, prompt)
+			fluxBytes, fluxErr := fetchFluxImage(c.Ctx(), engPrompt)
 			if fluxErr == nil && len(fluxBytes) > 0 {
 				imgBytes = fluxBytes
 				latency = time.Since(startGen)
+			} else if engPrompt != prompt {
+				fluxBytesRaw, fluxErrRaw := fetchFluxImage(c.Ctx(), prompt)
+				if fluxErrRaw == nil && len(fluxBytesRaw) > 0 {
+					imgBytes = fluxBytesRaw
+					latency = time.Since(startGen)
+				}
 			}
 		}
 
-		// 3. Fallback for completely offline test environments
-		if len(imgBytes) == 0 {
+		// 3. Fallback for completely offline test environments (mock client with no network)
+		if len(imgBytes) == 0 && c.Client() == nil {
 			imgBytes = generatePlaceholderImage(prompt)
 			latency = time.Since(startGen)
+		}
+
+		// If real neural generation failed in live environment, inform the user cleanly (no blank square!)
+		if len(imgBytes) == 0 {
+			if statusMsg != nil && c.Client() != nil {
+				_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
+			}
+			errText := fmt.Sprintf("⚠️ **Генерация изображения временно недоступна**\n\n"+
+				"Внешний нейросетевой сервис генерации (Flux/Pollinations) сейчас перегружен или недоступен.\n\n"+
+				"*Ваш запрос:* «%s»\n\n"+
+				"👇 Вы можете повторить попытку прямо сейчас или отправить другой запрос текстом в чат:", prompt)
+			kb := maxbot.NewInlineKeyboard().
+				Row(maxbot.NewCallbackButton("🔄 Повторить генерацию", "ai:image:retry")).
+				Row(maxbot.NewCallbackButton("✍️ Ввести другой запрос", "ai:image:start")).
+				Row(
+					maxbot.NewCallbackButton("💬 В AI Чат", "ai:chat:start"),
+					maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
+				)
+			_, rErr := c.ReplyKeyboard(errText, kb)
+			return rErr
 		}
 
 		hood.Register("ai_image", TechCard{
@@ -360,12 +395,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			DocsLink:    "https://dev.max.ru/docs/uploads",
 		})
 
-		caption := fmt.Sprintf("🎨 **Результат генерации**\n\n*Промпт:* «%s»\n*Модель:* `flux` *(%s)*",
+		caption := fmt.Sprintf("🎨 **Результат генерации нейросетью**\n\n"+
+			"*Запрос:* «%s»\n"+
+			"*Модель:* `flux` *(%s)*\n\n"+
+			"💡 *Вы можете сразу написать в чат следующий запрос, и я сгенерирую новую картинку!*",
 			prompt, latency.Round(time.Millisecond))
 		formatted := hood.Format(userID, caption, "ai_image")
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("🔄 Сгенерировать еще", "ai:image:start")).
+			Row(maxbot.NewCallbackButton("🔄 Сгенерировать еще (новый вариант)", "ai:image:retry")).
+			Row(maxbot.NewCallbackButton("✍️ Другой сюжет", "ai:image:start")).
 			Row(
 				maxbot.NewCallbackButton("💬 В AI Чат", "ai:chat:start"),
 				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
@@ -392,24 +431,23 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 
 		// Fallback for offline tests or when uploads not configured
-		_, err = c.ReplyKeyboard(formatted, kb)
+		_, err := c.ReplyKeyboard(formatted, kb)
 		return err
 	}
 
-	// 6. Start Image Generation Mode
-	b.OnCallbackPayload("ai:image:start", func(c *bot.Context) error {
-		_ = c.AnswerCallback(nil)
+	// openImageStart presents the image generation hub and prompts the user for custom input.
+	openImageStart := func(c *bot.Context) error {
 		fsmCtx := fsm.FromContext(c)
 		if fsmCtx != nil {
 			_ = fsmCtx.SetState("AI_STEP_IMAGE")
 		}
 
 		userID := getUserID(c)
-		text := fmt.Sprintf("🎨 **Генерация изображений нейросетью (Text-to-Image)**\n\n"+
-			"• Модель генерации: `%s`\n"+
-			"• Доставка в чат: двухфазный UploadMedia в CDN MAX\n\n"+
-			"Введите текстовое описание того, что нужно нарисовать, или выберите готовый пресет ниже:",
-			config.ImageModel)
+		text := "🎨 **Генерация картинок нейросетью (Text-to-Image)**\n\n" +
+			"✨ **Как создать свою картинку:**\n" +
+			"Просто **напишите в чат любой текст** с описанием того, что хотите увидеть (например: *«рыжий кот в круглых очках читает книгу у камина»* или *«спорткар на закате в стиле киберпанк»*).\n\n" +
+			"Бот автоматически обогатит запрос через AI и отправит готовое изображение прямо в чат!\n\n" +
+			"👇 *Или выберите один из готовых примеров ниже:*"
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewCallbackButton("🚀 Неоновый киберпанк город", "ai:preset:cyberpunk")).
@@ -423,6 +461,43 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		formatted := hood.Format(userID, text, "ai_image")
 		_, err := c.ReplyKeyboard(formatted, kb)
 		return err
+	}
+
+	// 6. Start Image Generation Mode
+	b.OnCallbackPayload("ai:image:start", func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
+		return openImageStart(c)
+	})
+
+	// Retry Image Generation with Last Prompt
+	b.OnCallbackPayload("ai:image:retry", func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
+		lastPrompt := "Футуристический город в лучах заката"
+		if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
+			if val, ok := fsmCtx.Get("last_image_prompt"); ok && val != nil {
+				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
+					lastPrompt = s
+				}
+			}
+		}
+		return deliverImageGen(c, lastPrompt)
+	})
+
+	// Global commands: /image and /img
+	b.OnCommand("image", func(c *bot.Context) error {
+		prompt := strings.TrimSpace(c.CommandArgs())
+		if prompt != "" {
+			return deliverImageGen(c, prompt)
+		}
+		return openImageStart(c)
+	})
+
+	b.OnCommand("img", func(c *bot.Context) error {
+		prompt := strings.TrimSpace(c.CommandArgs())
+		if prompt != "" {
+			return deliverImageGen(c, prompt)
+		}
+		return openImageStart(c)
 	})
 
 	// Presets for quick generation
@@ -910,38 +985,106 @@ func extractAudioAttachmentBytes(c *bot.Context) ([]byte, string, bool) {
 	return nil, "", false
 }
 
-// fetchFluxImage generates a real high-resolution AI image via Flux neural engine.
+// translatePromptToEnglish uses the LLM to translate and enrich a user prompt into a high-quality visual English prompt.
+func translatePromptToEnglish(ctx context.Context, aiClient *ai.Client, model, prompt string) string {
+	if aiClient == nil || strings.TrimSpace(prompt) == "" {
+		return prompt
+	}
+	// Check if prompt is already purely ASCII English
+	isPureASCII := true
+	for _, r := range prompt {
+		if r > 127 {
+			isPureASCII = false
+			break
+		}
+	}
+	if isPureASCII && len(strings.Fields(prompt)) >= 4 {
+		clean := strings.ReplaceAll(prompt, "/", " ")
+		clean = strings.ReplaceAll(clean, "\n", " ")
+		return strings.TrimSpace(clean)
+	}
+
+	systemPrompt := "You are an AI image prompt translator and enhancer. Convert the user's description into a concise, vivid English visual prompt for an image generator (like Flux/Midjourney). Keep it under 35 words. Output ONLY the English prompt text, without any quotes, explanations, markdown, or commentary."
+	resp, err := aiClient.Chat(ctx, &ai.ChatRequest{
+		Model: model,
+		Messages: []ai.ChatMessage{
+			{Role: ai.RoleSystem, Content: systemPrompt},
+			{Role: ai.RoleUser, Content: prompt},
+		},
+	})
+	if err != nil || strings.TrimSpace(resp.Content) == "" {
+		clean := strings.ReplaceAll(prompt, "/", " ")
+		clean = strings.ReplaceAll(clean, "\n", " ")
+		return strings.TrimSpace(clean)
+	}
+	res := strings.TrimSpace(resp.Content)
+	res = strings.Trim(res, `"'`+"`")
+	res = strings.ReplaceAll(res, "/", " ")
+	res = strings.ReplaceAll(res, "\n", " ")
+	return strings.TrimSpace(res)
+}
+
+// fetchFluxImage generates a real high-resolution AI image via Flux/Sana neural engine with multi-model fallback.
 func fetchFluxImage(ctx context.Context, prompt string) ([]byte, error) {
-	genURL := fmt.Sprintf("https://image.pollinations.ai/prompt/%s?width=800&height=600&model=flux&nologo=true&seed=%d",
-		url.PathEscape(prompt),
-		time.Now().UnixNano(),
-	)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, genURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	cleanPrompt := strings.ReplaceAll(prompt, "/", " ")
+	cleanPrompt = strings.ReplaceAll(cleanPrompt, "\n", " ")
+	cleanPrompt = strings.TrimSpace(cleanPrompt)
+	if cleanPrompt == "" {
+		cleanPrompt = "beautiful cosmic scenery"
 	}
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	escaped := url.PathEscape(cleanPrompt)
+	seed := time.Now().Unix() % 1000000
+
+	client := &http.Client{Timeout: 25 * time.Second}
+	models := []string{"flux", "", "turbo"}
+	var lastErr error
+
+	for _, m := range models {
+		var genURL string
+		if m != "" {
+			genURL = fmt.Sprintf("https://image.pollinations.ai/prompt/%s?width=800&height=600&model=%s&nologo=true&seed=%d",
+				escaped, m, seed)
+		} else {
+			genURL = fmt.Sprintf("https://image.pollinations.ai/prompt/%s?width=800&height=600&nologo=true&seed=%d",
+				escaped, seed)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, genURL, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+		req.Header.Set("Referer", "https://pollinations.ai/")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("pollinations returned status %d", resp.StatusCode)
+			continue
+		}
+
+		data, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if len(data) >= 1000 {
+			return data, nil
+		}
+		lastErr = fmt.Errorf("response too small (%d bytes)", len(data))
 	}
-	if len(data) < 1000 {
-		return nil, fmt.Errorf("response too small (%d bytes)", len(data))
-	}
-	return data, nil
+
+	return nil, lastErr
 }
 
 // synthesizeSpeech converts Russian/multilingual text into MP3 audio bytes using neural TTS.

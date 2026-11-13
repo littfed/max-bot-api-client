@@ -224,6 +224,26 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 		t.Fatalf("custom image prompt failed: %v", err)
 	}
 
+	// Test Retry Image Generation with Last Prompt
+	if err := botInstance.Router().Handle(makeCallbackCtx("ai:image:retry")); err != nil {
+		t.Fatalf("retry image generation failed: %v", err)
+	}
+
+	// Test Slash Command /image with prompt
+	if err := botInstance.Router().Handle(makeTextCtx("/image Кот на скейтборде")); err != nil {
+		t.Fatalf("/image command with prompt failed: %v", err)
+	}
+
+	// Test Slash Command /img with prompt
+	if err := botInstance.Router().Handle(makeTextCtx("/img Неоновый закат")); err != nil {
+		t.Fatalf("/img command with prompt failed: %v", err)
+	}
+
+	// Test Slash Command /image without arguments (opens image start screen)
+	if err := botInstance.Router().Handle(makeTextCtx("/image")); err != nil {
+		t.Fatalf("/image command without arguments failed: %v", err)
+	}
+
 	// Step F: Enter Voice Mode
 	if err := botInstance.Router().Handle(makeCallbackCtx("ai:voice:start")); err != nil {
 		t.Fatalf("start ai voice failed: %v", err)
