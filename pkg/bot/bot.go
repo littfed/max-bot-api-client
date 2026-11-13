@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -343,8 +342,9 @@ func (b *Bot) StartLongPolling(ctx context.Context) error {
 
 		resp, err := b.client.GetUpdates(ctx, opts)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil
+			if ctx.Err() != nil {
+				b.logger.Info("long polling stopped gracefully by context cancellation")
+				return ctx.Err()
 			}
 
 			// If rate limited, backoff
