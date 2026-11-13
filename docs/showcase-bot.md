@@ -124,3 +124,25 @@ go run ./cmd/showcase-bot -port 8080
 
 > [!NOTE]
 > Если шлюз `AI_GATEWAY_URL` недоступен при запуске бота, кнопка AI-сценария автоматически скрывается из главного меню, сохраняя работоспособность всех остальных функций шоурума.
+
+---
+
+## 🚀 Развертывание через Dokploy
+
+Бот полностью подготовлен для промышленного запуска в PaaS-платформе **Dokploy**:
+
+1. **Контейнеризация:** В репозитории подготовлены `Dockerfile.showcase-bot` и корневой `Dockerfile` с многоэтапной сборкой (`golang:alpine` ➔ `alpine:3.20`), встроенными сертификатами Минцифры и запуском под непривилегированным пользователем `appuser`.
+2. **Переменные окружения:** Задаются в интерфейсе Dokploy (или через `.env`):
+   ```env
+   MAX_BOT_TOKEN=...
+   GMA_BASE_URL=https://gma.littfed.ru
+   GMA_API_KEY=app-key-1
+   GMA_CHAT_MODEL=gemini-2.5-flash
+   GMA_VISION_MODEL=gemini-2.5-flash
+   GMA_IMAGE_MODEL=flux
+   AI_CHAT_MODEL=gemini-2.5-flash
+   PORT=8080
+   TEST_USER_ID=396393759
+   TEST_CHAT_ID=140396458
+   ```
+3. **Режим работы:** Long Polling запускается автоматически, поддерживая постоянное соединение с `platform-api2.max.ru` без необходимости открывать входящие порты. Для раздачи Mini App (`/webapp`) и метрик (`/metrics`) открыт внутренний порт `8080`.
