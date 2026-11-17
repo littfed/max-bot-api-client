@@ -72,15 +72,10 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 			publicURL = "https://app-back-up-redundant-hard-drive-d19oaj-9f6d53-62-109-7-24.sslip.io"
 		}
 		appURL := strings.TrimRight(publicURL, "/") + "/webapp"
-		appBtn, _ := webapp.OpenAppButton("📱 Запустить в MAX (open_app)", botUsername)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(appBtn).
-			Row(maxbot.NewLinkButton("🌐 Открыть WebApp в браузере", appURL)).
+			Row(maxbot.NewLinkButton("📱 Запустить Mini App в MAX", appURL)).
 			Row(maxbot.NewIntentCallbackButton("🧪 Симулировать заказ из Mini App", "webapp:simulate_order", maxbot.IntentPositive)).
-			Row(hood.Button("webapp_open_app")).
-			Row(hood.Button("webapp_bridge")).
-			Row(hood.Button("webapp_security")).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
 		userID := int64(0)
@@ -90,10 +85,10 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 
 		text := "📱 **Экосистема MAX Mini Apps (WebApps)**\n\n" +
 			"Этот сценарий демонстрирует интеграцию встроенных HTML5-приложений в MAX Messenger:\n\n" +
-			"• **Запуск через кнопку:** нативная шторка WebView внутри мессенджера (`open_app`).\n" +
-			"• **Двусторонний WebBridge:** отправка корзины и действий из JS на сервер бота.\n" +
+			"• **Запуск через кнопку:** открытие в нативной шторке WebView прямо внутри мессенджера.\n" +
+			"• **Двусторонний WebBridge:** передача корзины и действий из JavaScript на сервер бота.\n" +
 			"• **Криптозащита:** валидация подлинности пользователя по HMAC-SHA256 подписи.\n\n" +
-			"💡 *Откройте веб-приложение в браузере или нажмите «Симулировать заказ» для мгновенной проверки WebBridge:* "
+			"💡 *Нажмите кнопку ниже, чтобы запустить приложение в MAX, или проверьте получение заказа через симуляцию:*"
 
 		formatted := hood.Format(userID, text, "webapp_open_app")
 		_, err := c.ReplyKeyboard(formatted, kb)
@@ -118,7 +113,6 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 			orderID)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(hood.Button("webapp_security")).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
 		userID := int64(0)

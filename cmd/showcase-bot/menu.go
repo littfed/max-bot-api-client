@@ -150,8 +150,7 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 			"• **Телеметрия:** OpenMetrics & Prometheus экспортер (/metrics)"
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("◀️ Назад в меню", "nav:menu")).
-			Row(hood.Button("bot_architecture"))
+			Row(maxbot.NewCallbackButton("◀️ Назад в меню", "nav:menu"))
 
 		_, err := c.ReplyKeyboard(infoText, kb)
 		_ = c.AnswerCallback(nil)

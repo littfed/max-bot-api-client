@@ -172,8 +172,7 @@ func main() {
 			"Все клики по кнопкам замеряют Time-to-Click (TTK) и обогащаются UTM-метками.", len(events), *portFlag)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("◀️ В меню", "nav:menu")).
-			Row(hood.Button("telemetry_collector"))
+			Row(maxbot.NewCallbackButton("◀️ В меню", "nav:menu"))
 
 		_, err := c.ReplyKeyboard(text, kb)
 		return err
@@ -188,8 +187,7 @@ func main() {
 			"Все клики по кнопкам замеряют Time-to-Click (TTK) и обогащаются UTM-метками.", len(events), *portFlag)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("◀️ В меню", "nav:menu")).
-			Row(hood.Button("telemetry_collector"))
+			Row(maxbot.NewCallbackButton("◀️ В меню", "nav:menu"))
 
 		_, err := c.ReplyKeyboard(text, kb)
 		return err

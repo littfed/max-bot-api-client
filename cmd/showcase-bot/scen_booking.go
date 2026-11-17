@@ -129,7 +129,6 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 			bookingID, srv.Icon, srv.Name, srv.Duration, slot, phone, priceStr)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(hood.Button("booking_confirm")).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
 		formatted := hood.Format(userID, summary, "booking_confirm")
@@ -152,7 +151,6 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 			btnText := fmt.Sprintf("%s %s (%s)", s.Icon, s.Name, priceStr)
 			kb.Row(maxbot.NewCallbackButton(btnText, "booking:srv:"+s.ID))
 		}
-		kb.Row(hood.Button("booking_slots"))
 		kb.Row(maxbot.NewCallbackButton("◀️ Назад в меню", "nav:menu"))
 
 		userID := int64(0)
@@ -232,7 +230,6 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewContactButton("📱 Поделиться номером телефона")).
 			Row(maxbot.NewCallbackButton("⚡ Использовать +7 (999) 123-45-67", "booking:quick_phone")).
-			Row(hood.Button("booking_contact")).
 			Row(maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel"))
 
 		text := fmt.Sprintf("🗓 Выбран слот: **%s**\n\n"+

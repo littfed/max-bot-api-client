@@ -164,8 +164,6 @@ func RegisterQuizScenario(b *bot.Bot, hood *HoodEngine) {
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewClipboardButton("📋 Скопировать результат", shareText)).
-			Row(hood.Button("quiz_clipboard")).
-			Row(hood.Button("quiz_ttk")).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
 		formatted := hood.Format(userID, resultMsg, "quiz_clipboard")
@@ -182,7 +180,6 @@ func sendQuizQuestion(c *bot.Context, hood *HoodEngine, qIdx int) error {
 		payload := fmt.Sprintf("quiz:ans:%d:%d", qIdx, i)
 		kb.Row(maxbot.NewCallbackButton(opt, payload))
 	}
-	kb.Row(hood.Button("quiz_buttons"))
 	kb.Row(maxbot.NewCallbackButton("❌ Прервать квиз", "nav:menu"))
 
 	userID := int64(0)

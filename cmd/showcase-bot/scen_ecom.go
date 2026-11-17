@@ -121,7 +121,6 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		kb := maxbot.NewInlineKeyboard().
 			Row(payments.PaymentButton(fmt.Sprintf("💳 Оплатить через СБП (%.0f ₽)", prod.Price), sbpLink)).
 			Row(maxbot.NewIntentCallbackButton("🧪 Симулировать оплату (Sandbox)", sandboxPayload, maxbot.IntentPositive)).
-			Row(hood.Button("ecom_sbp")).
 			Row(
 				maxbot.NewCallbackButton("↩️ Назад", "wizard:back"),
 				maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel"),
@@ -164,7 +163,6 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			btnText := fmt.Sprintf("%s %s — %.0f ₽", p.Icon, p.Name, p.Price)
 			kb.Row(maxbot.NewCallbackButton(btnText, "ecom:choose:"+p.ID))
 		}
-		kb.Row(hood.Button("ecom_catalog"))
 		kb.Row(maxbot.NewCallbackButton("◀️ Назад в меню", "nav:menu"))
 
 		userID := int64(0)
@@ -252,7 +250,6 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			orderID, amount, time.Now().Format("02.01.2006 15:04:05"))
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(hood.Button("ecom_webhook")).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
 		formatted := hood.Format(userID, receiptText, "ecom_webhook")

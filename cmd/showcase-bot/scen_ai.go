@@ -136,10 +136,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(maxbot.NewCallbackButton("🎙️ 3. Распознавание голоса (Whisper)", "ai:voice:start")).
 			Row(maxbot.NewCallbackButton("🔊 4. Генерация голоса (TTS)", "ai:tts:start")).
 			Row(maxbot.NewCallbackButton("🔄 Очистить контекст диалога", "ai:clear_context")).
-			Row(
-				maxbot.NewCallbackButton("◀️ Главное меню", "nav:menu"),
-				hood.Button("ai_chat"),
-			)
+			Row(maxbot.NewCallbackButton("◀️ Главное меню", "nav:menu"))
 
 		formatted := hood.Format(userID, text, "ai_chat")
 		_, err := c.ReplyKeyboard(formatted, kb)
@@ -193,10 +190,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				maxbot.NewCallbackButton("🎨 Нарисовать картинку", "ai:image:start"),
 				maxbot.NewCallbackButton("🎙️ Голос (Whisper)", "ai:voice:start"),
 			).
-			Row(
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-				hood.Button("ai_chat"),
-			)
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 
 		formatted := hood.Format(userID, text, "ai_chat")
 		_, err := c.ReplyKeyboard(formatted, kb)
@@ -293,10 +287,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				maxbot.NewCallbackButton("🎨 Сгенерировать картинку", "ai:image:start"),
 				maxbot.NewCallbackButton("🎙️ Голос (Whisper)", "ai:voice:start"),
 			).
-			Row(
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-				hood.Button("ai_chat"),
-			)
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 
 		formatted := hood.Format(userID, replyText, "ai_chat")
 		_, err = c.ReplyKeyboard(formatted, kb)
@@ -410,8 +401,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(
 				maxbot.NewCallbackButton("💬 В AI Чат", "ai:chat:start"),
 				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-			).
-			Row(hood.Button("ai_image"))
+			)
 
 		// Upload to MAX CDN if client is available
 		if c.Client() != nil && len(imgBytes) > 0 {
@@ -455,10 +445,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(maxbot.NewCallbackButton("🚀 Неоновый киберпанк город", "ai:preset:cyberpunk")).
 			Row(maxbot.NewCallbackButton("🐱 Ученый кот у камина с книгой", "ai:preset:cat")).
 			Row(maxbot.NewCallbackButton("🪐 Космическая станция у Сатурна", "ai:preset:space")).
-			Row(
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-				hood.Button("ai_image"),
-			)
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 
 		formatted := hood.Format(userID, text, "ai_image")
 		_, err := c.ReplyKeyboard(formatted, kb)
@@ -653,8 +640,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(
 				maxbot.NewCallbackButton("💬 Перейти в AI Чат", "ai:chat:start"),
 				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-			).
-			Row(hood.Button("ai_voice"))
+			)
 
 		_, err = c.ReplyKeyboard(formatted, kb)
 		return err
@@ -677,10 +663,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewCallbackButton("🎙️ Протестировать демо-запись", "ai:voice:demo")).
-			Row(
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-				hood.Button("ai_voice"),
-			)
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 
 		formatted := hood.Format(userID, text, "ai_voice")
 		_, err := c.ReplyKeyboard(formatted, kb)
@@ -766,8 +749,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 					Row(
 						maxbot.NewCallbackButton("💬 В AI Чат", "ai:chat:start"),
 						maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-					).
-					Row(hood.Button("ai_tts"))
+					)
 
 				// Retry loop for MAX CDN processing
 				for attempt := 1; attempt <= 6; attempt++ {
@@ -809,10 +791,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(maxbot.NewCallbackButton("🚀 1. Приветствие бота MAX", "ai:tts:preset:welcome")).
 			Row(maxbot.NewCallbackButton("🤖 2. Рассказ об искусственном интеллекте", "ai:tts:preset:ai")).
 			Row(maxbot.NewCallbackButton("💡 3. Вдохновляющая цитата", "ai:tts:preset:quote")).
-			Row(
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-				hood.Button("ai_tts"),
-			)
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 
 		formatted := hood.Format(userID, text, "ai_tts")
 		_, err := c.ReplyKeyboard(formatted, kb)

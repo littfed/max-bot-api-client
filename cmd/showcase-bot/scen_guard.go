@@ -57,9 +57,6 @@ func RegisterGuardScenario(b *bot.Bot, hood *HoodEngine, client *maxbot.Client) 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewIntentCallbackButton("🧪 Тест входа: симуляция капчи (30 сек)", "guard:sim_join", maxbot.IntentPositive)).
 			Row(maxbot.NewIntentCallbackButton("⏱ Тест: автокик по таймауту", "guard:sim_timeout", maxbot.IntentNegative)).
-			Row(hood.Button("guard_captcha")).
-			Row(hood.Button("guard_kick")).
-			Row(hood.Button("guard_live")).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
 		userID := int64(0)
@@ -96,7 +93,6 @@ func RegisterGuardScenario(b *bot.Bot, hood *HoodEngine, client *maxbot.Client) 
 		payloadVerify := fmt.Sprintf("guard:v:1000:%d", userID)
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewIntentCallbackButton("✅ Я человек (нажмите)", payloadVerify, maxbot.IntentPositive)).
-			Row(hood.Button("guard_captcha")).
 			Row(maxbot.NewCallbackButton("◀️ Назад в меню", "nav:menu"))
 
 		text := fmt.Sprintf("👋 **Симуляция входа: Добро пожаловать, %s!**\n\n"+
@@ -130,7 +126,6 @@ func RegisterGuardScenario(b *bot.Bot, hood *HoodEngine, client *maxbot.Client) 
 			userID)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(hood.Button("guard_kick")).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
 		formatted := hood.Format(userID, kickReport, "guard_kick")
