@@ -64,6 +64,47 @@ func ComputeInitDataHash(dataCheckString string, botToken string) string {
 	return hex.EncodeToString(macData.Sum(nil))
 }
 
+// SignInitData generates a cryptographically signed initData query string for a user and bot token.
+func SignInitData(botToken string, userID int64, firstName string, username string, queryID ...string) string {
+	authDate := time.Now().Unix()
+	userMap := map[string]any{
+		"id": userID,
+	}
+	if firstName != "" {
+		userMap["first_name"] = firstName
+	}
+	if username != "" {
+		userMap["username"] = username
+	}
+	userJSON, _ := json.Marshal(userMap)
+
+	qID := fmt.Sprintf("MAX_%d", authDate%100000)
+	if len(queryID) > 0 && queryID[0] != "" {
+		qID = queryID[0]
+	}
+
+	vals := url.Values{}
+	vals.Set("query_id", qID)
+	vals.Set("user", string(userJSON))
+	vals.Set("auth_date", strconv.FormatInt(authDate, 10))
+
+	keys := make([]string, 0, len(vals))
+	for k := range vals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, fmt.Sprintf("%s=%s", k, vals.Get(k)))
+	}
+	checkStr := strings.Join(lines, "\n")
+	hash := ComputeInitDataHash(checkStr, botToken)
+	vals.Set("hash", hash)
+
+	return vals.Encode()
+}
+
 // ValidateInitData verifies the authenticity and freshness of Mini App initData.
 // If maxAge is 0, a default expiration limit of 24 hours is applied.
 func ValidateInitData(rawQuery string, botToken string, maxAge ...time.Duration) (*InitData, error) {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
+	"github.com/littfed/max-bot-api-client/pkg/webapp"
 )
 
 func TestWebappScenarioWorkflow(t *testing.T) {
@@ -66,17 +68,31 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 		t.Fatalf("simulate order failed: %v", err)
 	}
 
-	// 4. Test WebBridge Action POST
+	// 4. Test WebBridge Action POST in demo/unauthenticated mode
 	actionReq := httptest.NewRequest(http.MethodPost, "/api/webapp/action", bytes.NewReader([]byte(`{
 		"action": "submit_cart",
-		"init_data": "invalid_signature",
-		"payload": {"test": true}
+		"init_data": "demo=true&user_id=888",
+		"payload": {"items": {"coffee": 1}, "total_price": 4990}
 	}`)))
 	actionRec := httptest.NewRecorder()
 	mux.ServeHTTP(actionRec, actionReq)
 
-	// Since init_data is invalid signature, it should return 401 Unauthorized (safe and expected!)
-	if actionRec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 Unauthorized for bad initData, got %d", actionRec.Code)
+	if actionRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for demo initData in showcase-bot, got %d", actionRec.Code)
+	}
+
+	// 5. Test WebBridge Action POST with signed initData
+	signedInit := webapp.SignInitData("test_token_123", 888, "Федор", "fedor_v")
+	bodyJSON, _ := json.Marshal(map[string]any{
+		"action":    "submit_cart",
+		"init_data": signedInit,
+		"payload":   map[string]any{"items": map[string]int{"coffee": 1}, "total_price": 4990},
+	})
+	signedReq := httptest.NewRequest(http.MethodPost, "/api/webapp/action", bytes.NewReader(bodyJSON))
+	signedRec := httptest.NewRecorder()
+	mux.ServeHTTP(signedRec, signedReq)
+
+	if signedRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for signed initData, got %d", signedRec.Code)
 	}
 }

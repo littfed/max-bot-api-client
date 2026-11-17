@@ -106,9 +106,29 @@ const miniAppHTML = `<!DOCTYPE html>
       document.getElementById('total-price').innerText = totalPrice.toLocaleString('ru-RU') + ' ₽';
     }
 
+    function getInitData() {
+      if (window.Max && window.Max.WebApp && window.Max.WebApp.initData) {
+        return window.Max.WebApp.initData;
+      }
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
+        return window.Telegram.WebApp.initData;
+      }
+      if (window.location.hash) {
+        const hashStr = window.location.hash.substring(1);
+        const params = new URLSearchParams(hashStr);
+        if (params.get('tgWebAppData')) return params.get('tgWebAppData');
+        if (params.get('hash')) return hashStr;
+      }
+      if (window.location.search) {
+        return window.location.search.substring(1);
+      }
+      return 'demo=true';
+    }
+
     async function submitOrder() {
       const status = document.getElementById('status-msg');
       status.innerText = 'Отправка через WebBridge...';
+      status.style.color = 'var(--muted)';
 
       const payload = {
         action: 'submit_cart',
@@ -123,7 +143,7 @@ const miniAppHTML = `<!DOCTYPE html>
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'submit_cart',
-            init_data: window.location.search.substring(1) || 'demo=true',
+            init_data: getInitData(),
             payload: payload
           })
         });
@@ -132,10 +152,12 @@ const miniAppHTML = `<!DOCTYPE html>
           status.innerText = '✅ Заказ принят! Проверьте чат бота.';
           status.style.color = '#10b981';
         } else {
-          status.innerText = 'Ответ: ' + (res.message || 'успешно обработано');
+          status.innerText = 'Ошибка: ' + (res.message || 'не удалось обработать');
+          status.style.color = '#ef4444';
         }
       } catch (e) {
-        status.innerText = 'Отправлено на локальный мост.';
+        status.innerText = 'Ошибка сети при отправке заказа.';
+        status.style.color = '#ef4444';
       }
     }
   </script>

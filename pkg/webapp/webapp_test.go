@@ -119,4 +119,28 @@ func TestWebBridgeHTTPHandler(t *testing.T) {
 	if !actionReceived || orderID != "ORD-42" {
 		t.Fatalf("action was not executed properly: actionReceived=%v, orderID=%s", actionReceived, orderID)
 	}
+
+	// Test Unauthenticated mode
+	bridge.SetAllowUnauthenticated(true)
+	reqUnauthBody, _ := json.Marshal(ActionRequest{
+		InitData: "demo=true&user_id=123",
+		Action:   "checkout",
+		Payload:  json.RawMessage(`{"order_id":"ORD-UNAUTH"}`),
+	})
+	reqUnauth := httptest.NewRequest(http.MethodPost, "/api/webapp/action", bytes.NewReader(reqUnauthBody))
+	recUnauth := httptest.NewRecorder()
+	bridge.HTTPHandler()(recUnauth, reqUnauth)
+	if recUnauth.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for unauthenticated mode, got %d: %s", recUnauth.Code, recUnauth.Body.String())
+	}
+
+	// Test SignInitData
+	signed := SignInitData(botToken, 888, "Анна", "anna_bot")
+	validatedData, err := ValidateInitData(signed, botToken)
+	if err != nil {
+		t.Fatalf("SignInitData produced invalid signature: %v", err)
+	}
+	if validatedData.User == nil || validatedData.User.ID != 888 || validatedData.User.FirstName != "Анна" {
+		t.Fatalf("unexpected user in validated SignInitData: %+v", validatedData.User)
+	}
 }

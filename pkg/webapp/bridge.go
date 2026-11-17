@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -15,10 +17,11 @@ type ActionHandler func(ctx context.Context, data *InitData, payload json.RawMes
 
 // Bridge handles HTTP communication between the client-side Mini App WebView and the bot server.
 type Bridge struct {
-	botToken string
-	maxAge   time.Duration
-	handlers map[string]ActionHandler
-	mu       sync.RWMutex
+	botToken             string
+	maxAge               time.Duration
+	allowUnauthenticated bool
+	handlers             map[string]ActionHandler
+	mu                   sync.RWMutex
 }
 
 // NewBridge creates a new Mini App WebBridge.
@@ -33,6 +36,14 @@ func NewBridge(botToken string, maxAge ...time.Duration) *Bridge {
 		maxAge:   age,
 		handlers: make(map[string]ActionHandler),
 	}
+}
+
+// SetAllowUnauthenticated permits requests without valid HMAC signature (e.g. for demo showcase or direct browser testing).
+func (b *Bridge) SetAllowUnauthenticated(allow bool) *Bridge {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.allowUnauthenticated = allow
+	return b
 }
 
 // OnAction registers a handler for a specific Mini App action (e.g. "order_checkout", "select_item").
@@ -80,12 +91,36 @@ func (b *Bridge) HTTPHandler() http.HandlerFunc {
 		// Authenticate and verify initData
 		initData, err := ValidateInitData(req.InitData, b.botToken, b.maxAge)
 		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(ActionResponse{
-				Success: false,
-				Message: fmt.Sprintf("unauthorized: %v", err),
-			})
-			return
+			b.mu.RLock()
+			allowUnauth := b.allowUnauthenticated
+			b.mu.RUnlock()
+
+			if !allowUnauth {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(ActionResponse{
+					Success: false,
+					Message: fmt.Sprintf("unauthorized: %v", err),
+				})
+				return
+			}
+
+			// In unauthenticated demo mode, provide fallback InitData
+			initData = &InitData{
+				Raw: req.InitData,
+			}
+			if vals, parseErr := url.ParseQuery(req.InitData); parseErr == nil {
+				if userRaw := vals.Get("user"); userRaw != "" {
+					var user InitDataUser
+					if json.Unmarshal([]byte(userRaw), &user) == nil {
+						initData.User = &user
+					}
+				}
+				if uid, parseErr := strconv.ParseInt(vals.Get("user_id"), 10, 64); parseErr == nil && uid != 0 {
+					if initData.User == nil {
+						initData.User = &InitDataUser{ID: uid}
+					}
+				}
+			}
 		}
 
 		b.mu.RLock()

@@ -42,10 +42,69 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 	})
 
 	// 2. Setup WebBridge & HTTP Static Server
-	bridge := webapp.NewBridge(token)
+	bridge := webapp.NewBridge(token).SetAllowUnauthenticated(true)
 	bridge.OnAction("submit_cart", func(ctx context.Context, data *webapp.InitData, payload json.RawMessage) (any, error) {
+		orderID := fmt.Sprintf("WEB-%d", time.Now().Unix()%100000)
+
+		var cartData struct {
+			Items      map[string]int `json:"items"`
+			TotalPrice int            `json:"total_price"`
+		}
+		_ = json.Unmarshal(payload, &cartData)
+
+		var targetUserID int64
+		userName := "Пользователь"
+		isVerified := false
+		if data != nil && data.User != nil && data.User.ID != 0 {
+			targetUserID = data.User.ID
+			if data.User.FirstName != "" {
+				userName = data.User.FirstName
+			}
+			if data.Hash != "" {
+				isVerified = true
+			}
+		}
+
+		if targetUserID != 0 && b.Client() != nil {
+			statusLine := "Подпись initData: `HMAC-SHA256 Verified ✅`"
+			if !isVerified {
+				statusLine = "Подпись initData: `Демо-режим (WebBridge) 🧪`"
+			}
+
+			itemLines := make([]string, 0)
+			for name, qty := range cartData.Items {
+				if qty > 0 {
+					itemLines = append(itemLines, fmt.Sprintf("• %s: %d шт.", name, qty))
+				}
+			}
+			itemsStr := strings.Join(itemLines, "\n")
+			if itemsStr == "" {
+				itemsStr = "• Корзина из Mini App (1 шт.)"
+			}
+
+			text := fmt.Sprintf("🚀 **Заказ из Mini App успешно оформлен!**\n\n"+
+				"• **Клиент:** %s\n"+
+				"• **Номер заказа:** `%s`\n"+
+				"• **Сумма:** `%d ₽`\n"+
+				"• **Канал передачи:** WebBridge HTTP POST `/api/webapp/action`\n"+
+				"• %s\n\n"+
+				"**Состав заказа:**\n%s\n\n"+
+				"Данные приняты сервером бота и зафиксированы в сессии.",
+				userName, orderID, cartData.TotalPrice, statusLine, itemsStr)
+
+			kb := maxbot.NewInlineKeyboard().
+				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+
+			msgReq := &maxbot.SendMessageRequest{
+				Text:        text,
+				Attachments: []maxbot.Attachment{kb.ToAttachment()},
+			}
+			_, _ = b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUserID), msgReq)
+		}
+
 		return map[string]any{
 			"status":    "accepted",
+			"order_id":  orderID,
 			"timestamp": time.Now().Unix(),
 		}, nil
 	})
@@ -87,18 +146,32 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 			appURL = strings.TrimRight(publicURL, "/") + "/maxapp"
 		}
 
+		userID := int64(0)
+		firstName := ""
+		username := ""
+		if cb := c.Callback(); cb != nil && cb.User != nil {
+			userID = cb.User.UserID
+			firstName = cb.User.FirstName
+			username = cb.User.Username
+		}
+
+		appURLWithAuth := appURL
+		if userID != 0 && token != "" {
+			signedInit := webapp.SignInitData(token, userID, firstName, username)
+			if strings.Contains(appURL, "?") {
+				appURLWithAuth = appURL + "&" + signedInit
+			} else {
+				appURLWithAuth = appURL + "?" + signedInit
+			}
+		}
+
 		appBtn, _ := webapp.OpenAppButton("📱 Запустить в MAX (open_app)", botUsername)
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(appBtn).
-			Row(maxbot.NewLinkButton("🌐 Открыть Mini App (combot.littfed.ru/maxapp)", appURL)).
+			Row(maxbot.NewLinkButton("🌐 Открыть Mini App (combot.littfed.ru/maxapp)", appURLWithAuth)).
 			Row(maxbot.NewIntentCallbackButton("🧪 Симулировать заказ из Mini App", "webapp:simulate_order", maxbot.IntentPositive)).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
-
-		userID := int64(0)
-		if cb := c.Callback(); cb != nil && cb.User != nil {
-			userID = cb.User.UserID
-		}
 
 		text := "📱 **Экосистема MAX Mini Apps (WebApps)**\n\n" +
 			"Этот сценарий демонстрирует интеграцию встроенных HTML5-приложений в MAX Messenger:\n\n" +
