@@ -135,10 +135,53 @@ func RegisterGuardScenario(b *bot.Bot, hood *HoodEngine, client *maxbot.Client) 
 
 	// Live in-group bot_added event handler
 	b.OnBotAdded(func(c *bot.Context) error {
-		greeting := "🛡️ **Бот-модератор успешно добавлен в чат!**\n\n" +
-			"Пожалуйста, назначьте меня **Администратором** группы с правом удаления участников, чтобы автоматический капча-гейт и антиспам-защита могли работать в полную силу."
+		chatID := int64(0)
+		if c.Update != nil {
+			chatID = c.Update.ChatID
+		}
 
-		_, err := c.Reply(greeting)
-		return err
+		greeting := fmt.Sprintf("🛡️ **КомБот успешно подключен к чату!**\n\n"+
+			"• **ID чата:** `%d`\n"+
+			"• **Статус:** Модуль защиты и модерации сообществ активен ✅\n\n"+
+			"💡 *Пожалуйста, назначьте меня **Администратором** группы (с правом «Удаление сообщений» и «Блокировка пользователей»), чтобы автоматический капча-гейт и антиспам-фильтр могли удалять спам и спам-ботов.*",
+			chatID)
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("🛡️ Проверить статус защиты", "guard:sim_join"))
+
+		_, _ = c.ReplyKeyboard(greeting, kb)
+
+		// Also notify the inviter in private messages if known
+		if c.Update != nil && c.Update.User != nil && c.Update.User.UserID != 0 && c.Client() != nil {
+			inviterID := c.Update.User.UserID
+			dmText := fmt.Sprintf("🎉 **Вы успешно добавили бота в чат!**\n\n"+
+				"• **ID группы/канала:** `%d`\n"+
+				"• **Событие:** `bot_added` успешно перехвачено сервером\n\n"+
+				"Для полноценной модерации выдайте боту права Администратора в настройках группы.", chatID)
+			_, _ = c.Client().SendTextMessage(context.Background(), maxbot.ToUser(inviterID), dmText)
+		}
+
+		return nil
+	})
+
+	// Live in-group user_added event handler
+	b.OnUserAdded(func(c *bot.Context) error {
+		if c.Update == nil || c.Update.User == nil {
+			return nil
+		}
+		newUserID := c.Update.User.UserID
+		newUserName := c.Update.User.FirstName
+		if newUserName == "" {
+			newUserName = c.Update.User.Name
+		}
+		if newUserName == "" {
+			newUserName = "Новый участник"
+		}
+		chatID := c.Update.ChatID
+		if chatID == 0 {
+			return nil
+		}
+
+		return captchaGate.HandleNewMember(c.Ctx(), chatID, newUserID, newUserName)
 	})
 }

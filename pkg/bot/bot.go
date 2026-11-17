@@ -166,6 +166,16 @@ func (b *Bot) OnBotRemoved(handler HandlerFunc) {
 	b.router.OnBotRemoved(handler)
 }
 
+// OnUserAdded registers a handler invoked when a new user joins or is added to a group chat with the bot.
+func (b *Bot) OnUserAdded(handler HandlerFunc) {
+	b.router.OnUserAdded(handler)
+}
+
+// OnUserRemoved registers a handler invoked when a user leaves or is removed from a group chat with the bot.
+func (b *Bot) OnUserRemoved(handler HandlerFunc) {
+	b.router.OnUserRemoved(handler)
+}
+
 // OnAudio registers a handler for incoming audio/voice messages.
 func (b *Bot) OnAudio(handler HandlerFunc) {
 	b.router.OnAudio(handler)

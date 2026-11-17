@@ -169,6 +169,36 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 			userID = sender.UserID
 		}
 
+		// Intercept invite links sent to the bot
+		if strings.Contains(userText, "max.ru/join/") || strings.Contains(userText, "/join/") {
+			botUsername := "id452401070481_bot"
+			if c.Client() != nil {
+				if me, _ := c.Client().GetMe(c.Ctx()); me != nil && me.Username != "" {
+					botUsername = me.Username
+				}
+			}
+
+			text := "👥 **Добавление бота в группу или канал**\n\n" +
+				"Вы прислали ссылку-приглашение в чат:\n" +
+				"`" + userText + "`\n\n" +
+				"В платформе **MAX Messenger** (по соображениям безопасности) боты не имеют персональных профилей и **не могут автоматически переходить по ссылкам-приглашениям** (в MAX Bot API намеренно нет метода автоматического перехода по ссылкам).\n\n" +
+				"### Как добавить бота в вашу группу или канал:\n" +
+				"1️⃣ В приложении MAX откройте вашу группу или канал.\n" +
+				"2️⃣ Нажмите на название чата вверху ➔ **«Участники»** ➔ **«Добавить участника»** (или в меню **«Администраторы»** ➔ **«Добавить»**).\n" +
+				"3️⃣ В строке поиска введите логин бота: `@`" + botUsername + " и добавьте его в чат.\n" +
+				"4️⃣ Выдайте боту права администратора (на удаление спама и блокировку ботов).\n\n" +
+				"🛡️ *Как только вы добавите бота в чат, он автоматически поймает событие `bot_added`, поприветствует участников и активирует защиту чата!*"
+
+			kb := maxbot.NewInlineKeyboard().
+				Row(maxbot.NewClipboardButton("📋 Скопировать логин бота", "@"+botUsername)).
+				Row(maxbot.NewLinkButton("➕ Добавить в группу или канал", "https://max.ru/"+botUsername+"?startgroup=true")).
+				Row(maxbot.NewCallbackButton("🛡️ Сценарий модерации (Капча)", "scen:guard")).
+				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+
+			_, err := c.ReplyKeyboard(text, kb)
+			return err
+		}
+
 		// If AI is available and configured, answer as smart assistant!
 		if hood.IsAIAvailable() && aiCli != nil {
 			_ = c.Typing()

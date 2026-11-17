@@ -223,6 +223,20 @@ func (r *Router) OnBotRemoved(handler HandlerFunc) {
 	}, handler)
 }
 
+// OnUserAdded registers a handler invoked when a new user joins or is added to a group chat with the bot.
+func (r *Router) OnUserAdded(handler HandlerFunc) {
+	r.addRoute(func(c *Context) bool {
+		return c.Update != nil && c.Update.UpdateType == maxbot.UpdateTypeUserAdded
+	}, handler)
+}
+
+// OnUserRemoved registers a handler invoked when a user leaves or is removed from a group chat with the bot.
+func (r *Router) OnUserRemoved(handler HandlerFunc) {
+	r.addRoute(func(c *Context) bool {
+		return c.Update != nil && c.Update.UpdateType == maxbot.UpdateTypeUserRemoved
+	}, handler)
+}
+
 // OnAny registers a fallback handler matching any update.
 func (r *Router) OnAny(handler HandlerFunc) {
 	r.addRoute(func(c *Context) bool {
