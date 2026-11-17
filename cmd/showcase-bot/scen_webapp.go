@@ -51,9 +51,20 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 	})
 
 	httpMux.HandleFunc("/api/webapp/action", bridge.HTTPHandler())
-	httpMux.HandleFunc("/webapp", func(w http.ResponseWriter, r *http.Request) {
+	serveMiniApp := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(miniAppHTML))
+	}
+	httpMux.HandleFunc("/webapp", serveMiniApp)
+	httpMux.HandleFunc("/webapp/", serveMiniApp)
+	httpMux.HandleFunc("/maxapp", serveMiniApp)
+	httpMux.HandleFunc("/maxapp/", serveMiniApp)
+	httpMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			serveMiniApp(w, r)
+			return
+		}
+		http.NotFound(w, r)
 	})
 
 	// 3. Scenario Launch Route (scen:webapp)
@@ -69,12 +80,18 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 			publicURL = strings.TrimSpace(os.Getenv("PUBLIC_URL"))
 		}
 		if publicURL == "" {
-			publicURL = "https://app-back-up-redundant-hard-drive-d19oaj-9f6d53-62-109-7-24.sslip.io"
+			publicURL = "https://combot.littfed.ru"
 		}
-		appURL := strings.TrimRight(publicURL, "/") + "/webapp"
+		appURL := strings.TrimSpace(os.Getenv("WEBAPP_URL"))
+		if appURL == "" {
+			appURL = strings.TrimRight(publicURL, "/") + "/maxapp"
+		}
+
+		appBtn, _ := webapp.OpenAppButton("📱 Запустить в MAX (open_app)", botUsername)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewLinkButton("📱 Запустить Mini App в MAX", appURL)).
+			Row(appBtn).
+			Row(maxbot.NewLinkButton("🌐 Открыть Mini App (combot.littfed.ru/maxapp)", appURL)).
 			Row(maxbot.NewIntentCallbackButton("🧪 Симулировать заказ из Mini App", "webapp:simulate_order", maxbot.IntentPositive)).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
@@ -85,10 +102,11 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 
 		text := "📱 **Экосистема MAX Mini Apps (WebApps)**\n\n" +
 			"Этот сценарий демонстрирует интеграцию встроенных HTML5-приложений в MAX Messenger:\n\n" +
-			"• **Запуск через кнопку:** открытие в нативной шторке WebView прямо внутри мессенджера.\n" +
+			"• **Запуск через кнопку:** нативная шторка WebView прямо внутри мессенджера (`open_app`).\n" +
+			"• **Прямой адрес приложения:** `https://combot.littfed.ru/maxapp`\n" +
 			"• **Двусторонний WebBridge:** передача корзины и действий из JavaScript на сервер бота.\n" +
 			"• **Криптозащита:** валидация подлинности пользователя по HMAC-SHA256 подписи.\n\n" +
-			"💡 *Нажмите кнопку ниже, чтобы запустить приложение в MAX, или проверьте получение заказа через симуляцию:*"
+			"💡 *Для нативного запуска через кнопку «open_app» укажите ссылку в настройках Web App бота в MAX. Также можно открыть приложение напрямую по веб-ссылке:*"
 
 		formatted := hood.Format(userID, text, "webapp_open_app")
 		_, err := c.ReplyKeyboard(formatted, kb)

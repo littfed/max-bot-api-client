@@ -26,16 +26,18 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterWebappScenario(botInstance, hood, mux, "test_token_123", "8080")
 
-	// 1. Test Static HTML Endpoint
-	req := httptest.NewRequest(http.MethodGet, "/webapp", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	// 1. Test Static HTML Endpoints (/webapp and /maxapp)
+	for _, path := range []string{"/webapp", "/maxapp", "/"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK for /webapp, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "MAX Mini App Корзина") {
-		t.Fatalf("expected Mini App title in HTML body, got: %s", rec.Body.String())
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for %s, got %d", path, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "MAX Mini App Корзина") {
+			t.Fatalf("expected Mini App title in HTML body for %s, got: %s", path, rec.Body.String())
+		}
 	}
 
 	// 2. Test scen:webapp launch callback
