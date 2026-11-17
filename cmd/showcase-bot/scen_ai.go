@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1024,19 +1026,31 @@ func translatePromptToEnglish(ctx context.Context, aiClient *ai.Client, model, p
 	return strings.TrimSpace(res)
 }
 
-// fetchFluxImage generates a real high-resolution AI image via Flux/Sana neural engine with multi-model fallback.
+// fetchFluxImage generates a real high-resolution AI image via Flux/Sana neural engine with multi-model fallback and rate-limit backoff.
 func fetchFluxImage(ctx context.Context, prompt string) ([]byte, error) {
-	cleanPrompt := strings.ReplaceAll(prompt, "/", " ")
-	cleanPrompt = strings.ReplaceAll(cleanPrompt, "\n", " ")
-	cleanPrompt = strings.TrimSpace(cleanPrompt)
-	if cleanPrompt == "" {
-		cleanPrompt = "beautiful cosmic scenery"
+	// Sanitize prompt for clean URL path transmission
+	clean := strings.ReplaceAll(prompt, "/", " ")
+	clean = strings.ReplaceAll(clean, "\\", " ")
+	clean = strings.ReplaceAll(clean, "\n", " ")
+	clean = strings.ReplaceAll(clean, "\r", " ")
+	clean = strings.ReplaceAll(clean, "\"", "")
+	clean = strings.ReplaceAll(clean, "'", "")
+	clean = strings.ReplaceAll(clean, "`", "")
+	clean = strings.ReplaceAll(clean, "?", " ")
+	clean = strings.ReplaceAll(clean, "!", " ")
+	clean = strings.ReplaceAll(clean, "#", " ")
+	clean = strings.ReplaceAll(clean, "&", " and ")
+
+	reSpace := regexp.MustCompile(`\s+`)
+	clean = strings.TrimSpace(reSpace.ReplaceAllString(clean, " "))
+	if clean == "" {
+		clean = "beautiful cosmic scenery"
 	}
 
-	escaped := url.PathEscape(cleanPrompt)
+	escaped := url.PathEscape(clean)
 	seed := time.Now().Unix() % 1000000
 
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := &http.Client{Timeout: 35 * time.Second}
 	models := []string{"flux", "", "turbo"}
 	var lastErr error
 
@@ -1050,38 +1064,56 @@ func fetchFluxImage(ctx context.Context, prompt string) ([]byte, error) {
 				escaped, seed)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, genURL, nil)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-		req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-		req.Header.Set("Referer", "https://pollinations.ai/")
+		for attempt := 0; attempt < 2; attempt++ {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, genURL, nil)
+			if err != nil {
+				lastErr = err
+				break
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+			req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+			req.Header.Set("Referer", "https://pollinations.ai/")
 
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = err
+				break
+			}
 
-		if resp.StatusCode != http.StatusOK {
+			if resp.StatusCode == http.StatusOK {
+				data, err := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				if err == nil && len(data) >= 1000 {
+					return data, nil
+				}
+				lastErr = fmt.Errorf("response too small (%d bytes)", len(data))
+				break
+			}
+
+			// Handle 402/429 rate limit with Retry-After backoff
+			if resp.StatusCode == 402 || resp.StatusCode == 429 {
+				retryHeader := resp.Header.Get("Retry-After")
+				_ = resp.Body.Close()
+				waitTime := 8 * time.Second
+				if secs, err := strconv.Atoi(retryHeader); err == nil && secs > 0 && secs <= 15 {
+					waitTime = time.Duration(secs) * time.Second
+				}
+				lastErr = fmt.Errorf("pollinations rate limited (status %d, retry after %s)", resp.StatusCode, waitTime)
+				if attempt == 0 {
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-time.After(waitTime):
+						continue // retry same model
+					}
+				}
+				break
+			}
+
 			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("pollinations returned status %d", resp.StatusCode)
-			continue
+			break
 		}
-
-		data, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		if len(data) >= 1000 {
-			return data, nil
-		}
-		lastErr = fmt.Errorf("response too small (%d bytes)", len(data))
 	}
 
 	return nil, lastErr

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/bot"
@@ -58,8 +60,19 @@ func RegisterWebappScenario(b *bot.Bot, hood *HoodEngine, httpMux *http.ServeMux
 	b.OnCallbackPayload("scen:webapp", func(c *bot.Context) error {
 		_ = c.AnswerCallback(nil)
 
-		appURL := fmt.Sprintf("http://localhost:%s/webapp", port)
-		appBtn, _ := webapp.OpenAppButton("📱 Запустить в MAX (open_app)", "showcase_bot")
+		botUsername := strings.TrimSpace(os.Getenv("WEBAPP_BOT_USERNAME"))
+		if botUsername == "" {
+			botUsername = "id452401070481_bot"
+		}
+		publicURL := strings.TrimSpace(os.Getenv("WEBAPP_BASE_URL"))
+		if publicURL == "" {
+			publicURL = strings.TrimSpace(os.Getenv("PUBLIC_URL"))
+		}
+		if publicURL == "" {
+			publicURL = "https://app-back-up-redundant-hard-drive-d19oaj-9f6d53-62-109-7-24.sslip.io"
+		}
+		appURL := strings.TrimRight(publicURL, "/") + "/webapp"
+		appBtn, _ := webapp.OpenAppButton("📱 Запустить в MAX (open_app)", botUsername)
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(appBtn).

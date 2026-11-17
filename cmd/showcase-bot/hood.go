@@ -157,11 +157,10 @@ func (h *HoodEngine) RegisterRoutes(router *bot.Router) {
 	})
 
 	router.OnCallbackPayload("hood:dismiss", func(c *bot.Context) error {
-		if cb := c.Callback(); cb != nil && cb.Message != nil {
-			if c.Client() != nil {
-				_ = c.Client().DeleteMessage(c.Ctx(), cb.Message.ID())
-			}
+		_ = c.AnswerNotification("Карточка закрыта")
+		if msg := c.Message(); msg != nil && msg.ID() != "" && c.Client() != nil {
+			_ = c.Client().DeleteMessage(c.Ctx(), msg.ID())
 		}
-		return c.AnswerNotification("Карточка закрыта")
+		return nil
 	})
 }

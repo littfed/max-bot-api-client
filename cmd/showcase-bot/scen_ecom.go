@@ -82,9 +82,7 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		}),
 	)
 
-	// Step 1: Delivery details input
-	wizard.Step("ECOM_STEP_DELIVERY", func(c *bot.Context) error {
-		deliveryText := strings.TrimSpace(c.Text())
+	handleDelivery := func(c *bot.Context, deliveryText string) error {
 		if deliveryText == "" {
 			deliveryText = "г. Москва, ул. Ленина, д. 1 (по умолчанию)"
 		}
@@ -142,6 +140,11 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			return err
 		}
 		return wizard.Next(c)
+	}
+
+	// Step 1: Delivery details input
+	wizard.Step("ECOM_STEP_DELIVERY", func(c *bot.Context) error {
+		return handleDelivery(c, strings.TrimSpace(c.Text()))
 	})
 
 	// Step 2: Checkout waiting state
@@ -213,10 +216,7 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 	// Pickup shortcut
 	b.OnCallbackPayload("ecom:pickup", func(c *bot.Context) error {
 		_ = c.AnswerNotification("Самовывоз выбран")
-		c.Update.Message = &maxbot.Message{
-			Body: maxbot.MessageBody{Text: "Пункт выдачи MAX Express (Самовывоз)"},
-		}
-		return b.Router().Handle(c)
+		return handleDelivery(c, "Пункт выдачи MAX Express (Самовывоз)")
 	})
 
 	// Sandbox Payment Simulation Handler

@@ -30,11 +30,11 @@ type Button struct {
 	Text      string `json:"text"`
 	Payload   string `json:"payload,omitempty"`
 	URL       string `json:"url,omitempty"`
-	WebApp    string `json:"webApp,omitempty"`
+	WebApp    string `json:"web_app,omitempty"`
 	Data      string `json:"data,omitempty"`
 	Intent    string `json:"intent,omitempty"`
 	Quick     bool   `json:"quick,omitempty"`
-	ContactID int64  `json:"contactId,omitempty"`
+	ContactID int64  `json:"contact_id,omitempty"`
 }
 
 // WithIntent sets the visual color style of the button (positive, negative, primary, default).
