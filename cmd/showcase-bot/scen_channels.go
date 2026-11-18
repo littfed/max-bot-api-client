@@ -249,6 +249,9 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 		}
 
 		postMID := parts[1]
+		if postMID == "pending" && c.Message() != nil && c.Message().Body.MID != "" {
+			postMID = c.Message().Body.MID
+		}
 		emoji := parts[2]
 		userID := int64(0)
 		if cb.User != nil {
@@ -258,6 +261,9 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 		chatID := int64(0)
 		if c.Update != nil {
 			chatID = c.Update.ChatID
+		}
+		if chatID == 0 && c.Message() != nil && c.Message().Recipient != nil {
+			chatID = c.Message().Recipient.ChatID
 		}
 
 		// Update reaction counts in store
@@ -269,9 +275,14 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 		// Update message keyboard with fresh reaction counts
 		updatedKb := buildReactionsKeyboard(cfg.MiniAppURL, postMID, updatedCounts)
 		if cfg.Client != nil && postMID != "pending" && postMID != "" {
-			_, _ = cfg.Client.EditMessage(context.Background(), postMID, &maxbot.EditMessageRequest{
+			req := &maxbot.EditMessageRequest{
 				Attachments: []maxbot.Attachment{updatedKb.ToAttachment()},
-			})
+			}
+			if msg := c.Message(); msg != nil && msg.Body.Text != "" {
+				req.Text = msg.Body.Text
+				req.Format = "markdown"
+			}
+			_, _ = cfg.Client.EditMessage(context.Background(), postMID, req)
 		}
 
 		return c.AnswerNotification(fmt.Sprintf("Ваша реакция %s учтена!", emoji))
@@ -365,12 +376,40 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			userID = cb.User.UserID
 		}
 
+		p, ok := cfg.Store.GetPoll(pollID)
+		if !ok {
+			mid := ""
+			if c.Message() != nil && c.Message().Body.MID != "" {
+				mid = c.Message().Body.MID
+			}
+			p = store.Poll{
+				ID:         pollID,
+				MessageMID: mid,
+				Question:   "Интерактивный опрос в канале",
+				Options:    []string{"Да, полностью 🚀", "В процессе изучения 📚", "Только планирую 💡"},
+				Votes:      make(map[int64]int),
+			}
+			if pollID == "live_poll_1" {
+				p.Question = "🚀 Планируете ли вы запускать собственного бота в MAX в этом месяце?"
+				p.Options = []string{"Да, уже делаю!", "Пока изучаю API", "Хочу Mini App"}
+			}
+			for len(p.Options) <= optIdx {
+				p.Options = append(p.Options, fmt.Sprintf("Вариант %d", len(p.Options)+1))
+			}
+			_ = cfg.Store.CreatePoll(p)
+		} else if optIdx >= len(p.Options) {
+			for len(p.Options) <= optIdx {
+				p.Options = append(p.Options, fmt.Sprintf("Вариант %d", len(p.Options)+1))
+			}
+			_ = cfg.Store.CreatePoll(p)
+		}
+
 		_, percents, err := cfg.Store.VotePoll(pollID, userID, optIdx)
 		if err != nil {
 			return c.AnswerNotification("Ошибка голосования")
 		}
 
-		p, ok := cfg.Store.GetPoll(pollID)
+		p, ok = cfg.Store.GetPoll(pollID)
 		if !ok {
 			return c.AnswerNotification("Опрос не найден")
 		}
@@ -379,15 +418,26 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 		updatedText := renderPollText(p.Question, p.Options, percents, len(p.Votes))
 		pollKb := buildPollKeyboard(pollID, p.Options)
 
-		if cfg.Client != nil && p.MessageMID != "" {
-			_, _ = cfg.Client.EditMessage(context.Background(), p.MessageMID, &maxbot.EditMessageRequest{
+		targetMID := p.MessageMID
+		if (targetMID == "" || targetMID == "pending") && c.Message() != nil && c.Message().Body.MID != "" {
+			targetMID = c.Message().Body.MID
+			p.MessageMID = targetMID
+			_ = cfg.Store.CreatePoll(p)
+		}
+
+		if cfg.Client != nil && targetMID != "" {
+			_, _ = cfg.Client.EditMessage(context.Background(), targetMID, &maxbot.EditMessageRequest{
 				Text:        updatedText,
 				Format:      "markdown",
 				Attachments: []maxbot.Attachment{pollKb.ToAttachment()},
 			})
 		}
 
-		return c.AnswerNotification(fmt.Sprintf("Ваш голос принят: %s!", p.Options[optIdx]))
+		selectedOption := "голос"
+		if optIdx >= 0 && optIdx < len(p.Options) {
+			selectedOption = p.Options[optIdx]
+		}
+		return c.AnswerNotification(fmt.Sprintf("Ваш голос принят: %s!", selectedOption))
 	})
 
 	// 7. Giveaway Publisher (chan:gw:{chatID})
@@ -477,7 +527,14 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 
 		gw, ok := cfg.Store.GetGiveaway(gwID)
 		if !ok {
-			return c.AnswerNotification("Розыгрыш не найден или завершен")
+			gw = store.Giveaway{
+				ID:              gwID,
+				Title:           "Розыгрыш подарков и скидка 25% на мерч!",
+				PromoCode:       "PROMO-MAX-25",
+				DiscountPercent: 25,
+				Participants:    make(map[int64]string),
+			}
+			_ = cfg.Store.CreateGiveaway(gw)
 		}
 
 		_ = cfg.Store.AddGiveawayParticipant(gwID, userID, userName)
