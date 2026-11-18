@@ -20,6 +20,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 	"github.com/littfed/max-bot-api-client/pkg/payments"
+	"github.com/littfed/max-bot-api-client/pkg/store"
 	"github.com/littfed/max-bot-api-client/pkg/telemetry"
 )
 
@@ -149,14 +150,28 @@ func main() {
 	httpMux.HandleFunc("/webhook/payments/tbank", paymentRouter.HTTPHandler("tbank"))
 	httpMux.HandleFunc("/webhook/payments/yookassa", paymentRouter.HTTPHandler("yookassa"))
 
-	// 7. Register Core Routes, Menu & Scenarios
+	// 7. Initialize Persistent Store
+	appStore, storeErr := store.New("data/bot_store.json")
+	if storeErr != nil {
+		logger.Warn("не удалось инициализировать bot_store.json, работаем с in-memory", slog.Any("error", storeErr))
+		appStore, _ = store.New("")
+	}
+
+	// 8. Register Core Routes, Menu & Scenarios
 	hood.RegisterRoutes(b.Router())
 	RegisterMenuRoutes(b, hood, aiClient)
 	RegisterEcomScenario(b, hood, paymentRouter)
 	RegisterBookingScenario(b, hood)
 	RegisterQuizScenario(b, hood)
-	RegisterWebappScenario(b, hood, httpMux, token, *portFlag)
+	RegisterWebappScenario(b, hood, httpMux, token, *portFlag, appStore, client, aiClient, chatModel)
 	RegisterGuardScenario(b, hood, client)
+	RegisterChannelsScenario(b, hood, ChannelScenarioConfig{
+		Client:     client,
+		Store:      appStore,
+		AIClient:   aiClient,
+		ChatModel:  chatModel,
+		MiniAppURL: "https://combot.littfed.ru/maxapp",
+	})
 	RegisterAIScenario(b, hood, aiClient, AIConfig{
 		ChatModel:  chatModel,
 		ImageModel: imageModel,

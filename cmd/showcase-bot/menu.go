@@ -41,6 +41,10 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 	}
 
 	kb.Row(
+		maxbot.NewCallbackButton("📢 7. Мои каналы & Студия постов", "scen:channels"),
+	)
+
+	kb.Row(
 		maxbot.NewCallbackButton(fmt.Sprintf("🛠 Режим разработчика: %s", devStatus), "nav:toggle_dev"),
 		maxbot.NewCallbackButton("📊 Метрики", "nav:stats"),
 	).

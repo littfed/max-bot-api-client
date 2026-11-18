@@ -13,6 +13,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
+	"github.com/littfed/max-bot-api-client/pkg/store"
 	"github.com/littfed/max-bot-api-client/pkg/webapp"
 )
 
@@ -21,12 +22,14 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 	storage := fsm.NewMemoryStorage(10 * time.Minute)
 	defer storage.Close()
 
+	appStore, _ := store.New("")
+
 	botInstance := bot.NewWithClient(nil)
 	botInstance.Use(fsm.Middleware(storage))
 	hood.RegisterRoutes(botInstance.Router())
 
 	mux := http.NewServeMux()
-	RegisterWebappScenario(botInstance, hood, mux, "test_token_123", "8080")
+	RegisterWebappScenario(botInstance, hood, mux, "test_token_123", "8080", appStore, nil, nil, "gemini-2.5-flash")
 
 	// 1. Test Static HTML Endpoints (/webapp and /maxapp)
 	for _, path := range []string{"/webapp", "/maxapp", "/"} {
@@ -37,7 +40,7 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 OK for %s, got %d", path, rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "MAX Mini App Корзина") {
+		if !strings.Contains(rec.Body.String(), "MAX Mini App Suite") {
 			t.Fatalf("expected Mini App title in HTML body for %s, got: %s", path, rec.Body.String())
 		}
 	}
@@ -94,5 +97,36 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 
 	if signedRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for signed initData, got %d", signedRec.Code)
+	}
+
+	// 6. Test GET /api/webapp/orders
+	ordersReq := httptest.NewRequest(http.MethodGet, "/api/webapp/orders?user_id=888", nil)
+	ordersRec := httptest.NewRecorder()
+	mux.ServeHTTP(ordersRec, ordersReq)
+	if ordersRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/webapp/orders, got %d", ordersRec.Code)
+	}
+
+	// 7. Test POST /api/webapp/spin
+	spinReq := httptest.NewRequest(http.MethodPost, "/api/webapp/spin", nil)
+	spinRec := httptest.NewRecorder()
+	mux.ServeHTTP(spinRec, spinReq)
+	if spinRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/webapp/spin, got %d", spinRec.Code)
+	}
+
+	// 8. Test POST /api/webapp/publish_post with unauthorized user (Access denied check)
+	pubJSON, _ := json.Marshal(map[string]any{
+		"channel_id": -78368186601503,
+		"user_id":    999999, // not owner (396393759)
+		"text":       "Test unauthorized post",
+	})
+	pubReq := httptest.NewRequest(http.MethodPost, "/api/webapp/publish_post", bytes.NewReader(pubJSON))
+	pubRec := httptest.NewRecorder()
+	mux.ServeHTTP(pubRec, pubReq)
+	var pubResp map[string]any
+	_ = json.Unmarshal(pubRec.Body.Bytes(), &pubResp)
+	if pubResp["success"] == true {
+		t.Fatalf("expected publish_post to reject non-owner, got success=true")
 	}
 }
