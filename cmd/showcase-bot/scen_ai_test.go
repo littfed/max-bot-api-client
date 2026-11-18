@@ -206,6 +206,10 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 	if curModel, _ := fsmCtx.Get("ai_active_chat_model"); curModel != "fast" {
 		t.Fatalf("expected active model to be fast, got %v", curModel)
 	}
+	st, _ = storage.GetState(context.Background(), key)
+	if st != "AI_STEP_CHAT" {
+		t.Fatalf("expected state AI_STEP_CHAT after set_model, got %s", st)
+	}
 
 	// Step E: Clear context
 	if err := botInstance.Router().Handle(makeCallbackCtx("ai:clear_context")); err != nil {
@@ -214,6 +218,10 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 	historyAfterClear := loadChatHistory(fsmCtx)
 	if len(historyAfterClear) != 0 {
 		t.Fatalf("expected 0 messages after clear, got %d", len(historyAfterClear))
+	}
+	st, _ = storage.GetState(context.Background(), key)
+	if st != "AI_STEP_CHAT" {
+		t.Fatalf("expected state AI_STEP_CHAT after clear_context, got %s", st)
 	}
 
 	// Step E: Enter Text-to-Image Mode
@@ -286,5 +294,89 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 		if card.Endpoint == "" || card.Method == "" || card.FSMState == "" {
 			t.Fatalf("card %s missing required metadata: %+v", cardKey, card)
 		}
+	}
+}
+
+func TestOnIdleMessageContextPreservation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			var req ai.ChatRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			userMsgCount := 0
+			for _, m := range req.Messages {
+				if m.Role == ai.RoleUser {
+					userMsgCount++
+				}
+			}
+			resp := map[string]any{
+				"id":      "chatcmpl-test",
+				"model":   req.Model,
+				"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": fmt.Sprintf("Ответ на вопрос %d", userMsgCount)}}},
+				"usage":   map[string]any{"total_tokens": 10},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	aiClient := ai.NewClient(srv.URL, "test-key")
+	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
+
+	botInstance := bot.NewWithClient(nil)
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+	botInstance.Use(fsm.Middleware(storage))
+
+	RegisterMenuRoutes(botInstance, hood, aiClient)
+	RegisterAIScenario(botInstance, hood, aiClient)
+
+	key := fsm.SessionKey{UserID: 101, ChatID: 101}
+	makeTextCtx := func(text string) *bot.Context {
+		c := bot.NewContext(context.Background(), nil, &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Sender:    &maxbot.User{UserID: 101, FirstName: "Tester"},
+				Recipient: &maxbot.MessageRecipient{ChatID: 101, UserID: 101, ChatType: "dialog"},
+				Body:      maxbot.MessageBody{Text: text},
+			},
+		})
+		c.Set("fsm_context", fsm.NewFSMContext(context.Background(), storage, key))
+		return c
+	}
+
+	// Message 1 from Idle: "Запомни кодовое слово"
+	if err := botInstance.Router().Handle(makeTextCtx("Запомни кодовое слово")); err != nil {
+		t.Fatalf("first idle message failed: %v", err)
+	}
+
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, key)
+	hist1 := loadChatHistory(fsmCtx)
+	if len(hist1) != 2 {
+		t.Fatalf("expected 2 messages in history after first message, got %d", len(hist1))
+	}
+	if hist1[0].Content != "Запомни кодовое слово" || hist1[0].Role != ai.RoleUser {
+		t.Fatalf("unexpected user message: %+v", hist1[0])
+	}
+
+	st, _ := storage.GetState(context.Background(), key)
+	if st != "AI_STEP_CHAT" {
+		t.Fatalf("expected state transitioned to AI_STEP_CHAT, got %s", st)
+	}
+
+	// Message 2: "Какое было слово?"
+	if err := botInstance.Router().Handle(makeTextCtx("Какое было слово?")); err != nil {
+		t.Fatalf("second message failed: %v", err)
+	}
+
+	hist2 := loadChatHistory(fsmCtx)
+	if len(hist2) != 4 {
+		t.Fatalf("expected 4 messages in history after second message, got %d", len(hist2))
+	}
+	if hist2[2].Content != "Какое было слово?" || hist2[2].Role != ai.RoleUser {
+		t.Fatalf("unexpected second user message: %+v", hist2[2])
 	}
 }

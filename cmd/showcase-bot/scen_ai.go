@@ -149,14 +149,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		fsmCtx := fsm.FromContext(c)
 		if fsmCtx != nil {
 			_ = fsmCtx.Set("ai_chat_history", "[]")
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
 		}
-		_ = c.AnswerNotification("🔄 Контекст диалога очищен!")
+		_ = c.AnswerNotification("🔄 Контекст диалога очищен (0/10)!")
 
-		text := "🔄 **Контекст диалога успешно очищен.**\n\n" +
+		text := "🔄 **Контекст диалога успешно очищен (0/10).**\n\n" +
 			"История предыдущих сообщений удалена из сессии FSM. Следующий запрос начнется с чистого листа без предыстории."
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("💬 Начать новый диалог", "ai:chat:start")).
+			Row(maxbot.NewCallbackButton("💬 Продолжить диалог", "ai:chat:start")).
+			Row(maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models")).
 			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 
 		_, err := c.ReplyKeyboard(text, kb)
@@ -196,7 +198,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models")).
-			Row(maxbot.NewCallbackButton("🔄 Очистить контекст", "ai:clear_context")).
+			Row(maxbot.NewCallbackButton(fmt.Sprintf("🔄 Очистить контекст (%d/10)", len(history)), "ai:clear_context")).
 			Row(
 				maxbot.NewCallbackButton("🎨 Нарисовать картинку", "ai:image:start"),
 				maxbot.NewCallbackButton("🎙️ Голос (Whisper)", "ai:voice:start"),
@@ -250,14 +252,21 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 		newModel := strings.TrimPrefix(cb.Payload, "ai:set_model:")
 		fsmCtx := fsm.FromContext(c)
+		history := loadChatHistory(fsmCtx)
 		if fsmCtx != nil {
 			_ = fsmCtx.Set("ai_active_chat_model", newModel)
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
 		}
 		_ = c.AnswerNotification(fmt.Sprintf("✅ Модель переключена на %s", newModel))
 
-		text := fmt.Sprintf("✅ **Модель успешно переключена!**\n\nАктивная модель: `%s`\nТеперь бот будет генерировать ответы через эту нейросеть.", newModel)
+		text := fmt.Sprintf("✅ **Модель успешно переключена!**\n\n"+
+			"• Активная модель: `%s`\n"+
+			"• Сообщений в памяти: `%d/10`\n"+
+			"• Режим умного диалога **активирован**\n\n"+
+			"Напишите любой вопрос или задачу прямо в чат — бот ответит через эту модель и сохранит контекст в памяти.", newModel, len(history))
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewCallbackButton("💬 Продолжить диалог", "ai:chat:start")).
+			Row(maxbot.NewCallbackButton(fmt.Sprintf("🔄 Очистить контекст (%d/10)", len(history)), "ai:clear_context")).
 			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 		_, err := c.ReplyKeyboard(text, kb)
 		return err
@@ -397,10 +406,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewCallbackButton("🔊 Озвучить ответ голосом", "ai:tts:speak_last")).
-			Row(maxbot.NewCallbackButton("🔄 Очистить контекст диалога", "ai:clear_context")).
+			Row(maxbot.NewCallbackButton(fmt.Sprintf("🔄 Очистить контекст (%d/10)", len(history)), "ai:clear_context")).
 			Row(
-				maxbot.NewCallbackButton("🎨 Сгенерировать картинку", "ai:image:start"),
-				maxbot.NewCallbackButton("🎙️ Голос (Whisper)", "ai:voice:start"),
+				maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models"),
+				maxbot.NewCallbackButton("🎨 Картинка (Flux)", "ai:image:start"),
 			).
 			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 

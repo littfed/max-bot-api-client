@@ -204,8 +204,34 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 			return err
 		}
 
-		// If AI is available and configured, answer as smart assistant!
+		// If AI is available and configured, answer as smart assistant with full conversational context!
 		if hood.IsAIAvailable() && aiCli != nil {
+			fsmCtx := fsm.FromContext(c)
+			activeModel := "auto"
+			if fsmCtx != nil {
+				if m, ok := fsmCtx.Get("ai_active_chat_model"); ok {
+					if mStr, isStr := m.(string); isStr && mStr != "" {
+						activeModel = mStr
+					}
+				}
+			}
+
+			history := loadChatHistory(fsmCtx)
+			history = append(history, ai.ChatMessage{
+				Role:    ai.RoleUser,
+				Content: userText,
+			})
+			if len(history) > 10 {
+				history = history[len(history)-10:]
+			}
+
+			messagesPayload := make([]ai.ChatMessage, 0, len(history)+1)
+			messagesPayload = append(messagesPayload, ai.ChatMessage{
+				Role:    ai.RoleSystem,
+				Content: aiSystemPrompt,
+			})
+			messagesPayload = append(messagesPayload, history...)
+
 			_ = c.Typing()
 			stopTyping := make(chan struct{})
 			go func() {
@@ -221,25 +247,68 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 				}
 			}()
 
+			temp := 0.7
 			chatReq := &ai.ChatRequest{
-				Model: "auto",
-				Messages: []ai.ChatMessage{
-					{Role: ai.RoleSystem, Content: aiSystemPrompt},
-					{Role: ai.RoleUser, Content: userText},
-				},
+				Model:       activeModel,
+				Messages:    messagesPayload,
+				Temperature: &temp,
 			}
-			chatResp, err := aiCli.Chat(c.Ctx(), chatReq)
-			if err != nil {
-				// Fallback candidate
-				chatReq.Model = "fast"
-				chatResp, err = aiCli.Chat(c.Ctx(), chatReq)
+
+			candidates := []string{activeModel}
+			for _, m := range []string{"auto", "fast", "best-coding", "reasoning", "gemini-3.5-flash-lite"} {
+				if m != activeModel {
+					candidates = append(candidates, m)
+				}
+			}
+
+			var chatResp *ai.ChatResponse
+			var lastErr error
+			var usedModel string
+
+			for _, m := range candidates {
+				chatReq.Model = m
+				chatResp, lastErr = aiCli.Chat(c.Ctx(), chatReq)
+				if lastErr == nil && chatResp != nil && strings.TrimSpace(chatResp.Content) != "" {
+					usedModel = m
+					break
+				}
 			}
 			close(stopTyping)
 
-			if err == nil && chatResp != nil && chatResp.Content != "" {
+			if lastErr == nil && chatResp != nil && strings.TrimSpace(chatResp.Content) != "" {
+				history = append(history, ai.ChatMessage{
+					Role:    ai.RoleAssistant,
+					Content: chatResp.Content,
+				})
+				if len(history) > 10 {
+					history = history[len(history)-10:]
+				}
+				_ = saveChatHistory(fsmCtx, history)
+				if fsmCtx != nil {
+					_ = fsmCtx.SetState("AI_STEP_CHAT")
+					_ = fsmCtx.Set("last_ai_reply", chatResp.Content)
+				}
+
+				modelReport := usedModel
+				if usedModel != activeModel && usedModel != "" {
+					modelReport = fmt.Sprintf("%s (резерв вместо %s)", usedModel, activeModel)
+				}
+				hood.Register("ai_chat", TechCard{
+					Title:       "AI-Диалог & Скользящее окно контекста (Sliding Window)",
+					Endpoint:    "/v1/chat/completions",
+					Method:      "POST",
+					FSMState:    "AI_STEP_CHAT",
+					Description: fmt.Sprintf("Модель: %s | Задержка: %s | Токенов: %d | История: %d/10 сообщений.", modelReport, chatResp.Latency.Round(time.Millisecond), chatResp.TotalTokens, len(history)),
+					DocsLink:    "https://platform.openai.com/docs/api-reference/chat",
+				})
+
 				kb := maxbot.NewInlineKeyboard().
 					Row(
-						maxbot.NewCallbackButton("💬 Начать диалог с памятью", "ai:chat:start"),
+						maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models"),
+						maxbot.NewCallbackButton(fmt.Sprintf("🔄 Очистить контекст (%d/10)", len(history)), "ai:clear_context"),
+					).
+					Row(
+						maxbot.NewCallbackButton("🔊 Озвучить ответ", "ai:tts:speak_last"),
 						maxbot.NewCallbackButton("🛍️ Главное меню", "nav:menu"),
 					)
 				formatted := hood.Format(userID, chatResp.Content, "ai_chat")
