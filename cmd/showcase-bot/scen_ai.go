@@ -51,7 +51,7 @@ type AIConfig struct {
 // DefaultAIConfig returns production-ready model defaults for go-model-api.
 func DefaultAIConfig() AIConfig {
 	return AIConfig{
-		ChatModel:  "gemini-2.5-flash",
+		ChatModel:  "auto",
 		ImageModel: "gemini-2.5-flash-image",
 		VoiceModel: "scout-audio",
 	}
@@ -224,16 +224,18 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		text := fmt.Sprintf("⚙️ **Выбор активной языковой модели (LLM)**\n\n"+
 			"• Текущая модель: `%s`\n\n"+
 			"Выберите модель для диалога:\n"+
-			"• **Gemini 2.5 Flash** — глубокое мышление и код\n"+
-			"• **@scout** — сверхбыстрый отклик (минимальный пинг)\n"+
-			"• **Garda Core** — сбалансированный русскоязычный ассистент\n"+
-			"• **GLM-4.6 Plus** — передовая мультиязычная модель", activeModel)
+			"• **⚡ Auto Router** — сбалансированный умный выбор с авто-переключением\n"+
+			"• **🚀 Fast Router** — мгновенный отклик (<500ms, Gemini Flash Lite)\n"+
+			"• **💻 Best Coding** — эксперт по коду, архитектуре и рефакторингу\n"+
+			"• **🧠 Reasoning** — глубокие рассуждения и логический анализ\n"+
+			"• **✨ Gemini 3.5 Flash** — новейшая компактная модель Google", activeModel)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("⚡ Gemini 2.5 Flash", "ai:set_model:gemini-2.5-flash")).
-			Row(maxbot.NewCallbackButton("🚀 @scout (Быстрый отклик)", "ai:set_model:@scout")).
-			Row(maxbot.NewCallbackButton("🧠 Garda Core", "ai:set_model:garda-core")).
-			Row(maxbot.NewCallbackButton("🌐 GLM-4.6 Plus", "ai:set_model:glm-4.6-plus")).
+			Row(maxbot.NewCallbackButton("⚡ Auto (Рекомендуется)", "ai:set_model:auto")).
+			Row(maxbot.NewCallbackButton("🚀 Fast (Сверхбыстрый)", "ai:set_model:fast")).
+			Row(maxbot.NewCallbackButton("💻 Best Coding (Код)", "ai:set_model:best-coding")).
+			Row(maxbot.NewCallbackButton("🧠 Reasoning (Анализ)", "ai:set_model:reasoning")).
+			Row(maxbot.NewCallbackButton("✨ Gemini 3.5 Flash", "ai:set_model:gemini-3.5-flash-lite")).
 			Row(maxbot.NewCallbackButton("◀️ Назад в диалог", "ai:chat:start"))
 
 		_, err := c.ReplyKeyboard(text, kb)
@@ -330,7 +332,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		// Try activeModel, cascade to fallbacks if upstream is on cooldown or times out
 		candidates := []string{activeModel}
-		for _, m := range []string{"gemini-2.5-flash", "@scout", "garda-core", "glm-4.6-plus"} {
+		for _, m := range []string{"auto", "fast", "best-coding", "reasoning", "gemini-3.5-flash-lite"} {
 			if m != activeModel {
 				candidates = append(candidates, m)
 			}

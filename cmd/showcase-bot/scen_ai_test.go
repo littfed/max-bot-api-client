@@ -200,11 +200,11 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 	if err := botInstance.Router().Handle(makeCallbackCtx("ai:models")); err != nil {
 		t.Fatalf("navigate to ai:models failed: %v", err)
 	}
-	if err := botInstance.Router().Handle(makeCallbackCtx("ai:set_model:garda-core")); err != nil {
-		t.Fatalf("set model to garda-core failed: %v", err)
+	if err := botInstance.Router().Handle(makeCallbackCtx("ai:set_model:fast")); err != nil {
+		t.Fatalf("set model to fast failed: %v", err)
 	}
-	if curModel, _ := fsmCtx.Get("ai_active_chat_model"); curModel != "garda-core" {
-		t.Fatalf("expected active model to be garda-core, got %v", curModel)
+	if curModel, _ := fsmCtx.Get("ai_active_chat_model"); curModel != "fast" {
+		t.Fatalf("expected active model to be fast, got %v", curModel)
 	}
 
 	// Step E: Clear context

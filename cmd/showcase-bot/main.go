@@ -114,7 +114,7 @@ func main() {
 		chatModel = strings.TrimSpace(os.Getenv("GMA_CHAT_MODEL"))
 	}
 	if chatModel == "" {
-		chatModel = "gemini-2.5-flash"
+		chatModel = "auto"
 	}
 
 	imageModel := strings.TrimSpace(os.Getenv("AI_IMAGE_MODEL"))

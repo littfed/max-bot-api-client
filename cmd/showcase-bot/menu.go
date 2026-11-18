@@ -222,7 +222,7 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 			}()
 
 			chatReq := &ai.ChatRequest{
-				Model: "gemini-2.5-flash",
+				Model: "auto",
 				Messages: []ai.ChatMessage{
 					{Role: ai.RoleSystem, Content: aiSystemPrompt},
 					{Role: ai.RoleUser, Content: userText},
@@ -231,7 +231,7 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 			chatResp, err := aiCli.Chat(c.Ctx(), chatReq)
 			if err != nil {
 				// Fallback candidate
-				chatReq.Model = "@scout"
+				chatReq.Model = "fast"
 				chatResp, err = aiCli.Chat(c.Ctx(), chatReq)
 			}
 			close(stopTyping)
