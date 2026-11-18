@@ -196,7 +196,18 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 		t.Fatalf("expected last message to be assistant role, got %s", history[len(history)-1].Role)
 	}
 
-	// Step D: Clear context
+	// Step D: Model Selection Submenu and Model Switching
+	if err := botInstance.Router().Handle(makeCallbackCtx("ai:models")); err != nil {
+		t.Fatalf("navigate to ai:models failed: %v", err)
+	}
+	if err := botInstance.Router().Handle(makeCallbackCtx("ai:set_model:garda-core")); err != nil {
+		t.Fatalf("set model to garda-core failed: %v", err)
+	}
+	if curModel, _ := fsmCtx.Get("ai_active_chat_model"); curModel != "garda-core" {
+		t.Fatalf("expected active model to be garda-core, got %v", curModel)
+	}
+
+	// Step E: Clear context
 	if err := botInstance.Router().Handle(makeCallbackCtx("ai:clear_context")); err != nil {
 		t.Fatalf("clear context failed: %v", err)
 	}

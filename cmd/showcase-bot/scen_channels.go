@@ -148,7 +148,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			// Generate via Gemini AI Gateway if available
 			if cfg.AIClient != nil && hood.IsAIAvailable() {
 				prompt := "Напиши короткий, яркий, профессиональный пост для Telegram/MAX канала об актуальных трендах искусственного интеллекта за сегодня (2-3 емких пункта, эмодзи, форматирование bold/italic, призыв к действию). До 1000 символов."
-				aiCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+				aiCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				resp, aiErr := cfg.AIClient.Chat(aiCtx, &ai.ChatRequest{
 					Model: cfg.ChatModel,
 					Messages: []ai.ChatMessage{

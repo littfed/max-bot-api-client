@@ -214,7 +214,7 @@ func RegisterWebappScenario(
 
 		generatedText := ""
 		if aiClient != nil {
-			aiCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			aiCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			resp, err := aiClient.Chat(aiCtx, &ai.ChatRequest{
 				Model: chatModel,
 				Messages: []ai.ChatMessage{

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
@@ -206,6 +207,20 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 		// If AI is available and configured, answer as smart assistant!
 		if hood.IsAIAvailable() && aiCli != nil {
 			_ = c.Typing()
+			stopTyping := make(chan struct{})
+			go func() {
+				ticker := time.NewTicker(4 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-stopTyping:
+						return
+					case <-ticker.C:
+						_ = c.Typing()
+					}
+				}
+			}()
+
 			chatReq := &ai.ChatRequest{
 				Model: "gemini-2.5-flash",
 				Messages: []ai.ChatMessage{
@@ -214,7 +229,14 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 				},
 			}
 			chatResp, err := aiCli.Chat(c.Ctx(), chatReq)
-			if err == nil && chatResp.Content != "" {
+			if err != nil {
+				// Fallback candidate
+				chatReq.Model = "@scout"
+				chatResp, err = aiCli.Chat(c.Ctx(), chatReq)
+			}
+			close(stopTyping)
+
+			if err == nil && chatResp != nil && chatResp.Content != "" {
 				kb := maxbot.NewInlineKeyboard().
 					Row(
 						maxbot.NewCallbackButton("💬 Начать диалог с памятью", "ai:chat:start"),

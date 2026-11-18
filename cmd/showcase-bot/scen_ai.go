@@ -135,6 +135,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(maxbot.NewCallbackButton("🎨 2. Генерация картинок (Flux)", "ai:image:start")).
 			Row(maxbot.NewCallbackButton("🎙️ 3. Распознавание голоса (Whisper)", "ai:voice:start")).
 			Row(maxbot.NewCallbackButton("🔊 4. Генерация голоса (TTS)", "ai:tts:start")).
+			Row(maxbot.NewCallbackButton("⚙️ Выбор модели LLM", "ai:models")).
 			Row(maxbot.NewCallbackButton("🔄 Очистить контекст диалога", "ai:clear_context")).
 			Row(maxbot.NewCallbackButton("◀️ Главное меню", "nav:menu"))
 
@@ -170,6 +171,15 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			_ = fsmCtx.SetState("AI_STEP_CHAT")
 		}
 
+		activeModel := config.ChatModel
+		if fsmCtx != nil {
+			if m, ok := fsmCtx.Get("ai_active_chat_model"); ok {
+				if mStr, isStr := m.(string); isStr && mStr != "" {
+					activeModel = mStr
+				}
+			}
+		}
+
 		userID := getUserID(c)
 		history := loadChatHistory(fsmCtx)
 
@@ -182,9 +192,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			"• «Напиши функцию на Go для валидации email»\n"+
 			"• «Составь план тренировок на 3 дня»\n"+
 			"• «Объясни принцип работы HTTP/3 простыми словами»",
-			config.ChatModel, len(history))
+			activeModel, len(history))
 
 		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models")).
 			Row(maxbot.NewCallbackButton("🔄 Очистить контекст", "ai:clear_context")).
 			Row(
 				maxbot.NewCallbackButton("🎨 Нарисовать картинку", "ai:image:start"),
@@ -194,6 +205,59 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		formatted := hood.Format(userID, text, "ai_chat")
 		_, err := c.ReplyKeyboard(formatted, kb)
+		return err
+	})
+
+	// 4a. Model Selection Submenu (ai:models)
+	b.OnCallbackPayload("ai:models", func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
+		fsmCtx := fsm.FromContext(c)
+		activeModel := config.ChatModel
+		if fsmCtx != nil {
+			if m, ok := fsmCtx.Get("ai_active_chat_model"); ok {
+				if mStr, isStr := m.(string); isStr && mStr != "" {
+					activeModel = mStr
+				}
+			}
+		}
+
+		text := fmt.Sprintf("⚙️ **Выбор активной языковой модели (LLM)**\n\n"+
+			"• Текущая модель: `%s`\n\n"+
+			"Выберите модель для диалога:\n"+
+			"• **Gemini 2.5 Flash** — глубокое мышление и код\n"+
+			"• **@scout** — сверхбыстрый отклик (минимальный пинг)\n"+
+			"• **Garda Core** — сбалансированный русскоязычный ассистент\n"+
+			"• **GLM-4.6 Plus** — передовая мультиязычная модель", activeModel)
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("⚡ Gemini 2.5 Flash", "ai:set_model:gemini-2.5-flash")).
+			Row(maxbot.NewCallbackButton("🚀 @scout (Быстрый отклик)", "ai:set_model:@scout")).
+			Row(maxbot.NewCallbackButton("🧠 Garda Core", "ai:set_model:garda-core")).
+			Row(maxbot.NewCallbackButton("🌐 GLM-4.6 Plus", "ai:set_model:glm-4.6-plus")).
+			Row(maxbot.NewCallbackButton("◀️ Назад в диалог", "ai:chat:start"))
+
+		_, err := c.ReplyKeyboard(text, kb)
+		return err
+	})
+
+	// 4b. Set Model Callback (ai:set_model:{model})
+	b.OnCallbackPrefix("ai:set_model:", func(c *bot.Context) error {
+		cb := c.Callback()
+		if cb == nil {
+			return nil
+		}
+		newModel := strings.TrimPrefix(cb.Payload, "ai:set_model:")
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx != nil {
+			_ = fsmCtx.Set("ai_active_chat_model", newModel)
+		}
+		_ = c.AnswerNotification(fmt.Sprintf("✅ Модель переключена на %s", newModel))
+
+		text := fmt.Sprintf("✅ **Модель успешно переключена!**\n\nАктивная модель: `%s`\nТеперь бот будет генерировать ответы через эту нейросеть.", newModel)
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("💬 Продолжить диалог", "ai:chat:start")).
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
+		_, err := c.ReplyKeyboard(text, kb)
 		return err
 	})
 
@@ -213,6 +277,15 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		fsmCtx := fsm.FromContext(c)
 		history := loadChatHistory(fsmCtx)
 
+		activeModel := config.ChatModel
+		if fsmCtx != nil {
+			if m, ok := fsmCtx.Get("ai_active_chat_model"); ok {
+				if mStr, isStr := m.(string); isStr && mStr != "" {
+					activeModel = mStr
+				}
+			}
+		}
+
 		// Append user message
 		history = append(history, ai.ChatMessage{
 			Role:    ai.RoleUser,
@@ -224,8 +297,21 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			history = history[len(history)-10:]
 		}
 
-		// Send typing action
+		// Send initial typing and run background ticker for continuous indicator
 		_ = c.Typing()
+		stopTyping := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(4 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopTyping:
+					return
+				case <-ticker.C:
+					_ = c.Typing()
+				}
+			}
+		}()
 
 		// Build messages with system instruction to guarantee Russian responses
 		messagesPayload := make([]ai.ChatMessage, 0, len(history)+1)
@@ -237,15 +323,41 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		temp := 0.7
 		chatReq := &ai.ChatRequest{
-			Model:       config.ChatModel,
+			Model:       activeModel,
 			Messages:    messagesPayload,
 			Temperature: &temp,
 		}
 
-		chatResp, err := aiClient.Chat(c.Ctx(), chatReq)
-		if err != nil {
-			errText := fmt.Sprintf("⚠️ **Ошибка AI-шлюза:** %s\n\nПопробуйте повторить запрос или очистить контекст.", err.Error())
+		// Try activeModel, cascade to fallbacks if upstream is on cooldown or times out
+		candidates := []string{activeModel}
+		for _, m := range []string{"gemini-2.5-flash", "@scout", "garda-core", "glm-4.6-plus"} {
+			if m != activeModel {
+				candidates = append(candidates, m)
+			}
+		}
+
+		var chatResp *ai.ChatResponse
+		var lastErr error
+		var usedModel string
+
+		for _, m := range candidates {
+			chatReq.Model = m
+			chatResp, lastErr = aiClient.Chat(c.Ctx(), chatReq)
+			if lastErr == nil && chatResp != nil && strings.TrimSpace(chatResp.Content) != "" {
+				usedModel = m
+				break
+			}
+		}
+		close(stopTyping)
+
+		if chatResp == nil || strings.TrimSpace(chatResp.Content) == "" {
+			errDesc := "неизвестная ошибка"
+			if lastErr != nil {
+				errDesc = lastErr.Error()
+			}
+			errText := fmt.Sprintf("⚠️ **Ошибка AI-шлюза:** %s\n\nМодель временно перегружена. Вы можете переключить модель на `@scout` для быстрого ответа или очистить контекст.", errDesc)
 			kb := maxbot.NewInlineKeyboard().
+				Row(maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models")).
 				Row(maxbot.NewCallbackButton("🔄 Очистить контекст", "ai:clear_context")).
 				Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 			_, rErr := c.ReplyKeyboard(errText, kb)
@@ -253,9 +365,6 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 
 		replyText := chatResp.Content
-		if replyText == "" {
-			replyText = "Нейросеть сформировала пустой ответ."
-		}
 
 		// Append assistant response to history and save
 		history = append(history, ai.ChatMessage{
@@ -271,12 +380,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 
 		// Update card telemetry
+		modelReport := usedModel
+		if usedModel != activeModel && usedModel != "" {
+			modelReport = fmt.Sprintf("%s (резерв вместо %s)", usedModel, activeModel)
+		}
 		hood.Register("ai_chat", TechCard{
 			Title:       "AI-Диалог & Скользящее окно контекста (Sliding Window)",
 			Endpoint:    "/v1/chat/completions",
 			Method:      "POST",
 			FSMState:    "AI_STEP_CHAT",
-			Description: fmt.Sprintf("Модель: %s | Задержка: %s | Токенов: %d | История: %d/10 сообщений.", config.ChatModel, chatResp.Latency.Round(time.Millisecond), chatResp.TotalTokens, len(history)),
+			Description: fmt.Sprintf("Модель: %s | Задержка: %s | Токенов: %d | История: %d/10 сообщений.", modelReport, chatResp.Latency.Round(time.Millisecond), chatResp.TotalTokens, len(history)),
 			DocsLink:    "https://platform.openai.com/docs/api-reference/chat",
 		})
 
@@ -290,7 +403,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
 
 		formatted := hood.Format(userID, replyText, "ai_chat")
-		_, err = c.ReplyKeyboard(formatted, kb)
+		_, err := c.ReplyKeyboard(formatted, kb)
 		return err
 	})
 

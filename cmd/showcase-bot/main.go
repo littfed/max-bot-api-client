@@ -133,14 +133,28 @@ func main() {
 		voiceModel = "scout-audio"
 	}
 
-	aiClient := ai.NewClient(aiGatewayURL, aiGatewayKey, ai.WithTimeout(30*time.Second))
+	aiClient := ai.NewClient(aiGatewayURL, aiGatewayKey, ai.WithTimeout(120*time.Second))
 
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 25*time.Second)
 	if err := aiClient.Ping(pingCtx); err == nil {
 		hood.SetAIAvailable(true)
 		logger.Info("AI Gateway успешно подключен", slog.String("url", aiGatewayURL), slog.String("chat_model", chatModel))
 	} else {
-		logger.Info("AI Gateway оффлайн или не запущен при старте (AI раздел скрыт из меню)", slog.String("url", aiGatewayURL), slog.Any("error", err))
+		logger.Info("AI Gateway оффлайн или не запущен при старте (AI раздел временно скрыт, запущен фоновый ретрай)", slog.String("url", aiGatewayURL), slog.Any("error", err))
+		// Background retry: re-probe periodically so when gateway warms up, AI becomes available automatically
+		go func() {
+			for i := 0; i < 12; i++ {
+				time.Sleep(15 * time.Second)
+				retryCtx, retryCancel := context.WithTimeout(context.Background(), 20*time.Second)
+				if err := aiClient.Ping(retryCtx); err == nil {
+					hood.SetAIAvailable(true)
+					logger.Info("AI Gateway успешно подключен после повторной проверки", slog.String("url", aiGatewayURL))
+					retryCancel()
+					break
+				}
+				retryCancel()
+			}
+		}()
 	}
 	pingCancel()
 
