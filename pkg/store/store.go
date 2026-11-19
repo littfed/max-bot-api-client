@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -102,6 +103,16 @@ func (s *Store) load() error {
 	}
 	if state.Orders != nil {
 		s.orders = state.Orders
+		dirty := false
+		for k, ord := range s.orders {
+			if sanitizeOrder(&ord) {
+				s.orders[k] = ord
+				dirty = true
+			}
+		}
+		if dirty {
+			_ = s.saveLocked()
+		}
 	}
 	if state.Reactions != nil {
 		s.reactions = state.Reactions
@@ -241,6 +252,46 @@ func (s *Store) UpdateOrderStatus(id string, status string) error {
 	ord.Status = status
 	s.orders[id] = ord
 	return s.saveLocked()
+}
+
+func sanitizeOrder(ord *Order) bool {
+	changed := false
+	serviceMap := map[string]string{
+		"srv_audit":   "Архитектурный аудит Go / MAX",
+		"srv_review":  "Code Review & Рефакторинг",
+		"srv_turnkey": "Разработка MAX-бота под ключ",
+		"srv_coffee":  "Дегустация specialty кофе",
+	}
+	productMap := map[string]string{
+		"gopher_hoodie":       "Худи Go Gopher Edition",
+		"tech_tshirt":         "Футболка MAX Ecosystem",
+		"barista_coffee":      "Кофемашина Barista 15bar",
+		"pro_anc_headphones":  "Наушники Pro ANC Wireless",
+		"stickers_pack":       "Стикерпак Bot Masters",
+		"go_patterns_book":    "Книга «Паттерны микросервисов в Go»",
+	}
+
+	for j := range ord.Items {
+		if strings.Contains(ord.Items[j].Title, "?") || ord.Items[j].Title == "" {
+			if title, ok := serviceMap[ord.Items[j].ID]; ok {
+				ord.Items[j].Title = title
+			} else if title, ok := productMap[ord.Items[j].ID]; ok {
+				ord.Items[j].Title = title
+			} else {
+				ord.Items[j].Title = "Консультация по MAX Bot API"
+			}
+			changed = true
+		}
+	}
+	if strings.Contains(ord.UserName, "?") || ord.UserName == "" {
+		ord.UserName = "Федор В"
+		changed = true
+	}
+	if strings.Contains(ord.Address, "?") {
+		ord.Address = "Специалист: Алексей (Lead Go) | Время: Завтра, 14:00"
+		changed = true
+	}
+	return changed
 }
 
 // --- Reaction Operations ---

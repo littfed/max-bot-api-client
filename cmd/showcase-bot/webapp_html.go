@@ -577,7 +577,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/action', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify(payload)
         });
         const data = await res.json();
@@ -624,7 +624,7 @@ const miniAppHTML = `<!DOCTYPE html>
       }
       const res = await fetch('/api/webapp/publish_post', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: JSON.stringify({
           channel_id: parseInt(channelID, 10),
           user_id: currentUser.id,
@@ -679,7 +679,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/action', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify(payload)
         });
         const data = await res.json();
@@ -721,7 +721,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/generate_image', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({
             prompt: prompt,
             style: selectedStyle,
@@ -766,7 +766,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/ai_chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({
             prompt: prompt,
             model: model,
@@ -791,7 +791,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/generate_post', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({ prompt: prompt, user_id: currentUser.id })
         });
         const data = await res.json();
@@ -829,7 +829,7 @@ const miniAppHTML = `<!DOCTYPE html>
 
       const res = await fetch('/api/webapp/publish_post', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: JSON.stringify({
           channel_id: channelID,
           user_id: currentUser.id,
@@ -853,7 +853,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/spin', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({ user_id: currentUser.id })
         });
         const data = await res.json();

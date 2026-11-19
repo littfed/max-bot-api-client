@@ -84,14 +84,27 @@ func RegisterWebappScenario(
 			}
 		}
 
+		productMap := map[string]string{
+			"gopher_hoodie":      "Худи Go Gopher Edition",
+			"tech_tshirt":        "Футболка MAX Ecosystem",
+			"barista_coffee":     "Кофемашина Barista 15bar",
+			"pro_anc_headphones": "Наушники Pro ANC Wireless",
+			"stickers_pack":      "Стикерпак Bot Masters",
+			"go_patterns_book":   "Книга «Паттерны микросервисов в Go»",
+		}
+
 		// Store order in persistence layer
 		if appStore != nil {
 			var orderItems []store.OrderItem
 			for id, qty := range cartData.Items {
 				if qty > 0 {
+					title := id
+					if mapped, ok := productMap[id]; ok {
+						title = mapped
+					}
 					orderItems = append(orderItems, store.OrderItem{
 						ID:       id,
-						Title:    id,
+						Title:    title,
 						Quantity: qty,
 					})
 				}
@@ -116,9 +129,13 @@ func RegisterWebappScenario(
 			}
 
 			itemLines := make([]string, 0)
-			for name, qty := range cartData.Items {
+			for id, qty := range cartData.Items {
 				if qty > 0 {
-					itemLines = append(itemLines, fmt.Sprintf("• %s: %d шт.", name, qty))
+					title := id
+					if mapped, ok := productMap[id]; ok {
+						title = mapped
+					}
+					itemLines = append(itemLines, fmt.Sprintf("• %s: %d шт.", title, qty))
 				}
 			}
 			itemsStr := strings.Join(itemLines, "\n")
@@ -185,8 +202,26 @@ func RegisterWebappScenario(
 			userName = req.UserName
 		}
 
-		if req.ServiceName == "" {
+		serviceMap := map[string]string{
+			"srv_audit":   "Архитектурный аудит Go / MAX",
+			"srv_review":  "Code Review & Рефакторинг",
+			"srv_turnkey": "Разработка MAX-бота под ключ",
+			"srv_coffee":  "Дегустация specialty кофе",
+		}
+		if canonical, ok := serviceMap[req.ServiceID]; ok {
+			req.ServiceName = canonical
+		} else if strings.Contains(req.ServiceName, "?") || req.ServiceName == "" {
 			req.ServiceName = "Консультация по MAX Bot API"
+		}
+
+		if strings.Contains(req.Specialist, "?") || req.Specialist == "" {
+			req.Specialist = "Алексей — Lead Go / Архитектор MAX"
+		}
+		if strings.Contains(req.Slot, "?") || req.Slot == "" {
+			req.Slot = "Завтра, 11:00"
+		}
+		if strings.Contains(userName, "?") || userName == "" {
+			userName = "Федор В"
 		}
 
 		// Store booking in persistence layer
