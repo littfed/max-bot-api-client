@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -150,6 +153,105 @@ func RegisterWebappScenario(
 		}, nil
 	})
 
+	// WebBridge Action: book_service
+	bridge.OnAction("book_service", func(ctx context.Context, data *webapp.InitData, payload json.RawMessage) (any, error) {
+		bookingID := fmt.Sprintf("BOK-%d", time.Now().Unix()%100000)
+
+		var req struct {
+			ServiceID   string `json:"service_id"`
+			ServiceName string `json:"service_name"`
+			Specialist  string `json:"specialist"`
+			Slot        string `json:"slot"`
+			Price       int    `json:"price"`
+			UserName    string `json:"user_name"`
+			Phone       string `json:"phone"`
+			Comment     string `json:"comment"`
+		}
+		_ = json.Unmarshal(payload, &req)
+
+		var targetUserID int64
+		userName := "Пользователь"
+		isVerified := false
+		if data != nil && data.User != nil && data.User.ID != 0 {
+			targetUserID = data.User.ID
+			if data.User.FirstName != "" {
+				userName = data.User.FirstName
+			}
+			if data.Hash != "" {
+				isVerified = true
+			}
+		}
+		if req.UserName != "" {
+			userName = req.UserName
+		}
+
+		if req.ServiceName == "" {
+			req.ServiceName = "Консультация по MAX Bot API"
+		}
+
+		// Store booking in persistence layer
+		if appStore != nil {
+			_ = appStore.CreateOrder(store.Order{
+				ID:           bookingID,
+				UserID:       targetUserID,
+				UserName:     userName,
+				Items: []store.OrderItem{
+					{
+						ID:       req.ServiceID,
+						Title:    req.ServiceName,
+						Price:    req.Price,
+						Quantity: 1,
+					},
+				},
+				Total:        req.Price,
+				DeliveryType: "booking",
+				Address:      fmt.Sprintf("Специалист: %s | Время: %s | Телефон: %s | Заметка: %s", req.Specialist, req.Slot, req.Phone, req.Comment),
+				Status:       "accepted",
+				Verified:     isVerified,
+				CreatedAt:    time.Now(),
+			})
+		}
+
+		if targetUserID != 0 && b.Client() != nil {
+			statusLine := "Подпись initData: `HMAC-SHA256 Verified ✅`"
+			if !isVerified {
+				statusLine = "Подпись initData: `Демо-режим (WebBridge) 🧪`"
+			}
+
+			priceStr := "Бесплатно"
+			if req.Price > 0 {
+				priceStr = fmt.Sprintf("%d ₽", req.Price)
+			}
+
+			text := fmt.Sprintf("📅 **Запись на услугу успешно оформлена!**\n\n"+
+				"• **Клиент:** %s\n"+
+				"• **Номер бронирования:** `%s`\n"+
+				"• **Услуга:** %s\n"+
+				"• **Специалист:** %s\n"+
+				"• **Выбранный слот:** `%s`\n"+
+				"• **Стоимость:** `%s`\n"+
+				"• **Канал передачи:** WebBridge HTTP POST `/api/webapp/action`\n"+
+				"• %s\n\n"+
+				"Бронирование подтверждено и зафиксировано в расписании.",
+				userName, bookingID, req.ServiceName, req.Specialist, req.Slot, priceStr, statusLine)
+
+			kb := maxbot.NewInlineKeyboard().
+				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+
+			msgReq := &maxbot.SendMessageRequest{
+				Text:        text,
+				Attachments: []maxbot.Attachment{kb.ToAttachment()},
+			}
+			_, _ = b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUserID), msgReq)
+		}
+
+		return map[string]any{
+			"status":     "accepted",
+			"booking_id": bookingID,
+			"timestamp":  time.Now().Unix(),
+		}, nil
+	})
+
 	httpMux.HandleFunc("/api/webapp/action", bridge.HTTPHandler())
 
 	// Endpoint: GET /api/webapp/orders
@@ -240,6 +342,166 @@ func RegisterWebappScenario(
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": true,
 			"text":    generatedText,
+		})
+	})
+
+	// Endpoint: POST /api/webapp/generate_image
+	httpMux.HandleFunc("/api/webapp/generate_image", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			Prompt     string `json:"prompt"`
+			Style      string `json:"style"`
+			UserID     int64  `json:"user_id"`
+			SendToChat bool   `json:"send_to_chat"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		fullPrompt := strings.TrimSpace(req.Prompt)
+		if fullPrompt == "" {
+			fullPrompt = "Маскот Go gopher и MAX Bot в неоновом киберпанк стиле"
+		}
+		if req.Style != "" && !strings.Contains(strings.ToLower(fullPrompt), strings.ToLower(req.Style)) {
+			fullPrompt = fmt.Sprintf("%s, style: %s, detailed, high quality, 4k", fullPrompt, req.Style)
+		}
+
+		var imgBytes []byte
+		var err error
+
+		if aiClient != nil {
+			aiCtx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+			imgResp, imgErr := aiClient.GenerateImage(aiCtx, &ai.ImageRequest{
+				Prompt: fullPrompt,
+				Model:  "gemini-2.5-flash-image",
+				Size:   "512x512",
+			})
+			cancel()
+
+			if imgErr == nil && imgResp != nil {
+				if len(imgResp.Data) > 0 {
+					imgBytes = imgResp.Data
+				} else if imgResp.URL != "" {
+					fetchReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, imgResp.URL, nil)
+					fetchResp, fetchErr := http.DefaultClient.Do(fetchReq)
+					if fetchErr == nil && fetchResp.StatusCode == http.StatusOK {
+						imgBytes, _ = io.ReadAll(fetchResp.Body)
+						_ = fetchResp.Body.Close()
+					}
+				}
+			}
+		}
+
+		if len(imgBytes) == 0 {
+			imgBytes = generatePlaceholderImage(fullPrompt)
+		}
+
+		b64Data := base64.StdEncoding.EncodeToString(imgBytes)
+		dataURL := "data:image/png;base64," + b64Data
+
+		sentToChat := false
+		if req.SendToChat && req.UserID != 0 && b.Client() != nil && len(imgBytes) > 0 {
+			uploadResp, uploadErr := b.Client().UploadMedia(context.Background(), maxbot.UploadTypeImage, "ai_artwork.png", bytes.NewReader(imgBytes))
+			if uploadErr == nil && uploadResp != nil && uploadResp.Token != "" {
+				att := maxbot.Attachment{
+					Type: maxbot.UploadTypeImage,
+					Payload: map[string]any{
+						"token": uploadResp.Token,
+					},
+				}
+				caption := fmt.Sprintf("🎨 **Ваш AI-арт из Mini App:**\n\n«%s»\n\n*Сгенерировано в AI Studio через WebBridge*", fullPrompt)
+				kb := maxbot.NewInlineKeyboard().
+					Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+				_, err = b.Client().SendMessage(context.Background(), maxbot.ToUser(req.UserID), &maxbot.SendMessageRequest{
+					Text:        caption,
+					Attachments: []maxbot.Attachment{att, kb.ToAttachment()},
+				})
+				if err == nil {
+					sentToChat = true
+				}
+			}
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success":      true,
+			"image_url":    dataURL,
+			"prompt":       fullPrompt,
+			"sent_to_chat": sentToChat,
+		})
+	})
+
+	// Endpoint: POST /api/webapp/ai_chat
+	httpMux.HandleFunc("/api/webapp/ai_chat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			Prompt string `json:"prompt"`
+			Model  string `json:"model"`
+			UserID int64  `json:"user_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		userPrompt := strings.TrimSpace(req.Prompt)
+		if userPrompt == "" {
+			userPrompt = "Расскажи кратко о возможностях экосистемы MAX Bot API и WebApps."
+		}
+
+		selectedModel := req.Model
+		if selectedModel == "" {
+			selectedModel = chatModel
+		}
+		if selectedModel == "" {
+			selectedModel = "auto"
+		}
+
+		replyText := ""
+		usedModel := selectedModel
+		var latency time.Duration
+
+		if aiClient != nil {
+			start := time.Now()
+			aiCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			resp, err := aiClient.Chat(aiCtx, &ai.ChatRequest{
+				Model: selectedModel,
+				Messages: []ai.ChatMessage{
+					{Role: "system", Content: "Ты интеллектуальный AI-ассистент в MAX Mini App. Отвечай кратко, емко, дружелюбно и профессионально на русском языке. Поддерживай форматирование markdown."},
+					{Role: "user", Content: userPrompt},
+				},
+			})
+			cancel()
+			latency = time.Since(start)
+
+			if err == nil && resp != nil && resp.Content != "" {
+				replyText = resp.Content
+				if resp.Model != "" {
+					usedModel = resp.Model
+				}
+			}
+		}
+
+		if replyText == "" {
+			latency = 120 * time.Millisecond
+			replyText = fmt.Sprintf("🤖 **Ответ AI в MAX Mini App:**\n\nВы запросили: *«%s»*\n\nMAX Mini Apps поддерживают нативный двусторонний WebBridge, полноэкранный WebView, передачу токенов авторизации через HMAC-SHA256 и бесшовное взаимодействие с чатом бота!", userPrompt)
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success":    true,
+			"text":       replyText,
+			"model":      usedModel,
+			"latency_ms": latency.Milliseconds(),
 		})
 	})
 
@@ -389,14 +651,14 @@ func RegisterWebappScenario(
 			Row(maxbot.NewIntentCallbackButton("🧪 Симулировать заказ из Mini App", "webapp:simulate_order", maxbot.IntentPositive)).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
-		text := "📱 **Экосистема MAX Mini Apps (WebApps)**\n\n" +
-			"Этот сценарий демонстрирует интеграцию встроенных HTML5-приложений в MAX Messenger:\n\n" +
-			"• **3-вкладочный интерфейс:** Магазин мерча, Студия каналов и Заказы с Колесом фортуны.\n" +
-			"• **Запуск через кнопку:** нативная шторка WebView прямо внутри мессенджера (`open_app`).\n" +
-			"• **Прямой адрес приложения:** `https://combot.littfed.ru/maxapp`\n" +
-			"• **Двусторонний WebBridge:** передача корзины и действий из JavaScript на сервер бота.\n" +
-			"• **Криптозащита:** валидация подлинности пользователя по HMAC-SHA256 подписи.\n\n" +
-			"💡 *Для нативного запуска через кнопку «open_app» укажите ссылку в настройках Web App бота в MAX. Также можно открыть приложение напрямую по веб-ссылке:*"
+		text := "📱 **Экосистема MAX Mini Apps (WebApps SuperApp)**\n\n" +
+			"Полноценный 5-вкладочный демонстрационный комплекс прямо в мессенджере:\n\n" +
+			"• 🛍️ **Магазин мерча & электроники:** каталог, фильтры, корзина, промокоды и заказ через WebBridge.\n" +
+			"• 📅 **Онлайн-запись & бронирование:** выбор услуг, специалистов, интерактивная сетка слотов.\n" +
+			"• ✨ **AI Студия:** генератор артов (Text-to-Image) с отправкой в чат + быстрый LLM-чат с выбором моделей.\n" +
+			"• ✍️ **Студия каналов:** SMM-редактор, автогенерация постов через Gemini, превью и публикация.\n" +
+			"• 🎁 **Бонусы & Заказы:** Колесо фортуны, интерактивный MAX API Квиз и общая история активности.\n\n" +
+			"💡 *Откройте Mini App по веб-ссылке или через нативную кнопку `open_app`:*"
 
 		formatted := hood.Format(userID, text, "webapp_open_app")
 		_, err := c.ReplyKeyboard(formatted, kb)

@@ -129,4 +129,67 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 	if pubResp["success"] == true {
 		t.Fatalf("expected publish_post to reject non-owner, got success=true")
 	}
+
+	// 9. Test WebBridge Action book_service
+	bookJSON, _ := json.Marshal(map[string]any{
+		"action":    "book_service",
+		"init_data": "demo=true&user_id=888",
+		"payload": map[string]any{
+			"service_id":   "srv_audit",
+			"service_name": "Архитектурный аудит Go / MAX",
+			"price":        5000,
+			"specialist":   "Алексей (Lead Go)",
+			"slot":         "Завтра, 14:00",
+			"user_name":    "Федор В",
+			"phone":        "+7 999 123-45-67",
+			"comment":      "Хочу аудит WebApp",
+		},
+	})
+	bookReq := httptest.NewRequest(http.MethodPost, "/api/webapp/action", bytes.NewReader(bookJSON))
+	bookRec := httptest.NewRecorder()
+	mux.ServeHTTP(bookRec, bookReq)
+	if bookRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for book_service action, got %d", bookRec.Code)
+	}
+	var bookResp map[string]any
+	_ = json.Unmarshal(bookRec.Body.Bytes(), &bookResp)
+	if bookResp["success"] != true {
+		t.Fatalf("expected success=true for book_service, got %v", bookResp)
+	}
+
+	// 10. Test POST /api/webapp/generate_image
+	imgGenJSON, _ := json.Marshal(map[string]any{
+		"prompt": "Go Gopher Mascot",
+		"style":  "cyberpunk",
+		"user_id": 888,
+	})
+	imgGenReq := httptest.NewRequest(http.MethodPost, "/api/webapp/generate_image", bytes.NewReader(imgGenJSON))
+	imgGenRec := httptest.NewRecorder()
+	mux.ServeHTTP(imgGenRec, imgGenReq)
+	if imgGenRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/webapp/generate_image, got %d", imgGenRec.Code)
+	}
+	var imgGenResp map[string]any
+	_ = json.Unmarshal(imgGenRec.Body.Bytes(), &imgGenResp)
+	if imgGenResp["success"] != true || imgGenResp["image_url"] == "" {
+		t.Fatalf("expected image_url in response, got %v", imgGenResp)
+	}
+
+	// 11. Test POST /api/webapp/ai_chat
+	chatJSON, _ := json.Marshal(map[string]any{
+		"prompt":  "Расскажи про MAX Bot API",
+		"model":   "auto",
+		"user_id": 888,
+	})
+	chatReq := httptest.NewRequest(http.MethodPost, "/api/webapp/ai_chat", bytes.NewReader(chatJSON))
+	chatRec := httptest.NewRecorder()
+	mux.ServeHTTP(chatRec, chatReq)
+	if chatRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/webapp/ai_chat, got %d", chatRec.Code)
+	}
+	var chatResp map[string]any
+	_ = json.Unmarshal(chatRec.Body.Bytes(), &chatResp)
+	if chatResp["success"] != true || chatResp["text"] == "" {
+		t.Fatalf("expected text in chat response, got %v", chatResp)
+	}
 }
