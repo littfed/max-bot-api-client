@@ -286,7 +286,10 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 		}
 
 		// If AI is available and configured, answer as smart assistant with full conversational context!
-		if hood.IsAIAvailable() && aiCli != nil {
+		if (hood.IsAIAvailable() || globalAIDispatcher != nil) && aiCli != nil {
+			if globalAIDispatcher != nil {
+				return globalAIDispatcher(c)
+			}
 			fsmCtx := fsm.FromContext(c)
 			activeModel := "auto"
 			if fsmCtx != nil {

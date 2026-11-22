@@ -97,6 +97,7 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 
 	// 2. Setup Showcase Bot with AI Client
 	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
 	storage := fsm.NewMemoryStorage(10 * time.Minute)
 	defer storage.Close()
 
@@ -105,6 +106,7 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 	botInstance := bot.NewWithClient(nil)
 	botInstance.Use(fsm.Middleware(storage))
 	hood.RegisterRoutes(botInstance.Router())
+	RegisterMenuRoutes(botInstance, hood, aiClient)
 	RegisterAIScenario(botInstance, hood, aiClient)
 
 	userID := int64(777)
@@ -373,6 +375,7 @@ func TestOnIdleMessageContextPreservation(t *testing.T) {
 	botInstance.Use(fsm.Middleware(storage))
 
 	RegisterMenuRoutes(botInstance, hood, aiClient)
+	RegisterMenuRoutes(botInstance, hood, aiClient)
 	RegisterAIScenario(botInstance, hood, aiClient)
 
 	key := fsm.SessionKey{UserID: 101, ChatID: 101}
@@ -450,6 +453,7 @@ func TestVisionImageRecognitionPrompt(t *testing.T) {
 	defer mockServer.Close()
 
 	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
 	storage := fsm.NewMemoryStorage(10 * time.Minute)
 	defer storage.Close()
 
@@ -457,6 +461,7 @@ func TestVisionImageRecognitionPrompt(t *testing.T) {
 	botInstance := bot.NewWithClient(nil)
 	botInstance.Use(fsm.Middleware(storage))
 
+	RegisterMenuRoutes(botInstance, hood, aiClient)
 	RegisterMenuRoutes(botInstance, hood, aiClient)
 	RegisterAIScenario(botInstance, hood, aiClient)
 
@@ -531,6 +536,7 @@ func TestUnifiedDispatcherTransitions(t *testing.T) {
 	defer mockServer.Close()
 
 	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
 	storage := fsm.NewMemoryStorage(10 * time.Minute)
 	defer storage.Close()
 
@@ -538,6 +544,7 @@ func TestUnifiedDispatcherTransitions(t *testing.T) {
 	botInstance := bot.NewWithClient(nil)
 	botInstance.Use(fsm.Middleware(storage))
 
+	RegisterMenuRoutes(botInstance, hood, aiClient)
 	RegisterMenuRoutes(botInstance, hood, aiClient)
 	RegisterAIScenario(botInstance, hood, aiClient)
 
@@ -625,6 +632,7 @@ func TestUnifiedDispatcherTransitions(t *testing.T) {
 
 func TestStreamlinedUXAndCommands(t *testing.T) {
 	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
 	storage := fsm.NewMemoryStorage(10 * time.Minute)
 	defer storage.Close()
 
@@ -714,5 +722,167 @@ func TestStreamlinedUXAndCommands(t *testing.T) {
 
 	if err := botInstance.Router().Handle(modelCtx); err != nil {
 		t.Fatalf("handle /model failed: %v", err)
+	}
+}
+
+func TestSmartIntentDrawingAndWebLinks(t *testing.T) {
+	// 1. Test extractDrawingPrompt heuristics
+	drawCases := []struct {
+		input     string
+		expPrompt string
+		expDraw   bool
+	}{
+		{"нарисуй рыжего кота в скафандре", "рыжего кота в скафандре", true},
+		{"Пожалуйста, нарисуй красивый закат", "красивый закат", true},
+		{"Сгенерируй изображение: космический корабль", "космический корабль", true},
+		{"Создай арт в стиле аниме", "в стиле аниме", true},
+		{"/img neon cyberpunk city", "neon cyberpunk city", true},
+		{"/image red dragon", "red dragon", true},
+		{"Кто автор фразы 'нарисуй мне барашка'?", "", false},
+		{"Как ты думаешь, что лучше нарисовать?", "", false},
+		{"нарисуй", "", false},
+		{"Привет, как дела?", "", false},
+	}
+
+	for _, tc := range drawCases {
+		prompt, isDraw := extractDrawingPrompt(tc.input)
+		if isDraw != tc.expDraw {
+			t.Errorf("input %q: expected isDraw=%v, got %v", tc.input, tc.expDraw, isDraw)
+		}
+		if isDraw && prompt != tc.expPrompt {
+			t.Errorf("input %q: expected prompt %q, got %q", tc.input, tc.expPrompt, prompt)
+		}
+	}
+
+	// 2. Test extractURL heuristics
+	urlCases := []struct {
+		input    string
+		expURL   string
+		expQuery string
+		expOk    bool
+	}{
+		{"https://go.dev/doc", "https://go.dev/doc", "", true},
+		{"Вот статья https://example.com/blog/test. Что думаешь?", "https://example.com/blog/test", "Вот статья Что думаешь?", true},
+		{"Обычный текст без ссылок", "", "", false},
+	}
+
+	for _, tc := range urlCases {
+		rawURL, query, ok := extractURL(tc.input)
+		if ok != tc.expOk {
+			t.Errorf("input %q: expected ok=%v, got %v", tc.input, tc.expOk, ok)
+		}
+		if ok && (rawURL != tc.expURL || query != tc.expQuery) {
+			t.Errorf("input %q: expected (%q, %q), got (%q, %q)", tc.input, tc.expURL, tc.expQuery, rawURL, query)
+		}
+	}
+
+	// 3. Test fetchAndExtractWebPageText with local test server
+	webServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!DOCTYPE html>
+<html>
+<head>
+    <title>Go 1.22 Release Notes & Updates</title>
+    <script>var x = 123; function test() { return 1; }</script>
+    <style>body { background: #000; color: #fff; }</style>
+</head>
+<body>
+    <h1>Go 1.22 is released</h1>
+    <p>Go 1.22 introduces loop variable scoping changes and net/http routing enhancements.</p>
+</body>
+</html>`))
+	}))
+	defer webServer.Close()
+
+	title, content, err := fetchAndExtractWebPageText(context.Background(), webServer.URL)
+	if err != nil {
+		t.Fatalf("fetchAndExtractWebPageText failed: %v", err)
+	}
+	if title != "Go 1.22 Release Notes & Updates" {
+		t.Errorf("expected title 'Go 1.22 Release Notes & Updates', got %q", title)
+	}
+	if strings.Contains(content, "<script>") || strings.Contains(content, "var x = 123") {
+		t.Errorf("expected scripts to be stripped from content, got: %s", content)
+	}
+	if strings.Contains(content, "<style>") || strings.Contains(content, "background: #000") {
+		t.Errorf("expected styles to be stripped from content, got: %s", content)
+	}
+	if !strings.Contains(content, "Go 1.22 is released") || !strings.Contains(content, "loop variable scoping") {
+		t.Errorf("expected body text in content, got: %s", content)
+	}
+
+	// 4. Test Bot handling of web link message
+	mockAIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			resp := map[string]any{
+				"id":      "chatcmpl-test",
+				"model":   "auto",
+				"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "В Go 1.22 обновлен scoping переменных цикла."}}},
+				"usage":   map[string]any{"total_tokens": 40},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockAIServer.Close()
+
+	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	aiClient := ai.NewClient(mockAIServer.URL, "test-api-key")
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+
+	RegisterMenuRoutes(botInstance, hood, aiClient)
+	RegisterAIScenario(botInstance, hood, aiClient)
+
+	// Send web URL message to bot
+	c := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 808, FirstName: "Tester"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 808, UserID: 808, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: webServer.URL + " Сделай краткое резюме"},
+		},
+	})
+	key := fsm.SessionKey{UserID: 808, ChatID: 808}
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, key)
+	c.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(c); err != nil {
+		t.Fatalf("handle web URL failed: %v", err)
+	}
+
+	history := loadChatHistory(fsmCtx)
+	if len(history) != 2 {
+		t.Fatalf("expected 2 messages in history after web link summary, got %d", len(history))
+	}
+	if history[1].Content != "В Go 1.22 обновлен scoping переменных цикла." {
+		t.Fatalf("unexpected reply in history: %s", history[1].Content)
+	}
+
+	// 5. Test Drawing Intent through unified dispatcher
+	drawCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 808, FirstName: "Tester"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 808, UserID: 808, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: "нарисуй футуристический космодром"},
+		},
+	})
+	drawCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(drawCtx); err != nil {
+		t.Fatalf("handle drawing intent failed: %v", err)
+	}
+
+	// Verify state transitioned to AI_STEP_CHAT after drawing
+	st, _ := fsmCtx.GetState()
+	if st != "AI_STEP_CHAT" {
+		t.Errorf("expected state AI_STEP_CHAT after drawing generation, got %q", st)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"image"
 	"image/color"
 	"image/png"
@@ -24,6 +25,9 @@ import (
 )
 
 const aiSystemPrompt = "Ты дружелюбный и умный AI-ассистент в мессенджере MAX. Отвечай всегда грамотно, четко, доброжелательно и строго на естественном русском языке. Используй красивую разметку и отвечай по существу."
+
+// globalAIDispatcher is the active AI message router used by idle handlers across the bot.
+var globalAIDispatcher func(c *bot.Context) error
 
 // generatePlaceholderImage creates a valid in-memory PNG card showcasing MAX photo attachments.
 func generatePlaceholderImage(prompt string) []byte {
@@ -288,6 +292,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 	var deliverImageGen func(c *bot.Context, prompt string) error
 	var processVoiceAudio func(c *bot.Context, audioBytes []byte, filename string) error
 	var processTextConversation func(c *bot.Context, userText string) error
+	var processWebPageSummary func(c *bot.Context, rawURL, userQuery string) error
 	var dispatchAIMessage func(c *bot.Context) error
 
 	// Helper for Multimodal Vision Image Recognition
@@ -598,7 +603,8 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		fsmCtx := fsm.FromContext(c)
 		if fsmCtx != nil {
 			_ = fsmCtx.Set("last_image_prompt", prompt)
-			_ = fsmCtx.SetState("AI_STEP_IMAGE")
+			_ = fsmCtx.Set("ai_awaiting_image_prompt", false)
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
 		}
 
 		_ = c.SendChatAction(maxbot.ActionSendingPhoto)
@@ -689,11 +695,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		formatted := hood.Format(userID, caption, "ai_image")
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("🔄 Сгенерировать еще (новый вариант)", "ai:image:retry")).
-			Row(maxbot.NewCallbackButton("✍️ Другой сюжет", "ai:image:start")).
 			Row(
-				maxbot.NewCallbackButton("💬 В AI Чат", "ai:chat:start"),
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
+				maxbot.NewCallbackButton("🔄 Новый вариант", "ai:image:retry"),
+				maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
 			)
 
 		// Upload to MAX CDN if client is available
@@ -725,6 +729,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		fsmCtx := fsm.FromContext(c)
 		if fsmCtx != nil {
 			_ = fsmCtx.SetState("AI_STEP_IMAGE")
+			_ = fsmCtx.Set("ai_awaiting_image_prompt", true)
 		}
 
 		userID := getUserID(c)
@@ -798,19 +803,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return deliverImageGen(c, "Огромная космическая исследовательская станция на фоне колец Сатурна, кинематографичный свет")
 	})
 
-	// Handle custom prompt in AI_STEP_IMAGE state
+	// Handle input in AI_STEP_IMAGE state - routes via unified dispatcher
 	b.OnState("AI_STEP_IMAGE", func(c *bot.Context) error {
-		if _, hasImg := c.ImageAttachment(); hasImg {
-			return processVisionImage(c, strings.TrimSpace(c.Text()))
-		}
-		if audioBytes, filename, hasAudio := extractAudioAttachmentBytes(c); hasAudio && len(audioBytes) > 0 {
-			return processVoiceAudio(c, audioBytes, filename)
-		}
-		prompt := strings.TrimSpace(c.Text())
-		if prompt == "" {
-			return nil
-		}
-		return deliverImageGen(c, prompt)
+		return dispatchAIMessage(c)
 	})
 
 	// Helper for Voice Audio Processing via Whisper STT -> LLM
@@ -944,6 +939,165 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return err
 	}
 
+	// Helper for Web Page Summarization & Reading
+	processWebPageSummary = func(c *bot.Context, rawURL, userQuery string) error {
+		userID := getUserID(c)
+		fsmCtx := fsm.FromContext(c)
+
+		if aiClient == nil {
+			_, err := c.Reply("⚠️ AI-шлюз не настроен или недоступен. Проверьте переменную AI_GATEWAY_URL.")
+			return err
+		}
+
+		_ = c.Typing()
+		statusMsg, _ := c.Reply(fmt.Sprintf("🔍 **Анализирую веб-страницу:**\n%s\n*(Загружаю содержимое и формирую выжимку...)*", rawURL))
+
+		title, cleanContent, err := fetchAndExtractWebPageText(c.Ctx(), rawURL)
+		if err != nil {
+			if statusMsg != nil && c.Client() != nil {
+				_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
+			}
+			errText := fmt.Sprintf("⚠️ **Не удалось загрузить веб-страницу:**\n`%s`\n\nПричина: *%s*\n\nВы можете скопировать текст статьи и отправить его напрямую в чат для анализа.", rawURL, err.Error())
+			kb := maxbot.NewInlineKeyboard().
+				Row(
+					maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+					maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
+				)
+			_, rErr := c.ReplyKeyboard(errText, kb)
+			return rErr
+		}
+
+		stopTyping := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(4 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopTyping:
+					return
+				case <-ticker.C:
+					_ = c.Typing()
+				}
+			}
+		}()
+
+		var promptText string
+		if userQuery != "" {
+			promptText = fmt.Sprintf("Пользователь отправил веб-страницу «%s» (%s) и задал вопрос:\n«%s»\n\n[Текст страницы]:\n%s\n\nОтветь на вопрос пользователя максимально подробно и точно на русском языке, опираясь на текст статьи.", title, rawURL, userQuery, cleanContent)
+		} else {
+			promptText = fmt.Sprintf("Пользователь отправил веб-страницу «%s» (%s).\n\n[Текст страницы]:\n%s\n\nСделай качественное структурированное резюме на русском языке:\n1. **Суть:** кратко о чем страница (1-2 предложения)\n2. **Ключевые тезисы:** 3-5 главных пунктов\n3. **Вывод:** полезное заключение.", title, rawURL, cleanContent)
+		}
+
+		history := loadChatHistory(fsmCtx)
+		userHistoryEntry := fmt.Sprintf("[Пользователь отправил ссылку]: %s", rawURL)
+		if userQuery != "" {
+			userHistoryEntry += fmt.Sprintf(" (Вопрос: %s)", userQuery)
+		}
+		history = append(history, ai.ChatMessage{
+			Role:    ai.RoleUser,
+			Content: userHistoryEntry,
+		})
+
+		messagesPayload := make([]ai.ChatMessage, 0, len(history)+2)
+		messagesPayload = append(messagesPayload, ai.ChatMessage{
+			Role:    ai.RoleSystem,
+			Content: aiSystemPrompt,
+		})
+		messagesPayload = append(messagesPayload, ai.ChatMessage{
+			Role:    ai.RoleUser,
+			Content: promptText,
+		})
+
+		activeModel := config.ChatModel
+		if fsmCtx != nil {
+			if m, ok := fsmCtx.Get("ai_active_chat_model"); ok {
+				if mStr, isStr := m.(string); isStr && mStr != "" {
+					activeModel = mStr
+				}
+			}
+		}
+
+		candidates := []string{activeModel}
+		for _, m := range []string{"auto", "fast", "best-coding", "reasoning", "gemini-3.5-flash-lite"} {
+			if m != activeModel {
+				candidates = append(candidates, m)
+			}
+		}
+
+		temp := 0.5
+		chatReq := &ai.ChatRequest{
+			Model:       activeModel,
+			Messages:    messagesPayload,
+			Temperature: &temp,
+		}
+
+		var chatResp *ai.ChatResponse
+		var lastErr error
+		var usedModel string
+
+		for _, m := range candidates {
+			chatReq.Model = m
+			chatResp, lastErr = aiClient.Chat(c.Ctx(), chatReq)
+			if lastErr == nil && chatResp != nil && strings.TrimSpace(chatResp.Content) != "" {
+				usedModel = m
+				break
+			}
+		}
+		close(stopTyping)
+
+		if statusMsg != nil && c.Client() != nil {
+			_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
+		}
+
+		if chatResp == nil || strings.TrimSpace(chatResp.Content) == "" {
+			errDesc := "ошибка обработки текста"
+			if lastErr != nil {
+				errDesc = lastErr.Error()
+			}
+			errText := fmt.Sprintf("⚠️ **Ошибка анализа страницы:** %s\n\nПопробуйте повторить запрос или очистить контекст.", errDesc)
+			kb := maxbot.NewInlineKeyboard().
+				Row(maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"))
+			_, rErr := c.ReplyKeyboard(errText, kb)
+			return rErr
+		}
+
+		replyText := chatResp.Content
+
+		history = append(history, ai.ChatMessage{
+			Role:    ai.RoleAssistant,
+			Content: replyText,
+		})
+		if len(history) > 10 {
+			history = history[len(history)-10:]
+		}
+		_ = saveChatHistory(fsmCtx, history)
+		if fsmCtx != nil {
+			_ = fsmCtx.Set("last_ai_reply", replyText)
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
+		}
+
+		hood.Register("ai_chat", TechCard{
+			Title:       "Анализ веб-страницы & Резюме ссылки (Web Reader)",
+			Endpoint:    "/v1/chat/completions",
+			Method:      "POST",
+			FSMState:    "AI_STEP_CHAT",
+			Description: fmt.Sprintf("URL: %s | Модель: %s | Задержка: %s | Токенов: %d.", rawURL, usedModel, chatResp.Latency.Round(time.Millisecond), chatResp.TotalTokens),
+			DocsLink:    "https://platform.openai.com/docs/api-reference/chat",
+		})
+
+		responseBody := fmt.Sprintf("🌐 **Анализ страницы:** [%s](%s)\n\n%s", title, rawURL, replyText)
+		formatted := hood.Format(userID, responseBody, "ai_chat")
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(
+				maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+				maxbot.NewCallbackButton("🔊 Озвучить", "ai:tts:speak_last"),
+			)
+
+		_, sendErr := c.ReplyKeyboard(formatted, kb)
+		return sendErr
+	}
+
 	// dispatchAIMessage is the central multimodal message router for all user inputs.
 	dispatchAIMessage = func(c *bot.Context) error {
 		if c == nil {
@@ -957,13 +1111,34 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		if audioBytes, filename, hasAudio := extractAudioAttachmentBytes(c); hasAudio && len(audioBytes) > 0 {
 			return processVoiceAudio(c, audioBytes, filename)
 		}
-		// 3. Priority: Text message -> Conversational LLM
+		// 3. Priority: Text message
 		userText := strings.TrimSpace(c.Text())
-		if userText != "" {
-			return processTextConversation(c, userText)
+		if userText == "" {
+			return nil
 		}
-		return nil
+
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx != nil {
+			if awaiting, ok := fsmCtx.Get("ai_awaiting_image_prompt"); ok && awaiting == true {
+				_ = fsmCtx.Set("ai_awaiting_image_prompt", false)
+				return deliverImageGen(c, userText)
+			}
+		}
+
+		// 3a. Smart Intent: Text-to-Image Generation ("нарисуй...", "сгенерируй картинку...", /img, /image)
+		if prompt, ok := extractDrawingPrompt(userText); ok {
+			return deliverImageGen(c, prompt)
+		}
+
+		// 3b. Smart Intent: Web URL page summarization (http://, https://)
+		if rawURL, userQuery, ok := extractURL(userText); ok {
+			return processWebPageSummary(c, rawURL, userQuery)
+		}
+
+		// 3c. Standard Conversational LLM
+		return processTextConversation(c, userText)
 	}
+	globalAIDispatcher = dispatchAIMessage
 
 	// Unified Handler for AI Chat Mode
 	b.OnState("AI_STEP_CHAT", func(c *bot.Context) error {
@@ -1508,4 +1683,244 @@ func synthesizeSpeech(ctx context.Context, text string) ([]byte, error) {
 		return nil, fmt.Errorf("tts audio too small (%d bytes)", len(data))
 	}
 	return data, nil
+}
+
+// extractDrawingPrompt analyzes user text for image generation intents.
+// Returns the clean prompt and true if the intent is image generation, or ("", false) if not.
+func extractDrawingPrompt(text string) (string, bool) {
+	clean := strings.TrimSpace(text)
+	if clean == "" {
+		return "", false
+	}
+
+	// 1. Slash commands: /img, /image, /draw, /paint
+	for _, cmd := range []string{"/img ", "/image ", "/draw ", "/paint "} {
+		if strings.HasPrefix(clean, cmd) {
+			prompt := strings.TrimSpace(strings.TrimPrefix(clean, cmd))
+			if prompt != "" {
+				return prompt, true
+			}
+		}
+	}
+
+	// 2. Safeguards: Questions should NOT be treated as drawing prompts.
+	lower := strings.ToLower(clean)
+	if strings.HasSuffix(lower, "?") {
+		interrogatives := []string{
+			"кто ", "кем ", "кому ", "кого ",
+			"как ", "какой ", "какая ", "какое ", "какие ", "каких ",
+			"где ", "куда ", "откуда ",
+			"почему ", "зачем ", "отчего ",
+			"что ", "чем ", "чего ", "в чем ",
+			"сколько ",
+		}
+		for _, q := range interrogatives {
+			if strings.HasPrefix(lower, q) {
+				return "", false
+			}
+		}
+		// Also if "нарисуй" is quoted inside quotes
+		if strings.Contains(lower, "'нарисуй") || strings.Contains(lower, "\"нарисуй") ||
+			strings.Contains(lower, "«нарисуй") {
+			return "", false
+		}
+	}
+
+	// Strip leading courtesy / polite filler
+	courtesyPrefixes := []string{
+		"пожалуйста, ", "пожалуйста ", "плиз, ", "плиз ", "бот, ", "бот ", "ассистент, ", "ассистент ",
+	}
+	trimmed := lower
+	for {
+		changed := false
+		for _, cp := range courtesyPrefixes {
+			if strings.HasPrefix(trimmed, cp) {
+				trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, cp))
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+
+	prefixes := []string{
+		"сгенерируй изображение",
+		"сгенерируй картинку",
+		"сгенерируй иллюстрацию",
+		"сгенерируй рисунок",
+		"сгенерируй фото",
+		"сгенерируй арт",
+		"создай изображение",
+		"создай картинку",
+		"создай иллюстрацию",
+		"создай рисунок",
+		"создай фото",
+		"создай арт",
+		"нарисуй мне, пожалуйста,",
+		"нарисуй мне пожалуйста",
+		"нарисуй мне,",
+		"нарисуй мне",
+		"нарисуй пожалуйста,",
+		"нарисуй пожалуйста",
+		"нарисуйте мне",
+		"нарисуйте",
+		"нарисуй-ка",
+		"нарисуй",
+		"изобрази мне",
+		"изобрази",
+		"отрисуй мне",
+		"отрисуй",
+		"generate an image of",
+		"generate image of",
+		"generate an image",
+		"generate image",
+		"draw me a",
+		"draw me an",
+		"draw me",
+		"draw a",
+		"draw an",
+		"draw",
+		"paint me a",
+		"paint me",
+		"paint",
+	}
+
+	for _, p := range prefixes {
+		if strings.HasPrefix(trimmed, p) {
+			idx := strings.Index(lower, p)
+			if idx >= 0 {
+				prompt := clean[idx+len(p):]
+				prompt = strings.TrimSpace(prompt)
+				prompt = strings.TrimLeft(prompt, ":-—, ")
+				prompt = strings.TrimSpace(prompt)
+				if len(prompt) >= 2 {
+					return prompt, true
+				}
+			}
+		}
+	}
+
+	return "", false
+}
+
+var urlRegex = regexp.MustCompile(`https?://[^\s<>"]+`)
+
+// extractURL searches for the first HTTP/HTTPS URL in text and extracts it alongside any surrounding user query.
+func extractURL(text string) (rawURL string, userQuery string, ok bool) {
+	loc := urlRegex.FindStringIndex(text)
+	if loc == nil {
+		return "", "", false
+	}
+	rawURL = text[loc[0]:loc[1]]
+	for strings.HasSuffix(rawURL, ".") || strings.HasSuffix(rawURL, ",") ||
+		strings.HasSuffix(rawURL, ")") || strings.HasSuffix(rawURL, ";") ||
+		strings.HasSuffix(rawURL, "!") {
+		rawURL = rawURL[:len(rawURL)-1]
+	}
+
+	queryBefore := strings.TrimSpace(text[:loc[0]])
+	queryAfter := strings.TrimSpace(text[loc[1]:])
+	var query string
+	if queryBefore != "" && queryAfter != "" {
+		query = queryBefore + " " + queryAfter
+	} else if queryBefore != "" {
+		query = queryBefore
+	} else {
+		query = queryAfter
+	}
+	return rawURL, query, true
+}
+
+// fetchAndExtractWebPageText downloads a web page and extracts readable clean text without HTML boilerplate.
+func fetchAndExtractWebPageText(ctx context.Context, targetURL string) (title string, cleanContent string, err error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid URL: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; MAXBot/1.0; +https://max.ru)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "ru,en;q=0.9")
+
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to load page: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", "", fmt.Errorf("HTTP status %d (%s)", resp.StatusCode, resp.Status)
+	}
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	rawHTML := string(bodyBytes)
+
+	// Extract <title>...</title>
+	reTitle := regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	if match := reTitle.FindStringSubmatch(rawHTML); len(match) > 1 {
+		title = strings.TrimSpace(html.UnescapeString(match[1]))
+		title = strings.ReplaceAll(title, "\n", " ")
+		title = strings.ReplaceAll(title, "\r", " ")
+	}
+	if title == "" {
+		title = targetURL
+	}
+
+	// Remove scripts, styles, noscript, svg, head
+	reHead := regexp.MustCompile(`(?is)<head[^>]*>.*?</head>`)
+	rawHTML = reHead.ReplaceAllString(rawHTML, "")
+
+	reScript := regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	rawHTML = reScript.ReplaceAllString(rawHTML, "")
+
+	reStyle := regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	rawHTML = reStyle.ReplaceAllString(rawHTML, "")
+
+	reNoscript := regexp.MustCompile(`(?is)<noscript[^>]*>.*?</noscript>`)
+	rawHTML = reNoscript.ReplaceAllString(rawHTML, "")
+
+	reSVG := regexp.MustCompile(`(?is)<svg[^>]*>.*?</svg>`)
+	rawHTML = reSVG.ReplaceAllString(rawHTML, "")
+
+	// Replace block elements with newlines
+	reBlock := regexp.MustCompile(`(?i)<(?:p|div|br|li|h[1-6]|tr|blockquote|section|article)[^>]*>`)
+	rawHTML = reBlock.ReplaceAllString(rawHTML, "\n")
+
+	// Strip remaining HTML tags
+	reTags := regexp.MustCompile(`(?s)<[^>]+>`)
+	cleanText := reTags.ReplaceAllString(rawHTML, " ")
+
+	// Unescape HTML entities
+	cleanText = html.UnescapeString(cleanText)
+
+	// Normalize spaces
+	lines := strings.Split(cleanText, "\n")
+	var cleanLines []string
+	for _, l := range lines {
+		trimmedLine := strings.TrimSpace(l)
+		if trimmedLine != "" {
+			cleanLines = append(cleanLines, trimmedLine)
+		}
+	}
+	cleanContent = strings.Join(cleanLines, "\n")
+
+	// Limit to ~6000 runes to fit comfortably in LLM prompt
+	runes := []rune(cleanContent)
+	if len(runes) > 6000 {
+		cleanContent = string(runes[:6000]) + "\n...[содержимое сокращено]..."
+	}
+
+	if strings.TrimSpace(cleanContent) == "" {
+		cleanContent = "Текстовое содержимое на веб-странице не найдено (страница может загружаться динамически через JavaScript)."
+	}
+
+	return title, cleanContent, nil
 }
