@@ -1480,21 +1480,13 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				if len(displayRunes) > 300 {
 					displayCaptionText = string(displayRunes[:300]) + "..."
 				}
-				caption := fmt.Sprintf("🔊 **%s**\n\n*Текст:* «%s»\n*(Время генерации: %s)*",
-					title, displayCaptionText, time.Since(start).Round(time.Millisecond))
+				caption := fmt.Sprintf("🔊 **%s**\n\n*Текст:* «%s»", title, displayCaptionText)
 				formatted := hood.Format(userID, caption, "ai_tts")
-
-				kb := maxbot.NewInlineKeyboard().
-					Row(maxbot.NewCallbackButton("🔊 Озвучить другой текст", "ai:tts:start")).
-					Row(
-						maxbot.NewCallbackButton("💬 В AI Чат", "ai:chat:start"),
-						maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-					)
 
 				// Retry loop for MAX CDN processing
 				for attempt := 1; attempt <= 6; attempt++ {
 					time.Sleep(1 * time.Second)
-					_, sendErr := c.ReplyWithAttachments(formatted, att, kb.ToAttachment())
+					_, sendErr := c.ReplyWithAttachments(formatted, att)
 					if sendErr == nil {
 						if statusMsg != nil {
 							_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
