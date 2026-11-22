@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -319,8 +320,17 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		imgBytes, _, _ := c.ImageBytes()
 		imgURL, _ := c.ImageURL()
 
+		slog.Info("vision: начало обработки изображения",
+			slog.Int64("user_id", userID),
+			slog.Bool("has_bytes", len(imgBytes) > 0),
+			slog.Int("bytes_len", len(imgBytes)),
+			slog.String("image_url", imgURL),
+			slog.String("prompt", prompt),
+		)
+
 		if len(imgBytes) == 0 && imgURL == "" {
 			close(stopTyping)
+			slog.Warn("vision: не удалось извлечь ни байты, ни URL картинки", slog.Int64("user_id", userID))
 			_, err := c.Reply("⚠️ Не удалось извлечь изображение из сообщения. Пожалуйста, прикрепите фото или картинку еще раз.")
 			return err
 		}
@@ -356,8 +366,19 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			visionResp, lastErr = aiClient.Vision(c.Ctx(), vReq)
 			if lastErr == nil && visionResp != nil && strings.TrimSpace(visionResp.Content) != "" {
 				usedModel = m
+				slog.Info("vision: изображение успешно распознано",
+					slog.Int64("user_id", userID),
+					slog.String("model", usedModel),
+					slog.Duration("latency", visionResp.Latency),
+					slog.Int("total_tokens", visionResp.TotalTokens),
+				)
 				break
 			}
+			slog.Warn("vision: модель вернула ошибку, переходим к следующему кандидату",
+				slog.Int64("user_id", userID),
+				slog.String("failed_model", m),
+				slog.Any("error", lastErr),
+			)
 		}
 		close(stopTyping)
 
@@ -366,6 +387,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			if lastErr != nil {
 				errMsg = lastErr.Error()
 			}
+			slog.Error("vision: все кандидаты вернули ошибку",
+				slog.Int64("user_id", userID),
+				slog.Any("last_error", lastErr),
+			)
 			errText := fmt.Sprintf("⚠️ **Ошибка распознавания фото:** %s\n\nМодель Vision временно перегружена. Попробуйте отправить другое фото или повторить попытку позже.", errMsg)
 			kb := maxbot.NewInlineKeyboard().
 				Row(maxbot.NewCallbackButton("👁️ В меню Vision", "ai:vision:start")).
@@ -1216,6 +1241,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			return processVisionImage(c, strings.TrimSpace(c.Text()))
 		}
 		userText := strings.TrimSpace(c.Text())
+		slog.Info("vision: получено текстовое сообщение без фото в режиме AI_STEP_VISION",
+			slog.Int64("user_id", getUserID(c)),
+			slog.String("text", userText),
+		)
 		text := "👁️ **Ожидание изображения:**\n\n" +
 			"Пожалуйста, **отправьте фото или картинку** в чат (можно добавить вопрос в подписи к фото).\n\n"
 		if userText != "" {

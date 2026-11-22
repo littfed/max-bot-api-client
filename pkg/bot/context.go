@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -204,30 +205,37 @@ func (c *Context) ImageBytes() ([]byte, string, error) {
 	if c.client != nil {
 		data, err := c.client.DownloadFile(c.Ctx(), u)
 		if err == nil && len(data) > 0 {
+			slog.Info("image downloaded via bot client", slog.String("url", u), slog.Int("bytes", len(data)))
 			return data, filename, nil
 		}
+		slog.Warn("bot client DownloadFile failed, trying direct http", slog.String("url", u), slog.Any("error", err))
 	}
 
 	// Fallback to standard http.Get with timeout
 	httpClient := &http.Client{Timeout: 20 * time.Second}
 	req, err := http.NewRequestWithContext(c.Ctx(), http.MethodGet, u, nil)
 	if err != nil {
+		slog.Error("failed to create http request for image download", slog.String("url", u), slog.Any("error", err))
 		return nil, "", fmt.Errorf("failed to create http request: %w", err)
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		slog.Error("direct http image download failed", slog.String("url", u), slog.Any("error", err))
 		return nil, "", fmt.Errorf("failed to download image: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		slog.Error("image download returned bad status", slog.String("url", u), slog.Int("status", resp.StatusCode))
 		return nil, "", fmt.Errorf("image download returned status %d", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
+		slog.Error("failed to read image body", slog.String("url", u), slog.Any("error", err))
 		return nil, "", fmt.Errorf("failed to read image body: %w", err)
 	}
+	slog.Info("image downloaded via direct http", slog.String("url", u), slog.Int("bytes", len(data)))
 	return data, filename, nil
 }
 

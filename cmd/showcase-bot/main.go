@@ -46,6 +46,7 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(logOutput, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
+	slog.SetDefault(logger)
 
 	logger.Info("запуск Флагманского бота-витрины MAX Bot API...", slog.String("port", *portFlag))
 
