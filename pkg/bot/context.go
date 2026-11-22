@@ -2,7 +2,9 @@ package bot
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,24 +12,101 @@ import (
 	"strings"
 	"time"
 
+	"github.com/littfed/max-bot-api-client/pkg/logger"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 )
 
 // Context wraps an incoming event Update with helper methods for replying and routing.
 type Context struct {
-	ctx    context.Context
-	client *maxbot.Client
-	Update *maxbot.Update
-	data   map[string]any
+	ctx     context.Context
+	client  *maxbot.Client
+	Update  *maxbot.Update
+	data    map[string]any
+	traceID string
+	logger  *slog.Logger
 }
 
-// NewContext creates a new handler Context.
+// GenerateTraceID generates a random 16-character hex trace ID with "tr_" prefix.
+func GenerateTraceID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("tr_%d", time.Now().UnixNano())
+	}
+	return "tr_" + hex.EncodeToString(b)
+}
+
+// NewContext creates a new handler Context with an attached trace_id and contextual logger.
 func NewContext(ctx context.Context, client *maxbot.Client, update *maxbot.Update) *Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	traceID := GenerateTraceID()
+
+	var senderID int64
+	var chatID int64
+	var updateType string
+
+	if update != nil {
+		updateType = update.UpdateType
+		if update.Message != nil {
+			if update.Message.Sender != nil {
+				senderID = update.Message.Sender.UserID
+			}
+			if update.Message.Recipient != nil {
+				chatID = update.Message.Recipient.ChatID
+			}
+		} else if update.Callback != nil {
+			if update.Callback.User != nil {
+				senderID = update.Callback.User.UserID
+			}
+			if update.Callback.Message != nil && update.Callback.Message.Recipient != nil {
+				chatID = update.Callback.Message.Recipient.ChatID
+			}
+		}
+	}
+
+	baseLogger := logger.FromContext(ctx)
+	contextLogger := baseLogger.With(
+		slog.String("trace_id", traceID),
+		slog.Int64("user_id", senderID),
+		slog.Int64("chat_id", chatID),
+		slog.String("update_type", updateType),
+	)
+
+	ctx = logger.WithContext(ctx, contextLogger)
+
 	return &Context{
-		ctx:    ctx,
-		client: client,
-		Update: update,
-		data:   make(map[string]any),
+		ctx:     ctx,
+		client:  client,
+		Update:  update,
+		data:    make(map[string]any),
+		traceID: traceID,
+		logger:  contextLogger,
+	}
+}
+
+// TraceID returns the unique trace identifier for this request lifecycle.
+func (c *Context) TraceID() string {
+	if c.traceID == "" {
+		c.traceID = GenerateTraceID()
+	}
+	return c.traceID
+}
+
+// Logger returns the contextual structured logger pre-filled with trace_id, user_id, chat_id.
+func (c *Context) Logger() *slog.Logger {
+	if c.logger == nil {
+		c.logger = logger.FromContext(c.ctx)
+	}
+	return c.logger
+}
+
+// WithLogger replaces the contextual logger for this context.
+func (c *Context) WithLogger(l *slog.Logger) {
+	c.logger = l
+	if c.ctx != nil {
+		c.ctx = logger.WithContext(c.ctx, l)
 	}
 }
 

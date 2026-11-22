@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/littfed/max-bot-api-client/pkg/logger"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 )
 
@@ -210,12 +211,17 @@ func (b *Bot) RecordActiveChat(chatID, userID int64) {
 
 // ProcessUpdate handles a single update (useful for both Long Polling and Webhook endpoints).
 func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
+	if b.logger != nil {
+		ctx = logger.WithContext(ctx, b.logger)
+	}
+	c := NewContext(ctx, b.client, u)
+
 	raw := u.RawJSON
 	if raw == "" {
 		bData, _ := json.Marshal(u)
 		raw = string(bData)
 	}
-	b.logger.Info("incoming update", slog.String("type", u.UpdateType), slog.String("raw", raw))
+	c.Logger().Info("incoming update", slog.String("raw", raw))
 
 	// Track active chat from incoming messages or callbacks
 	if u.Message != nil {
@@ -297,7 +303,7 @@ func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
 				}
 				if diff <= 5000 && len(latest.Body.Attachments) > 0 {
 					u.Message = &latest
-					c := NewContext(ctx, b.client, u)
+					c.Update = u
 					return b.router.Handle(c)
 				}
 			}
@@ -323,10 +329,10 @@ func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
 				},
 			}
 			u.Message = synthMsg
+			c.Update = u
 		}
 	}
 
-	c := NewContext(ctx, b.client, u)
 	return b.router.Handle(c)
 }
 

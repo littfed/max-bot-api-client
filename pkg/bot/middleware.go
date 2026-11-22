@@ -3,21 +3,27 @@ package bot
 import (
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"time"
 )
 
 // Recovery returns a middleware that recovers from panics in downstream handlers.
-func Recovery(logger *slog.Logger) MiddlewareFunc {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func Recovery(customLogger *slog.Logger) MiddlewareFunc {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(c *Context) (err error) {
 			defer func() {
 				if r := recover(); r != nil {
+					stack := string(debug.Stack())
 					err = fmt.Errorf("panic in handler: %v", r)
-					logger.Error("recovered from handler panic",
+					log := c.Logger()
+					if customLogger != nil {
+						log = customLogger.With(
+							slog.String("trace_id", c.TraceID()),
+						)
+					}
+					log.Error("recovered from handler panic",
 						slog.Any("panic", r),
+						slog.String("stack_trace", stack),
 						slog.String("text", c.Text()),
 					)
 				}
@@ -28,23 +34,15 @@ func Recovery(logger *slog.Logger) MiddlewareFunc {
 }
 
 // Logger returns a middleware that logs update execution metrics.
-func Logger(logger *slog.Logger) MiddlewareFunc {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func Logger(customLogger *slog.Logger) MiddlewareFunc {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(c *Context) error {
 			start := time.Now()
-			sender := c.Sender()
-			var senderID int64
-			var username string
-			if sender != nil {
-				senderID = sender.UserID
-				username = sender.Username
-			}
-			if senderID == 0 && c.Update != nil && c.Update.Message != nil && c.Update.Message.Sender != nil {
-				senderID = c.Update.Message.Sender.UserID
-				username = c.Update.Message.Sender.Username
+			log := c.Logger()
+			if customLogger != nil {
+				log = customLogger.With(
+					slog.String("trace_id", c.TraceID()),
+				)
 			}
 
 			cbPayload := ""
@@ -52,32 +50,28 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 				cbPayload = cb.Payload
 			}
 
-			updateType := ""
-			if c.Update != nil {
-				updateType = c.Update.UpdateType
-			}
+			log.Debug("update execution started",
+				slog.String("text", c.Text()),
+				slog.String("payload", cbPayload),
+			)
 
 			err := next(c)
 			duration := time.Since(start)
 
 			if err != nil {
-				logger.Error("update handled with error",
-					slog.String("type", updateType),
-					slog.Int64("user_id", senderID),
-					slog.String("username", username),
+				log.Error("update handled with error",
 					slog.String("text", c.Text()),
 					slog.String("payload", cbPayload),
 					slog.Duration("duration", duration),
+					slog.Int64("duration_ms", duration.Milliseconds()),
 					slog.Any("error", err),
 				)
 			} else {
-				logger.Info("update handled",
-					slog.String("type", updateType),
-					slog.Int64("user_id", senderID),
-					slog.String("username", username),
+				log.Info("update handled",
 					slog.String("text", c.Text()),
 					slog.String("payload", cbPayload),
 					slog.Duration("duration", duration),
+					slog.Int64("duration_ms", duration.Milliseconds()),
 				)
 			}
 			return err
