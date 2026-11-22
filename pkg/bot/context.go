@@ -851,13 +851,15 @@ func (c *Context) EditKeyboard(text string, kb *maxbot.InlineKeyboard) (*maxbot.
 }
 
 // EditOrReplyKeyboard attempts to edit the current message in place if a message ID is available
-// (e.g. from an incoming button callback). If editing is not applicable (e.g. initial command /start)
+// from an incoming button callback. If editing is not applicable (e.g. initial command /start or /menu)
 // or fails, it falls back to sending a new message with ReplyKeyboard.
 func (c *Context) EditOrReplyKeyboard(text string, kb *maxbot.InlineKeyboard) (*maxbot.Message, error) {
-	if msg := c.Message(); msg != nil && msg.Body.MID != "" {
-		res, err := c.EditKeyboard(text, kb)
-		if err == nil {
-			return res, nil
+	if c.Callback() != nil {
+		if msg := c.Message(); msg != nil && msg.Body.MID != "" {
+			res, err := c.EditKeyboard(text, kb)
+			if err == nil {
+				return res, nil
+			}
 		}
 	}
 	return c.ReplyKeyboard(text, kb)

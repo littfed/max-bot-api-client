@@ -51,13 +51,17 @@ type PinMessageRequest struct {
 
 // User represents a user or bot in MAX.
 type User struct {
-	UserID    int64  `json:"user_id"`
-	FirstName string `json:"first_name,omitempty"`
-	LastName  string `json:"last_name,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Username  string `json:"username,omitempty"`
-	IsBot     bool   `json:"is_bot,omitempty"`
-	AvatarURL string `json:"avatar_url,omitempty"`
+	UserID         int64        `json:"user_id"`
+	FirstName      string       `json:"first_name,omitempty"`
+	LastName       string       `json:"last_name,omitempty"`
+	Name           string       `json:"name,omitempty"`
+	Username       string       `json:"username,omitempty"`
+	IsBot          bool         `json:"is_bot,omitempty"`
+	AvatarURL      string       `json:"avatar_url,omitempty"`
+	FullAvatarURL  string       `json:"full_avatar_url,omitempty"`
+	Description    string       `json:"description,omitempty"`
+	Commands       []BotCommand `json:"commands,omitempty"`
+	LastActivityAt int64        `json:"last_activity_time,omitempty"`
 }
 
 // Chat represents a dialogue, group chat, or channel in MAX.

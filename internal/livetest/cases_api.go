@@ -77,6 +77,8 @@ func (t *TestCaseSetCommands) Run(ctx context.Context, s *Suite) (*TestRecord, e
 
 	commands := []maxbot.BotCommand{
 		{Name: "start", Description: "Главное меню и приветствие"},
+		{Name: "menu", Description: "Витрина возможностей MAX"},
+		{Name: "reset", Description: "Очистить контекст диалога"},
 		{Name: "ping", Description: "Проверка доступности бота"},
 		{Name: "livetest", Description: "Запуск диагностических тестов"},
 	}

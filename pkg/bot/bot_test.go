@@ -368,13 +368,41 @@ func TestContextEditingMethods(t *testing.T) {
 		t.Errorf("expected PUT /messages, got %s %s", lastMethod, lastPath)
 	}
 
-	// 2. Test EditOrReplyKeyboard in-place
+	// 2. Test EditOrReplyKeyboard in-place (when Callback != nil)
 	msg, err = c.EditOrReplyKeyboard("edited in place", kb)
 	if err != nil {
 		t.Fatalf("EditOrReplyKeyboard failed: %v", err)
 	}
 	if msg == nil || msg.Body.MID != "mid_123" {
 		t.Errorf("expected mid_123, got %+v", msg)
+	}
+	if lastMethod != http.MethodPut || lastPath != "/messages" {
+		t.Errorf("expected PUT /messages for callback, got %s %s", lastMethod, lastPath)
+	}
+
+	// 2b. Test EditOrReplyKeyboard fallback to reply (when Callback == nil, e.g. /menu or /start command)
+	cUserMsg := &Context{
+		client: client,
+		Update: &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Sender: &maxbot.User{UserID: 456},
+				Recipient: &maxbot.MessageRecipient{
+					ChatID: 789,
+				},
+				Body: maxbot.MessageBody{
+					MID:  "user_mid_999",
+					Text: "/menu",
+				},
+			},
+		},
+	}
+	msg, err = cUserMsg.EditOrReplyKeyboard("reply message", kb)
+	if err != nil {
+		t.Fatalf("EditOrReplyKeyboard on user message failed: %v", err)
+	}
+	if lastMethod != http.MethodPost || lastPath != "/messages" {
+		t.Errorf("expected POST /messages for user command, got %s %s", lastMethod, lastPath)
 	}
 
 	// 3. Test ClearKeyboard
