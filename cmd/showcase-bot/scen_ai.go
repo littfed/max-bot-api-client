@@ -1,10 +1,10 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/zlib"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -300,6 +300,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 	var processTextConversation func(c *bot.Context, userText string) error
 	var processWebPageSummary func(c *bot.Context, rawURL, userQuery string) error
 	var processDocumentFile func(c *bot.Context) error
+	var processDocumentFileWithBytes func(c *bot.Context, fileBytes []byte, filename string) error
 	var dispatchAIMessage func(c *bot.Context) error
 
 	// Helper for Multimodal Vision Image Recognition
@@ -814,6 +815,14 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			return err
 		}
 
+		// Sniff check: if audioBytes is actually readable text (e.g. mislabeled upload), route seamlessly to document processing
+		if len(audioBytes) > 100 && utf8.Valid(audioBytes) && bytes.IndexByte(audioBytes, 0) == -1 {
+			sniffed := http.DetectContentType(audioBytes)
+			if strings.HasPrefix(sniffed, "text/") || sniffed == "application/json" {
+				return processDocumentFileWithBytes(c, audioBytes, filename)
+			}
+		}
+
 		_ = c.Typing()
 
 		// Transcode to 16kHz mono WAV if ffmpeg is available (guarantees universal STT compatibility across all models)
@@ -1148,6 +1157,15 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 	// Helper for Document / Source Code File Processing & Q&A
 	processDocumentFile = func(c *bot.Context) error {
+		fileBytes, filename, err := c.FileBytes()
+		if err != nil || len(fileBytes) == 0 {
+			_, rErr := c.Reply("⚠️ Не удалось загрузить файл из вложения. Пожалуйста, отправьте документ еще раз.")
+			return rErr
+		}
+		return processDocumentFileWithBytes(c, fileBytes, filename)
+	}
+
+	processDocumentFileWithBytes = func(c *bot.Context, fileBytes []byte, filename string) error {
 		userID := getUserID(c)
 		fsmCtx := fsm.FromContext(c)
 
@@ -1156,15 +1174,22 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			return err
 		}
 
-		_ = c.Typing()
-
-		fileBytes, filename, err := c.FileBytes()
-		if err != nil || len(fileBytes) == 0 {
+		if len(fileBytes) == 0 {
 			_, rErr := c.Reply("⚠️ Не удалось загрузить файл из вложения. Пожалуйста, отправьте документ еще раз.")
 			return rErr
 		}
+		if filename == "" {
+			filename = "document.txt"
+		}
 
-		statusMsg, _ := c.Reply(fmt.Sprintf("📄 **Обрабатываю документ:** «%s» *(размер: %d байт)*\n*(Извлекаю текст и формирую выжимку...)*", filename, len(fileBytes)))
+		// Check if file format is supported
+		if !isSupportedDocument(filename, fileBytes) {
+			return handleUnsupportedFile(c, filename, len(fileBytes))
+		}
+
+		_ = c.Typing()
+
+		statusMsg, _ := c.Reply(fmt.Sprintf("📄 **Обрабатываю документ:** «%s» *(размер: %s)*\n*(Извлекаю текст и формирую выжимку...)*", filename, formatFileSize(len(fileBytes))))
 
 		docText, extractErr := extractDocumentText(filename, fileBytes)
 		if extractErr != nil || strings.TrimSpace(docText) == "" {
@@ -1334,7 +1359,15 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		if _, hasFile := c.FileAttachment(); hasFile {
 			return processDocumentFile(c)
 		}
-		// 4. Priority: Text message
+		// 4. Priority: Any other unhandled attachment (video, unknown binary, etc.)
+		if msg := c.Message(); msg != nil && len(msg.Body.Attachments) > 0 {
+			for _, att := range msg.Body.Attachments {
+				if att.Type != "inline_keyboard" {
+					return handleUnknownAttachment(c, att)
+				}
+			}
+		}
+		// 5. Priority: Text message
 		userText := strings.TrimSpace(c.Text())
 		if userText == "" {
 			return nil
@@ -1540,6 +1573,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		if audioBytes, filename, hasAudio := extractAudioAttachmentBytes(c); hasAudio && len(audioBytes) > 0 {
 			return processVoiceAudio(c, audioBytes, filename)
 		}
+		if _, hasFile := c.FileAttachment(); hasFile {
+			return processDocumentFile(c)
+		}
 		textToSpeak := strings.TrimSpace(c.Text())
 		if textToSpeak == "" {
 			return nil
@@ -1552,6 +1588,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		audioBytes, filename, found := extractAudioAttachmentBytes(c)
 		if found && len(audioBytes) > 0 {
 			return processVoiceAudio(c, audioBytes, filename)
+		}
+		if _, hasFile := c.FileAttachment(); hasFile {
+			return processDocumentFile(c)
 		}
 		_, err := c.Reply("🎙️ Аудиосообщение получено, но не удалось извлечь звуковой поток. Попробуйте еще раз.")
 		return err
@@ -1719,59 +1758,9 @@ func extractAudioAttachmentBytes(c *bot.Context) ([]byte, string, bool) {
 	if c == nil {
 		return nil, "", false
 	}
-	msg := c.Message()
-	if msg == nil {
-		return nil, "", false
-	}
-	for _, att := range msg.Body.Attachments {
-		if att.Type == maxbot.UploadTypeAudio || att.Type == "voice" || att.Type == "audio" || att.Type == "file" {
-			if pMap, ok := att.Payload.(map[string]any); ok {
-				filename := "voice.ogg"
-				if n, ok := pMap["name"].(string); ok && n != "" {
-					filename = n
-				}
-				// If uploaded via generic "file" attachment, only treat as audio if filename extension matches audio formats
-				if att.Type == "file" || att.Type == maxbot.UploadTypeFile {
-					if !isAudioFilename(filename) {
-						continue
-					}
-				}
-				// 1. Check for in-memory base64 data
-				for _, b64Key := range []string{"b64_json", "base64", "data"} {
-					if b64Str, ok := pMap[b64Key].(string); ok && b64Str != "" {
-						cleanB64 := b64Str
-						if commaIdx := strings.Index(cleanB64, ","); commaIdx != -1 && strings.Contains(cleanB64[:commaIdx], "base64") {
-							cleanB64 = cleanB64[commaIdx+1:]
-						}
-						data, err := base64.StdEncoding.DecodeString(cleanB64)
-						if err == nil && len(data) > 0 {
-							return data, filename, true
-						}
-					}
-				}
-
-				// 2. Check for URL
-				var u string
-				for _, key := range []string{"url", "download_url", "link", "file_url"} {
-					if val, ok := pMap[key].(string); ok && val != "" {
-						u = val
-						break
-					}
-				}
-				if u != "" {
-					if c.Client() != nil {
-						b, err := c.Client().DownloadFile(c.Ctx(), u)
-						if err == nil && len(b) > 0 {
-							return b, filename, true
-						}
-					}
-					b, err := downloadMediaBytes(c.Ctx(), u)
-					if err == nil && len(b) > 0 {
-						return b, filename, true
-					}
-				}
-			}
-		}
+	b, fn, err := c.AudioBytes()
+	if err == nil && len(b) > 0 {
+		return b, fn, true
 	}
 	return nil, "", false
 }
@@ -2228,16 +2217,23 @@ func fetchAndExtractWebPageText(ctx context.Context, targetURL string) (title st
 	return title, cleanContent, nil
 }
 
-// extractDocumentText extracts plain text from document attachments (txt, md, code files, pdf, etc.).
+// extractDocumentText extracts plain text from document attachments (txt, md, code files, pdf, docx, etc.).
 func extractDocumentText(filename string, data []byte) (string, error) {
 	if len(data) == 0 {
 		return "", fmt.Errorf("файл пуст")
 	}
 
 	ext := strings.ToLower(filepath.Ext(filename))
+	if qIdx := strings.Index(ext, "?"); qIdx != -1 {
+		ext = ext[:qIdx]
+	}
 
 	if ext == ".pdf" {
 		return extractPDFText(data)
+	}
+
+	if ext == ".docx" {
+		return extractDocxText(data)
 	}
 
 	// For text files and source code (.txt, .md, .csv, .json, .yaml, .go, .py, etc.)
@@ -2372,4 +2368,184 @@ func isAudioFilename(name string) bool {
 		strings.HasSuffix(lower, ".wav") || strings.HasSuffix(lower, ".m4a") ||
 		strings.HasSuffix(lower, ".aac") || strings.HasSuffix(lower, ".opus") ||
 		strings.HasSuffix(lower, ".flac")
+}
+
+// extractDocxText extracts clean readable text from Microsoft Word (.docx) files.
+func extractDocxText(data []byte) (string, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", fmt.Errorf("не удалось прочитать docx: %w", err)
+	}
+	for _, f := range zr.File {
+		if f.Name == "word/document.xml" {
+			rc, err := f.Open()
+			if err != nil {
+				return "", err
+			}
+			defer rc.Close()
+			xmlBytes, err := io.ReadAll(rc)
+			if err != nil {
+				return "", err
+			}
+			reBlock := regexp.MustCompile(`(?i)</?(?:w:p|w:tr)[^>]*>`)
+			clean := reBlock.ReplaceAllString(string(xmlBytes), "\n")
+			reTags := regexp.MustCompile(`<[^>]+>`)
+			clean = reTags.ReplaceAllString(clean, "")
+			clean = html.UnescapeString(clean)
+			lines := strings.Split(clean, "\n")
+			var res []string
+			for _, l := range lines {
+				t := strings.TrimSpace(l)
+				if t != "" {
+					res = append(res, t)
+				}
+			}
+			if len(res) == 0 {
+				return "", fmt.Errorf("в документе docx не обнаружен текст")
+			}
+			text := strings.Join(res, "\n")
+			runes := []rune(text)
+			if len(runes) > 8000 {
+				text = string(runes[:8000]) + "\n\n...[содержимое файла сокращено]..."
+			}
+			return text, nil
+		}
+	}
+	return "", fmt.Errorf("текстовый блок word/document.xml не найден в архиве docx")
+}
+
+// isSupportedDocument verifies whether a given document can be processed by LLM/parsers.
+func isSupportedDocument(filename string, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	if qIdx := strings.Index(ext, "?"); qIdx != -1 {
+		ext = ext[:qIdx]
+	}
+
+	// 1. Direct supported text/document extensions
+	supportedExts := map[string]bool{
+		// Documents & Text
+		".txt": true, ".text": true, ".md": true, ".markdown": true, ".log": true,
+		".rtf": true, ".tex": true, ".pdf": true, ".docx": true,
+		// Data & Config
+		".json": true, ".csv": true, ".tsv": true, ".yaml": true, ".yml": true,
+		".xml": true, ".toml": true, ".ini": true, ".cfg": true, ".conf": true,
+		".env": true, ".properties": true,
+		// Web & Scripting
+		".html": true, ".htm": true, ".xhtml": true, ".css": true, ".scss": true,
+		".js": true, ".mjs": true, ".cjs": true, ".ts": true, ".tsx": true, ".jsx": true,
+		// Programming languages
+		".go": true, ".py": true, ".java": true, ".c": true, ".cpp": true, ".cc": true,
+		".h": true, ".hpp": true, ".cs": true, ".rs": true, ".php": true, ".rb": true,
+		".swift": true, ".kt": true, ".scala": true, ".sql": true, ".sh": true,
+		".bash": true, ".zsh": true, ".bat": true, ".cmd": true, ".ps1": true,
+		".lua": true, ".r": true, ".proto": true, ".graphql": true, ".gql": true,
+		".vue": true, ".svelte": true,
+	}
+
+	if supportedExts[ext] {
+		return true
+	}
+
+	// 2. Known unsupported binary formats
+	unsupportedExts := map[string]bool{
+		".zip": true, ".rar": true, ".7z": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true,
+		".exe": true, ".dll": true, ".so": true, ".dylib": true, ".bin": true, ".iso": true, ".dmg": true,
+		".apk": true, ".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".wmv": true, ".flv": true,
+		".webm": true, ".doc": true, ".xlsx": true, ".xls": true, ".pptx": true, ".ppt": true,
+		".torrent": true,
+	}
+	if unsupportedExts[ext] {
+		return false
+	}
+
+	// 3. Sniff content for unknown extensions
+	detected := http.DetectContentType(data)
+	if strings.HasPrefix(detected, "text/") || detected == "application/json" || detected == "application/xml" {
+		return bytes.IndexByte(data, 0) == -1
+	}
+
+	// Plain UTF-8 without NUL bytes
+	if utf8.Valid(data) && bytes.IndexByte(data, 0) == -1 {
+		return true
+	}
+
+	return false
+}
+
+// formatFileSize formats raw byte counts into human-readable strings (байт, КБ, МБ).
+func formatFileSize(b int) string {
+	if b < 1024 {
+		return fmt.Sprintf("%d байт", b)
+	} else if b < 1024*1024 {
+		return fmt.Sprintf("%.1f КБ", float64(b)/1024.0)
+	}
+	return fmt.Sprintf("%.1f МБ", float64(b)/(1024.0*1024.0))
+}
+
+// getFileFormatDescription returns a friendly category and recommendation for unsupported formats.
+func getFileFormatDescription(filename string) (category string, tip string) {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if qIdx := strings.Index(ext, "?"); qIdx != -1 {
+		ext = ext[:qIdx]
+	}
+
+	switch ext {
+	case ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz":
+		return "архив файлов", "Распакуйте архив и отправьте нужные документы (.txt, .pdf, .docx) или изображения по отдельности."
+	case ".xlsx", ".xls":
+		return "таблица Microsoft Excel", "Сохраните или экспортируйте таблицу в формат CSV или PDF и отправьте файл боту."
+	case ".pptx", ".ppt":
+		return "презентация Microsoft PowerPoint", "Экспортируйте презентацию в PDF и отправьте боту для анализа слайдов."
+	case ".doc":
+		return "устаревший документ Word (.doc)", "Сохраните документ в формате DOCX, PDF или TXT и отправьте боту."
+	case ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".flv":
+		return "видеофайл", "Бот анализирует аудио и изображения. Извлеките аудиодорожку (MP3/OGG/WAV) или сделайте скриншот кадра."
+	case ".exe", ".dll", ".so", ".bin", ".iso", ".dmg", ".apk":
+		return "бинарный исполняемый файл или системный образ", "Исполняемые файлы не содержат текстовых данных для анализа нейросетью."
+	default:
+		return "неподдерживаемый бинарный формат", "Вы можете скопировать текст из файла и отправить его сообщением в чат или конвертировать в PDF/TXT."
+	}
+}
+
+// handleUnsupportedFile sends an informative, structured explanation when a user uploads an unsupported file.
+func handleUnsupportedFile(c *bot.Context, filename string, size int) error {
+	desc, tip := getFileFormatDescription(filename)
+
+	text := fmt.Sprintf("📁 **Получен файл:** `%s` *(размер: %s)*\n\n"+
+		"Бот пока не поддерживает прямую обработку файлов этого типа (%s).\n\n"+
+		"💡 **Поддерживаемые типы файлов:**\n"+
+		"• 🖼️ **Изображения** *(JPG, PNG, WEBP, GIF, SVG, BMP, HEIC)* — зрительный анализ и OCR-распознавание текста.\n"+
+		"• 🎙️ **Аудио и голос** *(голосовые заметки, OGG, MP3, WAV, M4A, FLAC, AAC)* — транскрибация речи через Whisper и ответ нейросети.\n"+
+		"• 📄 **Документы и текст** *(TXT, PDF, DOCX, MD, JSON, CSV, YAML, XML, HTML, исходный код Go/Python/JS/SQL и др.)* — анализ содержания, выжимка сути и ответы на вопросы.\n\n"+
+		"👉 **Рекомендация:**\n%s",
+		filename, formatFileSize(size), desc, tip)
+
+	kb := maxbot.NewInlineKeyboard().
+		Row(
+			maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+			maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
+		)
+
+	_, err := c.ReplyKeyboard(text, kb)
+	return err
+}
+
+// handleUnknownAttachment extracts filename and size from any unrecognized attachment and shows the unsupported file help.
+func handleUnknownAttachment(c *bot.Context, att maxbot.Attachment) error {
+	filename := "файл"
+	var size int
+	if pMap, ok := att.Payload.(map[string]any); ok {
+		if n := bot.ExtractAttachmentName(pMap); n != "" {
+			filename = n
+		}
+		if s, ok := pMap["size"].(float64); ok {
+			size = int(s)
+		} else if s, ok := pMap["size"].(int); ok {
+			size = s
+		}
+	}
+	return handleUnsupportedFile(c, filename, size)
 }

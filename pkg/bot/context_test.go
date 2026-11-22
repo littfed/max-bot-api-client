@@ -65,3 +65,84 @@ func TestContextTraceIDAndLogger(t *testing.T) {
 		t.Errorf("expected update_type %q, got %v", maxbot.UpdateTypeMessageCreated, logData["update_type"])
 	}
 }
+
+func TestAttachmentClassification(t *testing.T) {
+	// 1. Text file (3418 bytes) must be classified as FileAttachment, NOT AudioAttachment
+	txtData := strings.Repeat("A", 3418)
+	txtUpdate := &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type: maxbot.UploadTypeFile,
+						Payload: map[string]any{
+							"title":        "notes.txt",
+							"data":         txtData,
+							"content_type": "text/plain; charset=utf-8",
+						},
+					},
+				},
+			},
+		},
+	}
+	cTxt := NewContext(context.Background(), nil, txtUpdate)
+	if _, isAudio := cTxt.AudioAttachment(); isAudio {
+		t.Errorf("expected text file NOT to be classified as AudioAttachment")
+	}
+	if _, isFile := cTxt.FileAttachment(); !isFile {
+		t.Errorf("expected text file to be classified as FileAttachment")
+	}
+
+	// 2. Audio file (.ogg) with generic "file" type must be classified as AudioAttachment
+	audioUpdate := &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type: "file",
+						Payload: map[string]any{
+							"name":         "voice.ogg",
+							"data":         "T2dnUwACAAAAAAAAA...",
+							"content_type": "audio/ogg",
+						},
+					},
+				},
+			},
+		},
+	}
+	cAudio := NewContext(context.Background(), nil, audioUpdate)
+	if _, isAudio := cAudio.AudioAttachment(); !isAudio {
+		t.Errorf("expected .ogg file to be classified as AudioAttachment")
+	}
+	if _, isFile := cAudio.FileAttachment(); isFile {
+		t.Errorf("expected .ogg file NOT to be classified as FileAttachment")
+	}
+
+	// 3. Image file (.webp) with generic "file" type must be classified as ImageAttachment
+	webpUpdate := &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type: "file",
+						Payload: map[string]any{
+							"filename":     "photo.webp",
+							"data":         "UklGR...",
+							"content_type": "image/webp",
+						},
+					},
+				},
+			},
+		},
+	}
+	cWebp := NewContext(context.Background(), nil, webpUpdate)
+	if _, isImg := cWebp.ImageAttachment(); !isImg {
+		t.Errorf("expected .webp file to be classified as ImageAttachment")
+	}
+	if _, isFile := cWebp.FileAttachment(); isFile {
+		t.Errorf("expected .webp file NOT to be classified as FileAttachment")
+	}
+}

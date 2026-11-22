@@ -9,8 +9,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/littfed/max-bot-api-client/pkg/logger"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
@@ -171,6 +173,35 @@ func (c *Context) Text() string {
 	return msg.Body.Text
 }
 
+// ExtractAttachmentName extracts the original file name from an attachment payload.
+func ExtractAttachmentName(pMap map[string]any) string {
+	if pMap == nil {
+		return ""
+	}
+	for _, k := range []string{"name", "filename", "file_name", "title", "caption"} {
+		if n, ok := pMap[k].(string); ok && strings.TrimSpace(n) != "" {
+			return strings.TrimSpace(n)
+		}
+	}
+	for _, k := range []string{"url", "download_url", "link", "file_url", "src"} {
+		if u, ok := pMap[k].(string); ok && u != "" {
+			cleanU := u
+			if qIdx := strings.Index(cleanU, "?"); qIdx != -1 {
+				cleanU = cleanU[:qIdx]
+			}
+			base := filepath.Base(cleanU)
+			if base != "" && base != "." && base != "/" && strings.Contains(base, ".") {
+				return base
+			}
+		}
+	}
+	return ""
+}
+
+func extractAttachmentName(pMap map[string]any) string {
+	return ExtractAttachmentName(pMap)
+}
+
 // AudioAttachment returns the first audio attachment from the message, if present.
 func (c *Context) AudioAttachment() (*maxbot.Attachment, bool) {
 	msg := c.Message()
@@ -183,18 +214,87 @@ func (c *Context) AudioAttachment() (*maxbot.Attachment, bool) {
 		}
 		if att.Type == maxbot.UploadTypeFile || att.Type == "file" {
 			if pMap, ok := att.Payload.(map[string]any); ok {
-				name, _ := pMap["name"].(string)
-				nameLower := strings.ToLower(name)
-				if strings.HasSuffix(nameLower, ".ogg") || strings.HasSuffix(nameLower, ".mp3") ||
-					strings.HasSuffix(nameLower, ".wav") || strings.HasSuffix(nameLower, ".m4a") ||
-					strings.HasSuffix(nameLower, ".aac") || strings.HasSuffix(nameLower, ".opus") ||
-					strings.HasSuffix(nameLower, ".flac") {
+				name := extractAttachmentName(pMap)
+				if isAudioExtension(strings.ToLower(name)) {
 					return &att, true
+				}
+				for _, mimeKey := range []string{"content_type", "mime_type", "type", "mime"} {
+					if mimeVal, ok := pMap[mimeKey].(string); ok && mimeVal != "" {
+						mimeLower := strings.ToLower(mimeVal)
+						if strings.HasPrefix(mimeLower, "audio/") || mimeLower == "application/ogg" || mimeLower == "application/x-ogg" {
+							return &att, true
+						}
+					}
 				}
 			}
 		}
 	}
 	return nil, false
+}
+
+// AudioBytes downloads or decodes the binary audio payload from an audio attachment.
+func (c *Context) AudioBytes() ([]byte, string, error) {
+	att, ok := c.AudioAttachment()
+	if !ok || att == nil {
+		return nil, "", fmt.Errorf("no audio attachment found in message")
+	}
+
+	filename := "voice.ogg"
+	if pMap, ok := att.Payload.(map[string]any); ok {
+		if n := extractAttachmentName(pMap); n != "" {
+			filename = n
+		}
+		for _, b64Key := range []string{"b64_json", "base64", "data"} {
+			if b64Str, ok := pMap[b64Key].(string); ok && b64Str != "" {
+				cleanB64 := b64Str
+				if commaIdx := strings.Index(cleanB64, ","); commaIdx != -1 && strings.Contains(cleanB64[:commaIdx], "base64") {
+					cleanB64 = cleanB64[commaIdx+1:]
+				}
+				data, err := base64.StdEncoding.DecodeString(cleanB64)
+				if err == nil && len(data) > 0 {
+					return data, filename, nil
+				}
+			}
+		}
+		for _, bKey := range []string{"bytes", "raw", "raw_data"} {
+			if bData, ok := pMap[bKey].([]byte); ok && len(bData) > 0 {
+				return bData, filename, nil
+			}
+		}
+	}
+
+	u := extractURLFromAttachmentPayload(att.Payload)
+	if u == "" {
+		return nil, "", fmt.Errorf("cannot extract audio url or data from payload")
+	}
+
+	if c.client != nil {
+		data, err := c.client.DownloadFile(c.Ctx(), u)
+		if err == nil && len(data) > 0 {
+			return data, filename, nil
+		}
+	}
+
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+	req, err := http.NewRequestWithContext(c.Ctx(), http.MethodGet, u, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create http request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to download audio: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("audio download returned status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read audio body: %w", err)
+	}
+	return data, filename, nil
 }
 
 // ImageAttachment returns the first image, photo, or picture attachment from the message, if present.
@@ -221,7 +321,7 @@ func (c *Context) ImageAttachment() (*maxbot.Attachment, bool) {
 					}
 				}
 				// Check filename
-				name, _ := pMap["name"].(string)
+				name := extractAttachmentName(pMap)
 				if isImageExtension(strings.ToLower(name)) {
 					return &att, true
 				}
@@ -282,6 +382,11 @@ func (c *Context) ImageBytes() ([]byte, string, error) {
 				if err == nil && len(data) > 0 {
 					return data, filename, nil
 				}
+			}
+		}
+		for _, bKey := range []string{"bytes", "raw", "raw_data"} {
+			if bData, ok := pMap[bKey].([]byte); ok && len(bData) > 0 {
+				return bData, filename, nil
 			}
 		}
 	}
@@ -354,12 +459,12 @@ func (c *Context) FileAttachment() (*maxbot.Attachment, bool) {
 				for _, mimeKey := range []string{"content_type", "mime_type", "type", "mime"} {
 					if mimeVal, ok := pMap[mimeKey].(string); ok && mimeVal != "" {
 						mimeLower := strings.ToLower(mimeVal)
-						if strings.HasPrefix(mimeLower, "image/") || strings.HasPrefix(mimeLower, "audio/") {
+						if strings.HasPrefix(mimeLower, "image/") || strings.HasPrefix(mimeLower, "audio/") || mimeLower == "application/ogg" || mimeLower == "application/x-ogg" {
 							goto skip
 						}
 					}
 				}
-				name, _ := pMap["name"].(string)
+				name := extractAttachmentName(pMap)
 				nameLower := strings.ToLower(name)
 				if isAudioExtension(nameLower) || isImageExtension(nameLower) {
 					continue
@@ -394,7 +499,7 @@ func (c *Context) FileBytes() ([]byte, string, error) {
 
 	filename := "document.txt"
 	if pMap, ok := att.Payload.(map[string]any); ok {
-		if n, ok := pMap["name"].(string); ok && n != "" {
+		if n := extractAttachmentName(pMap); n != "" {
 			filename = n
 		}
 		for _, b64Key := range []string{"b64_json", "base64", "data"} {
@@ -407,6 +512,14 @@ func (c *Context) FileBytes() ([]byte, string, error) {
 				if err == nil && len(data) > 0 {
 					return data, filename, nil
 				}
+				if utf8.ValidString(cleanB64) && len(cleanB64) > 0 {
+					return []byte(cleanB64), filename, nil
+				}
+			}
+		}
+		for _, bKey := range []string{"bytes", "raw", "raw_data"} {
+			if bData, ok := pMap[bKey].([]byte); ok && len(bData) > 0 {
+				return bData, filename, nil
 			}
 		}
 	}

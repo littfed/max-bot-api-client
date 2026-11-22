@@ -1175,3 +1175,147 @@ func TestConvertAudioToWAV(t *testing.T) {
 		t.Fatalf("expected non-empty fallback from convertAudioToWAV")
 	}
 }
+
+func TestDocumentAndUnsupportedFileRouting(t *testing.T) {
+	var sttCalled int
+	var chatCalled int
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]string{{"id": "gpt-4o-mini"}},
+			})
+		case "/audio/transcriptions":
+			sttCalled++
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"text": "should not be called for text files",
+			})
+		case "/chat/completions":
+			chatCalled++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "chatcmpl-test",
+				"choices": []map[string]any{
+					{
+						"message": map[string]string{
+							"role":    "assistant",
+							"content": "Анализ документа выполнен успешно.",
+						},
+					},
+				},
+				"usage": map[string]int{"total_tokens": 50},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer mockServer.Close()
+
+	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	aiClient := ai.NewClient(mockServer.URL, "test-key")
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+	RegisterAIScenario(botInstance, hood, aiClient)
+
+	key := fsm.SessionKey{ChatID: 555, UserID: 555}
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, key)
+	_ = fsmCtx.SetState("AI_STEP_CHAT")
+
+	// 1. Text file (3418 bytes) sent as an attachment: MUST NOT be routed to STT!
+	txtContent := strings.Repeat("Текстовые данные для анализа. ", 110) // ~3418 bytes
+	txtAttachment := maxbot.Attachment{
+		Type: "file",
+		Payload: map[string]any{
+			"title":        "document.txt",
+			"data":         txtContent,
+			"content_type": "text/plain; charset=utf-8",
+		},
+	}
+	txtCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 555, FirstName: "Alex"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 555, UserID: 555, ChatType: "dialog"},
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{txtAttachment},
+			},
+		},
+	})
+	txtCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(txtCtx); err != nil {
+		t.Fatalf("handle text document message failed: %v", err)
+	}
+
+	if sttCalled != 0 {
+		t.Fatalf("CRITICAL BUG: Whisper STT was called %d times for a text file!", sttCalled)
+	}
+	if chatCalled != 1 {
+		t.Fatalf("expected chat completions to be called once, got %d", chatCalled)
+	}
+
+	// 2. Unsupported .zip archive: MUST NOT call STT and MUST NOT call chat completions
+	zipPayload := map[string]any{
+		"name": "archive.zip",
+		"data": "PK\x03\x04...",
+	}
+	zipCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 555, FirstName: "Alex"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 555, UserID: 555, ChatType: "dialog"},
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type:    "file",
+						Payload: zipPayload,
+					},
+				},
+			},
+		},
+	})
+	zipCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(zipCtx); err != nil {
+		t.Fatalf("handle unsupported zip message failed: %v", err)
+	}
+	if sttCalled != 0 {
+		t.Fatalf("Whisper STT was called for a zip archive!")
+	}
+	if chatCalled != 1 {
+		t.Fatalf("chat completions should not be called for zip archive, got %d", chatCalled)
+	}
+
+	// 3. Test isSupportedDocument
+	if !isSupportedDocument("notes.txt", []byte("hello world")) {
+		t.Errorf("expected notes.txt to be supported")
+	}
+	if !isSupportedDocument("code.go", []byte("package main")) {
+		t.Errorf("expected code.go to be supported")
+	}
+	if !isSupportedDocument("data.json", []byte(`{"key":"value"}`)) {
+		t.Errorf("expected data.json to be supported")
+	}
+	if isSupportedDocument("archive.zip", []byte("PK\x03\x04...")) {
+		t.Errorf("expected archive.zip NOT to be supported")
+	}
+	if isSupportedDocument("program.exe", []byte("MZ...")) {
+		t.Errorf("expected program.exe NOT to be supported")
+	}
+
+	// 4. Test formatFileSize
+	if res := formatFileSize(500); res != "500 байт" {
+		t.Errorf("expected '500 байт', got %q", res)
+	}
+	if res := formatFileSize(3418); res != "3.3 КБ" {
+		t.Errorf("expected '3.3 КБ', got %q", res)
+	}
+	if res := formatFileSize(2 * 1024 * 1024); res != "2.0 МБ" {
+		t.Errorf("expected '2.0 МБ', got %q", res)
+	}
+}
