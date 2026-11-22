@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
+	"github.com/littfed/max-bot-api-client/pkg/logger"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 	"github.com/littfed/max-bot-api-client/pkg/payments"
 	"github.com/littfed/max-bot-api-client/pkg/store"
@@ -36,17 +36,7 @@ func main() {
 		token = strings.TrimSpace(os.Getenv("MAX_BOT_TOKEN"))
 	}
 
-	_ = os.MkdirAll("logs", 0755)
-	var logOutput io.Writer = os.Stdout
-	if logFile, err := os.OpenFile("logs/showcase-bot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
-		defer logFile.Close()
-		logOutput = io.MultiWriter(os.Stdout, logFile)
-	}
-
-	logger := slog.New(slog.NewTextHandler(logOutput, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	logger := logger.InitGlobal()
 
 	logger.Info("запуск Флагманского бота-витрины MAX Bot API...", slog.String("port", *portFlag))
 

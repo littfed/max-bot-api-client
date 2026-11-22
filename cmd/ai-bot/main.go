@@ -13,6 +13,7 @@ import (
 
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/gma"
+	"github.com/littfed/max-bot-api-client/pkg/logger"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 )
 
@@ -30,9 +31,7 @@ func main() {
 		token = loadTokenFromDotEnv()
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logger := logger.InitGlobal()
 
 	gmaURL := strings.TrimSpace(*gmaURLFlag)
 	if gmaURL == "" {
