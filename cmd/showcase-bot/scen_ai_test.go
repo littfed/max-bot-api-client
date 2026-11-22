@@ -500,3 +500,125 @@ func TestVisionImageRecognitionPrompt(t *testing.T) {
 		t.Fatalf("unexpected reply in history: %s", history[1].Content)
 	}
 }
+
+func TestUnifiedDispatcherTransitions(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			var req ai.ChatRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			lastContent := ""
+			for _, m := range req.Messages {
+				if m.Role == ai.RoleUser {
+					if s, ok := m.Content.(string); ok {
+						lastContent = s
+					} else {
+						lastContent = "multimodal"
+					}
+				}
+			}
+			resp := map[string]any{
+				"id":      "chatcmpl-test",
+				"model":   req.Model,
+				"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "Ответ: " + lastContent}}},
+				"usage":   map[string]any{"total_tokens": 25},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	hood := NewHoodEngine()
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	aiClient := ai.NewClient(mockServer.URL, "test-api-key")
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+
+	RegisterMenuRoutes(botInstance, hood, aiClient)
+	RegisterAIScenario(botInstance, hood, aiClient)
+
+	key := fsm.SessionKey{UserID: 303, ChatID: 303}
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, key)
+
+	// 1. Manually set state to AI_STEP_VISION (simulating user who clicked ai:vision:start)
+	_ = fsmCtx.SetState("AI_STEP_VISION")
+
+	// 2. User sends plain text: "муха села на варенье"
+	textCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 303, FirstName: "Fedor"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 303, UserID: 303, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: "муха села на варенье"},
+		},
+	})
+	textCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(textCtx); err != nil {
+		t.Fatalf("handle text in AI_STEP_VISION failed: %v", err)
+	}
+
+	// Verify history has user text and assistant response
+	history := loadChatHistory(fsmCtx)
+	if len(history) != 2 {
+		t.Fatalf("expected 2 messages in history, got %d", len(history))
+	}
+	if history[0].Content != "муха села на варенье" {
+		t.Fatalf("expected user message in history, got %s", history[0].Content)
+	}
+
+	// 3. Set state to AI_STEP_VOICE
+	_ = fsmCtx.SetState("AI_STEP_VOICE")
+	textCtx2 := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 303, FirstName: "Fedor"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 303, UserID: 303, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: "еще вопрос"},
+		},
+	})
+	textCtx2.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(textCtx2); err != nil {
+		t.Fatalf("handle text in AI_STEP_VOICE failed: %v", err)
+	}
+
+	history2 := loadChatHistory(fsmCtx)
+	if len(history2) != 4 {
+		t.Fatalf("expected 4 messages in history after second text, got %d", len(history2))
+	}
+
+	// 4. Now send photo while in AI_STEP_CHAT
+	imgCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 303, FirstName: "Fedor"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 303, UserID: 303, ChatType: "dialog"},
+			Body: maxbot.MessageBody{
+				Text: "Что на картинке?",
+				Attachments: []maxbot.Attachment{
+					{
+						Type: maxbot.UploadTypeImage,
+						Payload: map[string]any{
+							"url": mockServer.URL + "/test.jpg",
+						},
+					},
+				},
+			},
+		},
+	})
+	imgCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(imgCtx); err != nil {
+		t.Fatalf("handle photo in AI_STEP_CHAT failed: %v", err)
+	}
+
+	history3 := loadChatHistory(fsmCtx)
+	if len(history3) != 6 {
+		t.Fatalf("expected 6 messages in history after photo, got %d", len(history3))
+	}
+}

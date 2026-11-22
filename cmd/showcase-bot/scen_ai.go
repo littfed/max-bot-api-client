@@ -289,8 +289,14 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return err
 	})
 
+	var processVisionImage func(c *bot.Context, prompt string) error
+	var deliverImageGen func(c *bot.Context, prompt string) error
+	var processVoiceAudio func(c *bot.Context, audioBytes []byte, filename string) error
+	var processTextConversation func(c *bot.Context, userText string) error
+	var dispatchAIMessage func(c *bot.Context) error
+
 	// Helper for Multimodal Vision Image Recognition
-	processVisionImage := func(c *bot.Context, prompt string) error {
+	processVisionImage = func(c *bot.Context, prompt string) error {
 		userID := getUserID(c)
 		if aiClient == nil {
 			_, err := c.Reply("⚠️ AI-шлюз не настроен или недоступен. Проверьте переменную AI_GATEWAY_URL.")
@@ -417,7 +423,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		_ = saveChatHistory(fsmCtx, history)
 		if fsmCtx != nil {
 			_ = fsmCtx.Set("last_ai_reply", answer)
-			_ = fsmCtx.SetState("AI_STEP_VISION")
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
 		}
 
 		hood.Register("ai_vision", TechCard{
@@ -444,13 +450,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return err
 	}
 
-	// 5. Handle Text in AI Chat Mode (Sliding Window Context)
-	b.OnState("AI_STEP_CHAT", func(c *bot.Context) error {
-		if _, hasImg := c.ImageAttachment(); hasImg {
-			return processVisionImage(c, strings.TrimSpace(c.Text()))
-		}
-
-		userText := strings.TrimSpace(c.Text())
+	// 5. Helper for Text Conversation via LLM
+	processTextConversation = func(c *bot.Context, userText string) error {
+		userText = strings.TrimSpace(userText)
 		if userText == "" {
 			return nil
 		}
@@ -564,6 +566,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		_ = saveChatHistory(fsmCtx, history)
 		if fsmCtx != nil {
 			_ = fsmCtx.Set("last_ai_reply", replyText)
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
 		}
 
 		// Update card telemetry
@@ -592,10 +595,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		formatted := hood.Format(userID, replyText, "ai_chat")
 		_, err := c.ReplyKeyboard(formatted, kb)
 		return err
-	})
+	}
 
 	// Helper for Text-to-Image Generation and Delivery
-	deliverImageGen := func(c *bot.Context, prompt string) error {
+	deliverImageGen = func(c *bot.Context, prompt string) error {
 		prompt = strings.TrimSpace(prompt)
 		if prompt == "" {
 			return nil
@@ -807,6 +810,12 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 	// Handle custom prompt in AI_STEP_IMAGE state
 	b.OnState("AI_STEP_IMAGE", func(c *bot.Context) error {
+		if _, hasImg := c.ImageAttachment(); hasImg {
+			return processVisionImage(c, strings.TrimSpace(c.Text()))
+		}
+		if audioBytes, filename, hasAudio := extractAudioAttachmentBytes(c); hasAudio && len(audioBytes) > 0 {
+			return processVoiceAudio(c, audioBytes, filename)
+		}
 		prompt := strings.TrimSpace(c.Text())
 		if prompt == "" {
 			return nil
@@ -815,7 +824,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 	})
 
 	// Helper for Voice Audio Processing via Whisper STT -> LLM
-	processVoiceAudio := func(c *bot.Context, audioBytes []byte, filename string) error {
+	processVoiceAudio = func(c *bot.Context, audioBytes []byte, filename string) error {
 		userID := getUserID(c)
 		if aiClient == nil {
 			_, err := c.Reply("⚠️ AI-шлюз не настроен. Проверьте переменную AI_GATEWAY_URL.")
@@ -915,6 +924,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			_ = saveChatHistory(fsmCtx, history)
 			if fsmCtx != nil {
 				_ = fsmCtx.Set("last_ai_reply", llmReply)
+				_ = fsmCtx.SetState("AI_STEP_CHAT")
 			}
 		} else if chatErr != nil {
 			llmReply = fmt.Sprintf("*(Ответ LLM временно недоступен: %s)*", chatErr.Error())
@@ -945,6 +955,32 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		_, err = c.ReplyKeyboard(formatted, kb)
 		return err
 	}
+
+	// dispatchAIMessage is the central multimodal message router for all user inputs.
+	dispatchAIMessage = func(c *bot.Context) error {
+		if c == nil {
+			return nil
+		}
+		// 1. Priority: Image attachment -> Multimodal Vision
+		if _, hasImg := c.ImageAttachment(); hasImg {
+			return processVisionImage(c, strings.TrimSpace(c.Text()))
+		}
+		// 2. Priority: Audio attachment -> Whisper STT
+		if audioBytes, filename, hasAudio := extractAudioAttachmentBytes(c); hasAudio && len(audioBytes) > 0 {
+			return processVoiceAudio(c, audioBytes, filename)
+		}
+		// 3. Priority: Text message -> Conversational LLM
+		userText := strings.TrimSpace(c.Text())
+		if userText != "" {
+			return processTextConversation(c, userText)
+		}
+		return nil
+	}
+
+	// Unified Handler for AI Chat Mode
+	b.OnState("AI_STEP_CHAT", func(c *bot.Context) error {
+		return dispatchAIMessage(c)
+	})
 
 	// 7. Start Voice Mode
 	b.OnCallbackPayload("ai:voice:start", func(c *bot.Context) error {
@@ -977,31 +1013,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return processVoiceAudio(c, demoWav, "demo_voice.wav")
 	})
 
-	// Handle Voice / Audio in AI_STEP_VOICE state
+	// Handle Voice / Audio in AI_STEP_VOICE state - uses unified dispatcher so text/images are never blocked!
 	b.OnState("AI_STEP_VOICE", func(c *bot.Context) error {
-		audioBytes, filename, found := extractAudioAttachmentBytes(c)
-		if found {
-			return processVoiceAudio(c, audioBytes, filename)
-		}
-
-		// If user sent text instead of voice
-		userText := strings.TrimSpace(c.Text())
-		text := "🎙️ **Как протестировать распознавание речи (Whisper STT):**\n\n" +
-			"1. **Реальное голосовое:** Зажмите микрофон в поле ввода MAX и надиктуйте голосовое сообщение прямо в чат.\n" +
-			"2. **Демо-режим:** Нажмите кнопку **«🎙️ Протестировать демо-запись»** ниже — бот передаст аудиозапись в Whisper и мгновенно ответит через нейросеть.\n\n"
-		if userText != "" {
-			text += fmt.Sprintf("*(Вы написали текстом: «%s». Чтобы общаться текстом, нажмите «💬 В текстовый AI Чат»)*", userText)
-		}
-
-		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("🎙️ Протестировать демо-запись", "ai:voice:demo")).
-			Row(
-				maxbot.NewCallbackButton("💬 В текстовый AI Чат", "ai:chat:start"),
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
-			)
-
-		_, err := c.ReplyKeyboard(text, kb)
-		return err
+		return dispatchAIMessage(c)
 	})
 
 	// Helper for Text-to-Speech (TTS) Voice Generation and Delivery
@@ -1134,6 +1148,12 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 	// Handle custom text in AI_STEP_TTS state
 	b.OnState("AI_STEP_TTS", func(c *bot.Context) error {
+		if _, hasImg := c.ImageAttachment(); hasImg {
+			return processVisionImage(c, strings.TrimSpace(c.Text()))
+		}
+		if audioBytes, filename, hasAudio := extractAudioAttachmentBytes(c); hasAudio && len(audioBytes) > 0 {
+			return processVoiceAudio(c, audioBytes, filename)
+		}
 		textToSpeak := strings.TrimSpace(c.Text())
 		if textToSpeak == "" {
 			return nil
@@ -1235,27 +1255,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return rErr
 	})
 
-	// Handle custom input in AI_STEP_VISION state
+	// Handle custom input in AI_STEP_VISION state - uses unified dispatcher so text/audio are never blocked!
 	b.OnState("AI_STEP_VISION", func(c *bot.Context) error {
-		if _, hasImg := c.ImageAttachment(); hasImg {
-			return processVisionImage(c, strings.TrimSpace(c.Text()))
-		}
-		userText := strings.TrimSpace(c.Text())
-		slog.Info("vision: получено текстовое сообщение без фото в режиме AI_STEP_VISION",
-			slog.Int64("user_id", getUserID(c)),
-			slog.String("text", userText),
-		)
-		text := "👁️ **Ожидание изображения:**\n\n" +
-			"Пожалуйста, **отправьте фото или картинку** в чат (можно добавить вопрос в подписи к фото).\n\n"
-		if userText != "" {
-			text += fmt.Sprintf("*(Вы написали: «%s». Чтобы общаться без фото, перейдите в «💬 В текстовый AI Чат»)*", userText)
-		}
-		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("🖼️ Протестировать демо-фото", "ai:vision:demo")).
-			Row(maxbot.NewCallbackButton("💬 В текстовый AI Чат", "ai:chat:start")).
-			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
-		_, err := c.ReplyKeyboard(text, kb)
-		return err
+		return dispatchAIMessage(c)
 	})
 
 	// 11. Global Image / Vision handler for multimodal recognition anywhere in the bot!
