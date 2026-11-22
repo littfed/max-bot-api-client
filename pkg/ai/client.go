@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"strings"
 	"time"
+
+	"github.com/littfed/max-bot-api-client/pkg/logger"
 )
 
 // Option configures an AI Client.
@@ -161,19 +164,31 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest) (*ChatResponse, err
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
+	log := logger.FromContext(ctx)
+	log.Debug("ai chat request starting", slog.String("model", model), slog.Int("messages_count", len(req.Messages)))
+
 	start := time.Now()
 	resp, err := c.httpClient.Do(httpReq)
+	duration := time.Since(start)
 	if err != nil {
+		log.Error("ai chat request failed", slog.String("model", model), slog.Duration("duration", duration), slog.Any("error", err))
 		return nil, fmt.Errorf("ai: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Error("ai chat read response failed", slog.String("model", model), slog.Any("error", err))
 		return nil, fmt.Errorf("ai: read response failed: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Error("ai chat gateway error response",
+			slog.String("model", model),
+			slog.Int("status_code", resp.StatusCode),
+			slog.Duration("duration", duration),
+			slog.String("response_body", string(respBody)),
+		)
 		return nil, fmt.Errorf("ai: gateway error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
@@ -256,19 +271,31 @@ func (c *Client) GenerateImage(ctx context.Context, req *ImageRequest) (*ImageRe
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
+	log := logger.FromContext(ctx)
+	log.Debug("ai image generation starting", slog.String("model", model), slog.String("prompt", req.Prompt))
+
 	start := time.Now()
 	resp, err := c.httpClient.Do(httpReq)
+	duration := time.Since(start)
 	if err != nil {
+		log.Error("ai image generation request failed", slog.String("model", model), slog.Duration("duration", duration), slog.Any("error", err))
 		return nil, fmt.Errorf("ai: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Error("ai image read response failed", slog.String("model", model), slog.Any("error", err))
 		return nil, fmt.Errorf("ai: read response failed: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Error("ai image gateway error response",
+			slog.String("model", model),
+			slog.Int("status_code", resp.StatusCode),
+			slog.Duration("duration", duration),
+			slog.String("response_body", string(respBody)),
+		)
 		return nil, fmt.Errorf("ai: gateway error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
@@ -381,19 +408,31 @@ func (c *Client) TranscribeAudio(ctx context.Context, req *AudioRequest) (*Audio
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
+	log := logger.FromContext(ctx)
+	log.Debug("ai audio transcription starting", slog.String("model", model), slog.String("filename", filename), slog.Int("bytes", len(req.AudioBytes)))
+
 	start := time.Now()
 	resp, err := c.httpClient.Do(httpReq)
+	duration := time.Since(start)
 	if err != nil {
+		log.Error("ai audio transcription request failed", slog.String("model", model), slog.Duration("duration", duration), slog.Any("error", err))
 		return nil, fmt.Errorf("ai: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Error("ai audio read response failed", slog.String("model", model), slog.Any("error", err))
 		return nil, fmt.Errorf("ai: read response failed: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Error("ai audio transcription gateway error response",
+			slog.String("model", model),
+			slog.Int("status_code", resp.StatusCode),
+			slog.Duration("duration", duration),
+			slog.String("response_body", string(respBody)),
+		)
 		return nil, fmt.Errorf("ai: gateway error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 

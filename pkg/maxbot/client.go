@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/littfed/max-bot-api-client/certs"
+	"github.com/littfed/max-bot-api-client/pkg/logger"
 )
 
 // DefaultBaseURL is the active production endpoint for MAX Bot API.
@@ -157,14 +158,28 @@ func (c *Client) newRequest(ctx context.Context, method, endpoint string, query 
 }
 
 func (c *Client) execute(req *http.Request, target any) error {
+	log := logger.FromContext(req.Context())
+	start := time.Now()
 	resp, err := c.httpClient.Do(req)
+	duration := time.Since(start)
 	if err != nil {
+		log.Error("maxbot HTTP request failed",
+			slog.String("method", req.Method),
+			slog.String("path", req.URL.Path),
+			slog.Duration("duration", duration),
+			slog.Any("error", err),
+		)
 		return err
 	}
 	defer resp.Body.Close()
 
 	respData, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Error("maxbot read response failed",
+			slog.String("method", req.Method),
+			slog.String("path", req.URL.Path),
+			slog.Any("error", err),
+		)
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
@@ -174,8 +189,22 @@ func (c *Client) execute(req *http.Request, target any) error {
 			RawBody:    string(respData),
 		}
 		_ = json.Unmarshal(respData, apiErr)
+		log.Error("maxbot API error response",
+			slog.String("method", req.Method),
+			slog.String("path", req.URL.Path),
+			slog.Int("status_code", resp.StatusCode),
+			slog.Duration("duration", duration),
+			slog.String("raw_body", string(respData)),
+		)
 		return apiErr
 	}
+
+	log.Debug("maxbot API request succeeded",
+		slog.String("method", req.Method),
+		slog.String("path", req.URL.Path),
+		slog.Int("status_code", resp.StatusCode),
+		slog.Duration("duration", duration),
+	)
 
 	if target != nil && len(respData) > 0 {
 		if err := json.Unmarshal(respData, target); err != nil {
@@ -469,7 +498,7 @@ func (c *Client) GetUpdates(ctx context.Context, opts *GetUpdatesOptions) (*Upda
 	}
 
 	for _, rawU := range rawEnvelope.Updates {
-		slog.Default().Info("RAW UPDATE FROM MAX API", slog.String("json", string(rawU)))
+		slog.Default().Debug("RAW UPDATE FROM MAX API", slog.String("json", string(rawU)))
 		var u Update
 		_ = json.Unmarshal(rawU, &u)
 		u.RawJSON = string(rawU)

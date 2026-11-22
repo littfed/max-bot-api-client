@@ -26,6 +26,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
+	"github.com/littfed/max-bot-api-client/pkg/logger"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 )
 
@@ -332,7 +333,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		imgBytes, _, _ := c.ImageBytes()
 		imgURL, _ := c.ImageURL()
 
-		slog.Info("vision: начало обработки изображения",
+		c.Logger().Info("vision: начало обработки изображения",
 			slog.Int64("user_id", userID),
 			slog.Bool("has_bytes", len(imgBytes) > 0),
 			slog.Int("bytes_len", len(imgBytes)),
@@ -342,7 +343,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		if len(imgBytes) == 0 && imgURL == "" {
 			close(stopTyping)
-			slog.Warn("vision: не удалось извлечь ни байты, ни URL картинки", slog.Int64("user_id", userID))
+			c.Logger().Warn("vision: не удалось извлечь ни байты, ни URL картинки", slog.Int64("user_id", userID))
 			_, err := c.Reply("⚠️ Не удалось извлечь изображение из сообщения. Пожалуйста, прикрепите фото или картинку еще раз.")
 			return err
 		}
@@ -378,7 +379,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			visionResp, lastErr = aiClient.Vision(c.Ctx(), vReq)
 			if lastErr == nil && visionResp != nil && strings.TrimSpace(visionResp.Content) != "" {
 				usedModel = m
-				slog.Info("vision: изображение успешно распознано",
+				c.Logger().Info("vision: изображение успешно распознано",
 					slog.Int64("user_id", userID),
 					slog.String("model", usedModel),
 					slog.Duration("latency", visionResp.Latency),
@@ -386,7 +387,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				)
 				break
 			}
-			slog.Warn("vision: модель вернула ошибку, переходим к следующему кандидату",
+			c.Logger().Warn("vision: модель вернула ошибку, переходим к следующему кандидату",
 				slog.Int64("user_id", userID),
 				slog.String("failed_model", m),
 				slog.Any("error", lastErr),
@@ -399,7 +400,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			if lastErr != nil {
 				errMsg = lastErr.Error()
 			}
-			slog.Error("vision: все кандидаты вернули ошибку",
+			c.Logger().Error("vision: все кандидаты вернули ошибку",
 				slog.Int64("user_id", userID),
 				slog.Any("last_error", lastErr),
 			)
@@ -1778,13 +1779,14 @@ func extractAudioAttachmentBytes(c *bot.Context) ([]byte, string, bool) {
 // convertAudioToWAV converts any audio input (OGG Opus, MP3, AAC, M4A, etc.) to 16kHz mono WAV format using ffmpeg.
 // If ffmpeg is not available or conversion fails, it returns the original bytes and filename.
 func convertAudioToWAV(ctx context.Context, inputBytes []byte, originalFilename string) ([]byte, string, error) {
+	log := logger.FromContext(ctx)
 	if len(inputBytes) == 0 {
 		return nil, originalFilename, fmt.Errorf("empty audio bytes")
 	}
 
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
-		slog.Warn("ffmpeg not found in PATH, proceeding with original audio format", slog.String("filename", originalFilename))
+		log.Warn("ffmpeg not found in PATH, proceeding with original audio format", slog.String("filename", originalFilename))
 		return inputBytes, originalFilename, nil
 	}
 
@@ -1804,7 +1806,7 @@ func convertAudioToWAV(ctx context.Context, inputBytes []byte, originalFilename 
 	cmd.Stderr = &errBuf
 
 	if err := cmd.Run(); err != nil {
-		slog.Warn("ffmpeg conversion to WAV failed, falling back to original audio",
+		log.Warn("ffmpeg conversion to WAV failed, falling back to original audio",
 			slog.Any("error", err),
 			slog.String("stderr", errBuf.String()),
 			slog.String("filename", originalFilename),
@@ -1814,7 +1816,7 @@ func convertAudioToWAV(ctx context.Context, inputBytes []byte, originalFilename 
 
 	wavBytes := outBuf.Bytes()
 	if len(wavBytes) > 44 { // Valid WAV header is at least 44 bytes
-		slog.Info("audio successfully transcoded to 16kHz WAV for STT",
+		log.Info("audio successfully transcoded to 16kHz WAV for STT",
 			slog.Int("original_bytes", len(inputBytes)),
 			slog.Int("wav_bytes", len(wavBytes)),
 		)

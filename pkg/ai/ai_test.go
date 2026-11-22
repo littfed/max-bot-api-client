@@ -1,13 +1,18 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/littfed/max-bot-api-client/pkg/logger"
 )
 
 func TestAIClientWorkflow(t *testing.T) {
@@ -164,5 +169,45 @@ func TestAIClientErrors(t *testing.T) {
 	_, err = client.TranscribeAudio(ctx, &AudioRequest{})
 	if err == nil {
 		t.Fatal("expected error on empty audio")
+	}
+}
+
+func TestAIClientStructuredLogging(t *testing.T) {
+	var buf bytes.Buffer
+	testLog := logger.New(
+		logger.WithLevel(slog.LevelDebug),
+		logger.WithOutput(&buf),
+	)
+
+	ctx := logger.WithContext(context.Background(), testLog.With(
+		slog.String("trace_id", "tr_test_ai_123"),
+	))
+
+	// Mock server returning an error
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"invalid_request","message":"model_overloaded"}}`))
+	}))
+	defer mockServer.Close()
+
+	client := NewClient(mockServer.URL, "sk-test-secret")
+	_, err := client.Chat(ctx, &ChatRequest{
+		Model:    "test-model",
+		Messages: []ChatMessage{NewTextMessage(RoleUser, "test")},
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "tr_test_ai_123") {
+		t.Errorf("expected trace_id in log output: %s", out)
+	}
+	if !strings.Contains(out, "model_overloaded") {
+		t.Errorf("expected response_body with model_overloaded in log output: %s", out)
+	}
+	if !strings.Contains(out, "ai chat gateway error response") {
+		t.Errorf("expected error log message: %s", out)
 	}
 }
