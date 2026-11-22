@@ -85,9 +85,38 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 		return err
 	}
 
+	sendStartGreeting := func(c *bot.Context) error {
+		userID := int64(0)
+		userName := "Гость"
+		if sender := c.Sender(); sender != nil {
+			userID = sender.UserID
+			if sender.FirstName != "" {
+				userName = sender.FirstName
+			}
+		}
+
+		greeting := fmt.Sprintf("👋 Привет, *%s*!\n\n"+
+			"Я умный мультимодальный AI-ассистент на платформе **MAX Messenger**.\n\n"+
+			"✨ **Вы можете общаться со мной совершенно естественно:**\n"+
+			"• 💬 **Диалог:** задавайте любые вопросы текстом в чат\n"+
+			"• 🖼️ **Компьютерное зрение:** отправьте фото или картинку (опишу детали, сделаю OCR текста)\n"+
+			"• 🎙️ **Голос:** запишите голосовое сообщение (расшифрую через Whisper и отвечу)\n"+
+			"• 📁 **Документы и код:** присылайте PDF, TXT, MD или файлы кода (сделаю выжимку и отвечу на вопросы)\n"+
+			"• 🎨 **Генерация картинок:** напишите *«Нарисуй кота»* или команду `/img <описание>`\n"+
+			"• 🌐 **Ссылки:** отправьте URL статьи, и я подготовлю краткий пересказ\n\n"+
+			"👇 *А если хотите посмотреть интерактивную витрину других возможностей MAX (магазин, бронь, квиз, Mini App) — нажмите кнопку ниже:*", userName)
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("✨ Витрина возможностей MAX", "nav:menu").WithIntent(maxbot.IntentPrimary))
+
+		formatted := hood.Format(userID, greeting, "main_menu")
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
+		return err
+	}
+
 	// Commands
 	b.OnStart(func(c *bot.Context) error {
-		return sendMenu(c)
+		return sendStartGreeting(c)
 	})
 
 	b.OnCommand("menu", func(c *bot.Context) error {
@@ -110,10 +139,57 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 
 	b.OnCommand("reset", func(c *bot.Context) error {
 		if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
-			_ = fsmCtx.Reset()
+			_ = fsmCtx.Set("ai_chat_history", "[]")
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
 		}
-		_, err := c.Reply("🔄 Ваша сессия и состояние FSM сброшены в начало. Напишите /start или /menu.")
+		_, err := c.Reply("🔄 Контекст диалога очищен (0/10). Начните новый диалог — задайте вопрос или отправьте фото/файл!")
 		return err
+	})
+
+	b.OnCommand("new", func(c *bot.Context) error {
+		if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
+			_ = fsmCtx.Set("ai_chat_history", "[]")
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
+		}
+		_, err := c.Reply("🔄 Начат новый диалог с чистого листа. Задайте любой вопрос или отправьте фото/файл!")
+		return err
+	})
+
+	showModelSelector := func(c *bot.Context) error {
+		fsmCtx := fsm.FromContext(c)
+		activeModel := "auto"
+		if fsmCtx != nil {
+			if m, ok := fsmCtx.Get("ai_active_chat_model"); ok {
+				if mStr, isStr := m.(string); isStr && mStr != "" {
+					activeModel = mStr
+				}
+			}
+		}
+
+		text := fmt.Sprintf("⚙️ **Выбор активной языковой модели (LLM)**\n\n"+
+			"• Текущая модель: `%s`\n\n"+
+			"Выберите модель для диалога:\n"+
+			"• **auto** — сбалансированная модель для любых задач\n"+
+			"• **best-coding** — специализированная модель для программирования и кода\n"+
+			"• **reasoning** — глубокие рассуждения и логика\n"+
+			"• **fast** — максимальная скорость генерации ответа", activeModel)
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("⚡ auto (сбалансированная)", "ai:set_model:auto")).
+			Row(maxbot.NewCallbackButton("💻 best-coding (код и разработка)", "ai:set_model:best-coding")).
+			Row(maxbot.NewCallbackButton("🧠 reasoning (логика и анализ)", "ai:set_model:reasoning")).
+			Row(maxbot.NewCallbackButton("🚀 fast (быстрая)", "ai:set_model:fast"))
+
+		_, err := c.ReplyKeyboard(text, kb)
+		return err
+	}
+
+	b.OnCommand("model", func(c *bot.Context) error {
+		return showModelSelector(c)
+	})
+
+	b.OnCommand("models", func(c *bot.Context) error {
+		return showModelSelector(c)
 	})
 
 	// Callbacks
@@ -309,12 +385,8 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 
 				kb := maxbot.NewInlineKeyboard().
 					Row(
-						maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models"),
-						maxbot.NewCallbackButton(fmt.Sprintf("🔄 Очистить контекст (%d/10)", len(history)), "ai:clear_context"),
-					).
-					Row(
-						maxbot.NewCallbackButton("🔊 Озвучить ответ", "ai:tts:speak_last"),
-						maxbot.NewCallbackButton("🛍️ Главное меню", "nav:menu"),
+						maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+						maxbot.NewCallbackButton("🔊 Озвучить", "ai:tts:speak_last"),
 					)
 				formatted := hood.Format(userID, chatResp.Content, "ai_chat")
 				_, rErr := c.ReplyKeyboard(formatted, kb)

@@ -622,3 +622,97 @@ func TestUnifiedDispatcherTransitions(t *testing.T) {
 		t.Fatalf("expected 6 messages in history after photo, got %d", len(history3))
 	}
 }
+
+func TestStreamlinedUXAndCommands(t *testing.T) {
+	hood := NewHoodEngine()
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+
+	RegisterMenuRoutes(botInstance, hood)
+	RegisterAIScenario(botInstance, hood, nil)
+
+	key := fsm.SessionKey{UserID: 505, ChatID: 505}
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, key)
+
+	// 1. Test /start command
+	startCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 505, FirstName: "Alex"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 505, UserID: 505, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: "/start"},
+		},
+	})
+	startCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(startCtx); err != nil {
+		t.Fatalf("handle /start failed: %v", err)
+	}
+
+	// 2. Put some history in session
+	_ = saveChatHistory(fsmCtx, []ai.ChatMessage{
+		{Role: ai.RoleUser, Content: "Привет"},
+		{Role: ai.RoleAssistant, Content: "Привет! Чем помочь?"},
+	})
+
+	if len(loadChatHistory(fsmCtx)) != 2 {
+		t.Fatalf("expected 2 messages in history")
+	}
+
+	// 3. Test /reset command
+	resetCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 505, FirstName: "Alex"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 505, UserID: 505, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: "/reset"},
+		},
+	})
+	resetCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(resetCtx); err != nil {
+		t.Fatalf("handle /reset failed: %v", err)
+	}
+
+	if len(loadChatHistory(fsmCtx)) != 0 {
+		t.Fatalf("expected history to be cleared by /reset")
+	}
+
+	// 4. Test /new command
+	_ = saveChatHistory(fsmCtx, []ai.ChatMessage{{Role: ai.RoleUser, Content: "Еще раз"}})
+	newCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 505, FirstName: "Alex"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 505, UserID: 505, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: "/new"},
+		},
+	})
+	newCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(newCtx); err != nil {
+		t.Fatalf("handle /new failed: %v", err)
+	}
+
+	if len(loadChatHistory(fsmCtx)) != 0 {
+		t.Fatalf("expected history to be cleared by /new")
+	}
+
+	// 5. Test /model command
+	modelCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 505, FirstName: "Alex"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 505, UserID: 505, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: "/model"},
+		},
+	})
+	modelCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(modelCtx); err != nil {
+		t.Fatalf("handle /model failed: %v", err)
+	}
+}

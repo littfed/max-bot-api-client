@@ -242,11 +242,14 @@ func main() {
 
 	if client != nil {
 		_ = client.SetCommands(ctx, []maxbot.BotCommand{
-			{Name: "start", Description: "Главное меню витрины возможностей"},
-			{Name: "menu", Description: "Вызов интерактивного меню"},
-			{Name: "dev", Description: "Переключить режим разработчика (Под капотом)"},
-			{Name: "stats", Description: "Телеметрия и воронка кликов"},
-			{Name: "reset", Description: "Сбросить текущий сценарий и сессию"},
+			{Name: "start", Description: "Приветствие и возможности бота"},
+			{Name: "reset", Description: "Новый диалог (очистить контекст ИИ)"},
+			{Name: "new", Description: "Новый диалог с чистого листа"},
+			{Name: "model", Description: "Выбор активной модели AI (LLM)"},
+			{Name: "img", Description: "Сгенерировать картинку нейросетью"},
+			{Name: "menu", Description: "Витрина возможностей MAX (Магазин, Бронь, Mini App)"},
+			{Name: "dev", Description: "Режим разработчика (Под капотом)"},
+			{Name: "stats", Description: "Телеметрия активной сессии"},
 		})
 
 		logger.Info("начинаем Long Polling прослушивание...")

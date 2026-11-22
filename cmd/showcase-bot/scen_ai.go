@@ -170,15 +170,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 		_ = c.AnswerNotification("🔄 Контекст диалога очищен (0/10)!")
 
-		text := "🔄 **Контекст диалога успешно очищен (0/10).**\n\n" +
-			"История предыдущих сообщений удалена из сессии FSM. Следующий запрос начнется с чистого листа без предыстории."
+		text := "🔄 **Контекст диалога очищен (0/10).**\n\n" +
+			"История предыдущих сообщений удалена. Следующий запрос начнется с чистого листа!"
 
-		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("💬 Продолжить диалог", "ai:chat:start")).
-			Row(maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models")).
-			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
-
-		_, err := c.ReplyKeyboard(text, kb)
+		_, err := c.Reply(text)
 		return err
 	})
 
@@ -439,11 +434,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		formatted := hood.Format(userID, responseBody, "ai_vision")
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("🔊 Озвучить ответ голосом", "ai:tts:speak_last")).
-			Row(maxbot.NewCallbackButton("💬 Продолжить диалог", "ai:chat:start")).
 			Row(
-				maxbot.NewCallbackButton("🎨 Сгенерировать арт", "ai:image:start"),
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
+				maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+				maxbot.NewCallbackButton("🔊 Озвучить", "ai:tts:speak_last"),
 			)
 
 		_, err := c.ReplyKeyboard(formatted, kb)
@@ -584,13 +577,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		})
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("🔊 Озвучить ответ голосом", "ai:tts:speak_last")).
-			Row(maxbot.NewCallbackButton(fmt.Sprintf("🔄 Очистить контекст (%d/10)", len(history)), "ai:clear_context")).
 			Row(
-				maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models"),
-				maxbot.NewCallbackButton("🎨 Картинка (Flux)", "ai:image:start"),
-			).
-			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
+				maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+				maxbot.NewCallbackButton("🔊 Озвучить", "ai:tts:speak_last"),
+			)
 
 		formatted := hood.Format(userID, replyText, "ai_chat")
 		_, err := c.ReplyKeyboard(formatted, kb)
@@ -945,11 +935,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		formatted := hood.Format(userID, responseBody, "ai_voice")
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("🔊 Озвучить ответ голосом", "ai:tts:speak_last")).
-			Row(maxbot.NewCallbackButton("🎙️ Протестировать демо-запись еще раз", "ai:voice:demo")).
 			Row(
-				maxbot.NewCallbackButton("💬 Перейти в AI Чат", "ai:chat:start"),
-				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
+				maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+				maxbot.NewCallbackButton("🔊 Озвучить", "ai:tts:speak_last"),
 			)
 
 		_, err = c.ReplyKeyboard(formatted, kb)
