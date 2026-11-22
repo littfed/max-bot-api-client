@@ -82,9 +82,8 @@ func RegisterImageHandlers(b *bot.Bot, gmaClient *gma.Client, sm *gma.SessionMan
 			if uploadErr == nil && uploadResp != nil && uploadResp.Token != "" {
 				recipient, rErr := c.Recipient()
 				if rErr == nil {
-					caption := fmt.Sprintf("🎨 **%s**\n*Модель:* `%s`", prompt, imageModel)
 					msgReq := &maxbot.SendMessageRequest{
-						Text:   caption,
+						Text:   "",
 						Format: "markdown",
 						Attachments: []maxbot.Attachment{
 							{

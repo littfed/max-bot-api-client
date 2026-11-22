@@ -604,7 +604,6 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			return nil
 		}
 
-		userID := getUserID(c)
 		fsmCtx := fsm.FromContext(c)
 		if fsmCtx != nil {
 			_ = fsmCtx.Set("last_image_prompt", prompt)
@@ -692,20 +691,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			DocsLink:    "https://dev.max.ru/docs/uploads",
 		})
 
-		caption := fmt.Sprintf("🎨 **Результат генерации нейросетью**\n\n"+
-			"*Запрос:* «%s»\n"+
-			"*Модель:* `flux` *(%s)*\n\n"+
-			"💡 *Вы можете сразу написать в чат следующий запрос, и я сгенерирую новую картинку!*",
-			prompt, latency.Round(time.Millisecond))
-		formatted := hood.Format(userID, caption, "ai_image")
-
-		kb := maxbot.NewInlineKeyboard().
-			Row(
-				maxbot.NewCallbackButton("🔄 Новый вариант", "ai:image:retry"),
-				maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
-			)
-
-		// Upload to MAX CDN if client is available
+		// Upload to MAX CDN if client is available and deliver the clean image with zero text clutter
 		if c.Client() != nil && len(imgBytes) > 0 {
 			uploadResp, uploadErr := c.Client().UploadMedia(c.Ctx(), maxbot.UploadTypeImage, "ai_image.jpg", bytes.NewReader(imgBytes))
 			if uploadErr == nil && uploadResp != nil && uploadResp.Token != "" {
@@ -719,13 +705,18 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				if statusMsg != nil {
 					_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
 				}
-				_, sendErr := c.ReplyWithAttachments(formatted, att, kb.ToAttachment())
+				_, sendErr := c.ReplyWithAttachments("", att)
 				return sendErr
 			}
 		}
 
 		// Fallback for offline tests or when uploads not configured
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.ReplyWithAttachments("", maxbot.Attachment{
+			Type: maxbot.UploadTypeImage,
+			Payload: map[string]any{
+				"name": "ai_image.jpg",
+			},
+		})
 		return err
 	}
 
