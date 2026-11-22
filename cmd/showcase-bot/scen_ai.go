@@ -1554,18 +1554,37 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return deliverVoiceMessage(c, "Будущее уже наступило, просто оно еще неравномерно распределено.", "Цитата дня")
 	})
 
-	// Speak last AI response
+	// Speak the specific message where the user clicked the button (or fallback to latest AI reply)
 	b.OnCallbackPayload("ai:tts:speak_last", func(c *bot.Context) error {
 		_ = c.AnswerCallback(nil)
-		lastText := "Привет! Я умный AI-ассистент в мессенджере MAX."
-		if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
-			if val, ok := fsmCtx.Get("last_ai_reply"); ok && val != nil {
-				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
-					lastText = s
+
+		// 1. First priority: The text of the message containing the button clicked by user
+		textToVoice := strings.TrimSpace(c.Text())
+
+		// Strip developer mode badge if attached
+		if idx := strings.Index(textToVoice, "\n\n---\n🛠"); idx != -1 {
+			textToVoice = strings.TrimSpace(textToVoice[:idx])
+		} else if idx := strings.Index(textToVoice, "\n---"); idx != -1 && strings.Contains(textToVoice[idx:], "Режим разработчика") {
+			textToVoice = strings.TrimSpace(textToVoice[:idx])
+		}
+
+		// 2. Second priority: Fallback to FSM last_ai_reply if message text was empty
+		if textToVoice == "" {
+			if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
+				if val, ok := fsmCtx.Get("last_ai_reply"); ok && val != nil {
+					if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
+						textToVoice = strings.TrimSpace(s)
+					}
 				}
 			}
 		}
-		return deliverVoiceMessage(c, lastText, "Озвучка ответа AI")
+
+		// 3. Fallback default
+		if textToVoice == "" {
+			textToVoice = "Привет! Я умный AI-ассистент в мессенджере MAX."
+		}
+
+		return deliverVoiceMessage(c, textToVoice, "Озвучка ответа AI")
 	})
 
 	// Handle custom text in AI_STEP_TTS state

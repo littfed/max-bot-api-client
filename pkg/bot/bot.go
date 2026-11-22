@@ -224,7 +224,21 @@ func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
 	c.Logger().Info("incoming update", slog.String("raw", raw))
 
 	// Track active chat from incoming messages or callbacks
-	if u.Message != nil {
+	if u.Callback != nil {
+		var chatID int64
+		if u.Callback.Message != nil && u.Callback.Message.Recipient != nil {
+			chatID = u.Callback.Message.Recipient.ChatID
+		} else if u.Message != nil && u.Message.Recipient != nil {
+			chatID = u.Message.Recipient.ChatID
+		}
+		var userID int64
+		if u.Callback.User != nil {
+			userID = u.Callback.User.UserID
+		}
+		if chatID != 0 {
+			b.RecordActiveChat(chatID, userID)
+		}
+	} else if u.Message != nil {
 		var chatID int64
 		if u.Message.Recipient != nil {
 			chatID = u.Message.Recipient.ChatID
@@ -232,18 +246,6 @@ func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
 		var userID int64
 		if u.Message.Sender != nil {
 			userID = u.Message.Sender.UserID
-		}
-		if chatID != 0 {
-			b.RecordActiveChat(chatID, userID)
-		}
-	} else if u.Callback != nil {
-		var chatID int64
-		if u.Callback.Message != nil && u.Callback.Message.Recipient != nil {
-			chatID = u.Callback.Message.Recipient.ChatID
-		}
-		var userID int64
-		if u.Callback.User != nil {
-			userID = u.Callback.User.UserID
 		}
 		if chatID != 0 {
 			b.RecordActiveChat(chatID, userID)

@@ -1420,3 +1420,51 @@ func TestTTS_SanitizeAndChunkText(t *testing.T) {
 		}
 	}
 }
+
+func TestTTS_SpeakClickedMessage(t *testing.T) {
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	hood := NewHoodEngine()
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+	hood.RegisterRoutes(botInstance.Router())
+	RegisterAIScenario(botInstance, hood, nil)
+
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, fsm.SessionKey{UserID: 2020, ChatID: 3030})
+	_ = fsmCtx.Set("last_ai_reply", "Это самое последнее сообщение нейросети в чате")
+
+	// User clicks "Озвучить" on an earlier message from the history
+	earlierMessageText := "Анализ исторического документа номер сорок два."
+	cbUpdate := &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCallback,
+		Callback: &maxbot.Callback{
+			CallbackID: "cb-earlier-msg",
+			Payload:    "ai:tts:speak_last",
+			User:       &maxbot.User{UserID: 2020, FirstName: "Alex"},
+		},
+		Message: &maxbot.Message{
+			Recipient: &maxbot.MessageRecipient{ChatID: 3030, ChatType: "dialog", UserID: 2020},
+			Sender:    &maxbot.User{UserID: 9999, IsBot: true, FirstName: "КомБот"},
+			Body: maxbot.MessageBody{
+				MID:  "mid-earlier-123",
+				Text: earlierMessageText,
+			},
+		},
+	}
+
+	ctx := bot.NewContext(context.Background(), nil, cbUpdate)
+	ctx.Set("fsm_context", fsmCtx)
+
+	// Context sender must correctly identify the user (2020), not the bot (9999)
+	if ctx.Sender().UserID != 2020 {
+		t.Fatalf("expected Sender UserID 2020, got %d", ctx.Sender().UserID)
+	}
+	if ctx.Text() != earlierMessageText {
+		t.Fatalf("expected ctx.Text() to be earlier message text %q, got %q", earlierMessageText, ctx.Text())
+	}
+
+	if err := botInstance.Router().Handle(ctx); err != nil {
+		t.Fatalf("expected router to handle callback on earlier message: %v", err)
+	}
+}

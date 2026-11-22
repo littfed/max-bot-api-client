@@ -51,19 +51,21 @@ func NewContext(ctx context.Context, client *maxbot.Client, update *maxbot.Updat
 
 	if update != nil {
 		updateType = update.UpdateType
-		if update.Message != nil {
-			if update.Message.Sender != nil {
-				senderID = update.Message.Sender.UserID
-			}
-			if update.Message.Recipient != nil {
-				chatID = update.Message.Recipient.ChatID
-			}
-		} else if update.Callback != nil {
+		if update.Callback != nil {
 			if update.Callback.User != nil {
 				senderID = update.Callback.User.UserID
 			}
 			if update.Callback.Message != nil && update.Callback.Message.Recipient != nil {
 				chatID = update.Callback.Message.Recipient.ChatID
+			} else if update.Message != nil && update.Message.Recipient != nil {
+				chatID = update.Message.Recipient.ChatID
+			}
+		} else if update.Message != nil {
+			if update.Message.Sender != nil {
+				senderID = update.Message.Sender.UserID
+			}
+			if update.Message.Recipient != nil {
+				chatID = update.Message.Recipient.ChatID
 			}
 		}
 	}
