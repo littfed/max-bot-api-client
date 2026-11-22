@@ -6,6 +6,7 @@ import (
 	"compress/zlib"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"image"
@@ -21,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/littfed/max-bot-api-client/pkg/ai"
@@ -1473,8 +1475,13 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 					DocsLink:    "https://platform.openai.com/docs/api-reference/audio/createSpeech",
 				})
 
+				displayCaptionText := speechText
+				displayRunes := []rune(displayCaptionText)
+				if len(displayRunes) > 300 {
+					displayCaptionText = string(displayRunes[:300]) + "..."
+				}
 				caption := fmt.Sprintf("🔊 **%s**\n\n*Текст:* «%s»\n*(Время генерации: %s)*",
-					title, speechText, time.Since(start).Round(time.Millisecond))
+					title, displayCaptionText, time.Since(start).Round(time.Millisecond))
 				formatted := hood.Format(userID, caption, "ai_tts")
 
 				kb := maxbot.NewInlineKeyboard().
@@ -1553,14 +1560,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		lastText := "Привет! Я умный AI-ассистент в мессенджере MAX."
 		if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
 			if val, ok := fsmCtx.Get("last_ai_reply"); ok && val != nil {
-				if s, ok := val.(string); ok && s != "" {
+				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
 					lastText = s
 				}
 			}
-		}
-		if len([]rune(lastText)) > 250 {
-			runes := []rune(lastText)
-			lastText = string(runes[:250]) + "..."
 		}
 		return deliverVoiceMessage(c, lastText, "Озвучка ответа AI")
 	})
@@ -1947,34 +1950,168 @@ func fetchFluxImage(ctx context.Context, prompt string) ([]byte, error) {
 	return nil, lastErr
 }
 
-// synthesizeSpeech converts Russian/multilingual text into MP3 audio bytes using neural TTS.
-func synthesizeSpeech(ctx context.Context, text string) ([]byte, error) {
-	ttsURL := fmt.Sprintf("https://translate.google.com/translate_tts?ie=UTF-8&q=%s&tl=ru&client=tw-ob", url.QueryEscape(text))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ttsURL, nil)
-	if err != nil {
-		return nil, err
+// sanitizeTextForSpeech prepares text for speech synthesis by removing Markdown,
+// emojis, URLs, and invisible unicode modifiers, preserving clean natural speech.
+func sanitizeTextForSpeech(text string) string {
+	if text == "" {
+		return ""
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	// 1. Strip URLs
+	reURL := regexp.MustCompile(`https?://\S+`)
+	t := reURL.ReplaceAllString(text, " ")
+
+	// 2. Strip code blocks
+	reCodeBlocks := regexp.MustCompile("(?s)```.*?```")
+	t = reCodeBlocks.ReplaceAllString(t, " ")
+
+	// 3. Keep only human speech characters: letters, numbers, standard punctuation, spaces
+	var b strings.Builder
+	for _, r := range t {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) {
+			b.WriteRune(r)
+		} else if strings.ContainsRune(".,!?:;—-\"«»()", r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(' ')
+		}
+	}
+	clean := b.String()
+
+	// 4. Collapse consecutive whitespace
+	reSpaces := regexp.MustCompile(`\s+`)
+	clean = reSpaces.ReplaceAllString(clean, " ")
+	return strings.TrimSpace(clean)
+}
+
+// chunkTextForSpeech splits text into chunks of at most maxRunes (safe ceiling <= 140)
+// by sentences and words so it never exceeds Google TTS length boundaries (200 chars).
+func chunkTextForSpeech(text string, maxRunes int) []string {
+	clean := sanitizeTextForSpeech(text)
+	if clean == "" {
+		return nil
+	}
+	if maxRunes <= 0 || maxRunes > 160 {
+		maxRunes = 140
+	}
+
+	// Cap total speech to a comfortable voice note length (~600 runes, ~4-5 chunks)
+	runes := []rune(clean)
+	if len(runes) > 600 {
+		clean = string(runes[:600])
+		// Try to end on sentence or word boundary
+		if lastDot := strings.LastIndexAny(clean, ".!?"); lastDot > 300 {
+			clean = clean[:lastDot+1]
+		}
+	}
+
+	var chunks []string
+	var current strings.Builder
+
+	words := strings.Fields(clean)
+	for _, w := range words {
+		wRunes := utf8.RuneCountInString(w)
+		curRunes := utf8.RuneCountInString(current.String())
+
+		// If a single word is bizarrely longer than maxRunes, truncate it
+		if wRunes > maxRunes {
+			wRunesSlice := []rune(w)
+			w = string(wRunesSlice[:maxRunes])
+			wRunes = maxRunes
+		}
+
+		if curRunes+wRunes+1 > maxRunes {
+			if current.Len() > 0 {
+				chunks = append(chunks, strings.TrimSpace(current.String()))
+				current.Reset()
+			}
+		}
+		if current.Len() > 0 {
+			current.WriteString(" ")
+		}
+		current.WriteString(w)
+	}
+
+	if current.Len() > 0 {
+		chunks = append(chunks, strings.TrimSpace(current.String()))
+	}
+
+	return chunks
+}
+
+// synthesizeSpeech converts Russian/multilingual text into MP3 audio bytes using neural TTS.
+// It handles text cleaning, chunking for Google Translate TTS 200-char limits,
+// and concatenates MP3 audio chunks into a seamless audio stream.
+func synthesizeSpeech(ctx context.Context, text string) ([]byte, error) {
+	chunks := chunkTextForSpeech(text, 140)
+	if len(chunks) == 0 {
+		return nil, errors.New("текст для озвучивания пуст")
+	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	var combined bytes.Buffer
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tts server returned status %d", resp.StatusCode)
+	for i, chunk := range chunks {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		var chunkData []byte
+		var lastErr error
+
+		// Retry each chunk up to 2 times
+		for attempt := 0; attempt < 2; attempt++ {
+			ttsURL := fmt.Sprintf("https://translate.google.com/translate_tts?ie=UTF-8&q=%s&tl=ru&client=tw-ob", url.QueryEscape(chunk))
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ttsURL, nil)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = err
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				_ = resp.Body.Close()
+				lastErr = fmt.Errorf("tts server returned status %d", resp.StatusCode)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+
+			data, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				lastErr = err
+				continue
+			}
+
+			if len(data) >= 200 {
+				chunkData = data
+				lastErr = nil
+				break
+			}
+		}
+
+		if len(chunkData) == 0 {
+			if lastErr != nil {
+				return nil, fmt.Errorf("ошибка генерации фрагмента речи %d/%d: %w", i+1, len(chunks), lastErr)
+			}
+			return nil, fmt.Errorf("фрагмент речи %d слишком мал", i+1)
+		}
+
+		combined.Write(chunkData)
 	}
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	result := combined.Bytes()
+	if len(result) < 200 {
+		return nil, fmt.Errorf("tts audio too small (%d bytes)", len(result))
 	}
-	if len(data) < 200 {
-		return nil, fmt.Errorf("tts audio too small (%d bytes)", len(data))
-	}
-	return data, nil
+	return result, nil
 }
 
 // extractDrawingPrompt analyzes user text for image generation intents.

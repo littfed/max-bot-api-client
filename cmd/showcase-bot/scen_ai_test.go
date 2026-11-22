@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
@@ -1365,5 +1366,57 @@ func TestDocumentAndUnsupportedFileRouting(t *testing.T) {
 	}
 	if res := formatFileSize(2 * 1024 * 1024); res != "2.0 МБ" {
 		t.Errorf("expected '2.0 МБ', got %q", res)
+	}
+}
+
+func TestTTS_SanitizeAndChunkText(t *testing.T) {
+	// 1. Test sanitizeTextForSpeech with emojis, markdown, and URLs
+	dirty := "👁️ **Анализ изображения (`auto`):**\n\nНа картинке мем! https://example.com/pic\n```code snippet```\n* Логотип: Puma."
+	clean := sanitizeTextForSpeech(dirty)
+
+	if strings.Contains(clean, "👁") || strings.Contains(clean, "\uFE0F") {
+		t.Errorf("clean text should not contain emojis or variation selectors: %q", clean)
+	}
+	if strings.Contains(clean, "https://") || strings.Contains(clean, "code snippet") {
+		t.Errorf("clean text should not contain URLs or code blocks: %q", clean)
+	}
+	if strings.Contains(clean, "**") || strings.Contains(clean, "`") {
+		t.Errorf("clean text should not contain markdown asterisks or backticks: %q", clean)
+	}
+	if !strings.Contains(clean, "Анализ изображения") || !strings.Contains(clean, "Puma") {
+		t.Errorf("clean text must preserve natural text: %q", clean)
+	}
+
+	// 2. Test chunkTextForSpeech with real long meme analysis text
+	longText := `👁️ Анализ изображения (auto):
+
+На изображении представлен абсурдистский интернет-мем, основанный на игре слов и вирусном тренде. Давайте разберем его детально.
+
+1. Что изображено на картинке?
+* Логотип: За основу взят узнаваемый силуэт логотипа спортивного бренда Puma (прыгающая пума).
+* Голова: Вместо головы животного прифотошоплена голова блогера и стримера Власа Пупенко (известного под ником Vладос или просто Пупенко). Причем выбрано специфическое фото, где он забавно надул щеки.
+* Надпись: Классический шрифт Puma изменен и гласит: «PUPUPUMA» (отсылка к фамилии Пупенко и названию бренда).
+
+---
+
+2. История и происхождение мема
+* Кто такой Влас Пупенко? Это русскоязычный контент-мейкер, стример и TikTok-блогер, который приобрел популярность благодаря своим эксцентричным стримам, реакциям и специфическому юмору. Его фамилия (Пупенко) и внешность неоднократно становились объектом шуток и создания пародий среди его аудитории.`
+
+	chunks := chunkTextForSpeech(longText, 140)
+	if len(chunks) == 0 {
+		t.Fatalf("expected multiple chunks from long text, got 0")
+	}
+
+	for i, chunk := range chunks {
+		runesCount := utf8.RuneCountInString(chunk)
+		if runesCount > 140 {
+			t.Errorf("chunk %d has %d runes, exceeding max 140: %q", i, runesCount, chunk)
+		}
+		if len(strings.TrimSpace(chunk)) == 0 {
+			t.Errorf("chunk %d is empty", i)
+		}
+		if strings.Contains(chunk, "👁") || strings.Contains(chunk, "\uFE0F") {
+			t.Errorf("chunk %d contains unhandled emojis: %q", i, chunk)
+		}
 	}
 }
