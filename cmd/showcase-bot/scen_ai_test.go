@@ -1022,3 +1022,141 @@ func TestDocumentAndCodeProcessing(t *testing.T) {
 		t.Errorf("unexpected follow-up reply: %s", history[3].Content)
 	}
 }
+
+func TestSeamlessVoiceWorkflow(t *testing.T) {
+	mockAIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/audio/transcriptions") {
+			_ = r.ParseMultipartForm(10 << 20)
+			file, header, err := r.FormFile("file")
+			transText := "Привет, как погода в Москве?"
+			if err == nil && header != nil {
+				if strings.Contains(header.Filename, "draw") {
+					transText = "нарисуй красивый водопад в горах"
+				}
+				_ = file.Close()
+			}
+			resp := map[string]any{
+				"text": transText,
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			resp := map[string]any{
+				"id":      "chatcmpl-test",
+				"model":   "auto",
+				"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "В Москве сегодня солнечно, +18°C."}}},
+				"usage":   map[string]any{"total_tokens": 30},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockAIServer.Close()
+
+	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	aiClient := ai.NewClient(mockAIServer.URL, "test-api-key")
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+
+	RegisterMenuRoutes(botInstance, hood, aiClient)
+	RegisterAIScenario(botInstance, hood, aiClient)
+
+	key := fsm.SessionKey{UserID: 1010, ChatID: 1010}
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, key)
+
+	// 1. Send conversational audio attachment
+	voiceData := []byte("fake_audio_stream_data_12345")
+	voicePayload := map[string]any{
+		"name": "voice.ogg",
+		"data": base64.StdEncoding.EncodeToString(voiceData),
+	}
+	voiceCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 1010, FirstName: "Sergey"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 1010, UserID: 1010, ChatType: "dialog"},
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type:    maxbot.UploadTypeAudio,
+						Payload: voicePayload,
+					},
+				},
+			},
+		},
+	})
+	voiceCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(voiceCtx); err != nil {
+		t.Fatalf("handle voice message failed: %v", err)
+	}
+
+	history := loadChatHistory(fsmCtx)
+	if len(history) != 2 {
+		t.Fatalf("expected 2 messages in history, got %d", len(history))
+	}
+	if history[0].Content != "Привет, как погода в Москве?" {
+		t.Errorf("expected user transcription in history, got: %s", history[0].Content)
+	}
+	if history[1].Content != "В Москве сегодня солнечно, +18°C." {
+		t.Errorf("expected assistant reply in history, got: %s", history[1].Content)
+	}
+
+	lastReply, ok := fsmCtx.Get("last_ai_reply")
+	if !ok || lastReply != "В Москве сегодня солнечно, +18°C." {
+		t.Errorf("expected last_ai_reply to be saved, got: %v", lastReply)
+	}
+
+	// 2. Send audio message with drawing intent
+	drawVoicePayload := map[string]any{
+		"name": "draw_voice.ogg",
+		"data": base64.StdEncoding.EncodeToString(voiceData),
+	}
+	drawVoiceCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 1010, FirstName: "Sergey"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 1010, UserID: 1010, ChatType: "dialog"},
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type:    maxbot.UploadTypeAudio,
+						Payload: drawVoicePayload,
+					},
+				},
+			},
+		},
+	})
+	drawVoiceCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(drawVoiceCtx); err != nil {
+		t.Fatalf("handle draw voice message failed: %v", err)
+	}
+
+	lastPrompt, pOk := fsmCtx.Get("last_image_prompt")
+	if !pOk || lastPrompt != "красивый водопад в горах" {
+		t.Errorf("expected last_image_prompt 'красивый водопад в горах', got: %v", lastPrompt)
+	}
+
+	// 3. Test on-demand TTS speak_last callback
+	ttsCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCallback,
+		Callback: &maxbot.Callback{
+			CallbackID: "cb-tts",
+			User:       &maxbot.User{UserID: 1010, FirstName: "Sergey"},
+			Payload:    "ai:tts:speak_last",
+		},
+	})
+	ttsCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(ttsCtx); err != nil {
+		t.Fatalf("handle tts speak_last callback failed: %v", err)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -874,7 +875,24 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			}
 		}
 
-		// 2. Query LLM with transcribed text
+		if transcribedText == "Речь не распознана." {
+			_, err = c.Reply("🎙️ Аудио получено, но не удалось распознать слова. Попробуйте записать голос ближе к микрофону или отправить текстовое сообщение.")
+			return err
+		}
+
+		// 2. Intent check on transcribed text: Drawing intent
+		if prompt, ok := extractDrawingPrompt(transcribedText); ok {
+			_, _ = c.Reply(fmt.Sprintf("🗣 **Вы сказали:** *«%s»*", transcribedText))
+			return deliverImageGen(c, prompt)
+		}
+
+		// 3. Intent check on transcribed text: Web URL intent
+		if rawURL, userQuery, ok := extractURL(transcribedText); ok {
+			_, _ = c.Reply(fmt.Sprintf("🗣 **Вы сказали:** *«%s»*", transcribedText))
+			return processWebPageSummary(c, rawURL, userQuery)
+		}
+
+		// 4. Query LLM with transcribed text
 		_ = c.Typing()
 
 		fsmCtx := fsm.FromContext(c)
@@ -894,12 +912,38 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		})
 		messagesPayload = append(messagesPayload, history...)
 
+		activeModel := config.ChatModel
+		if fsmCtx != nil {
+			if m, ok := fsmCtx.Get("ai_active_chat_model"); ok {
+				if mStr, isStr := m.(string); isStr && mStr != "" {
+					activeModel = mStr
+				}
+			}
+		}
+
+		candidates := []string{activeModel}
+		for _, m := range []string{"auto", "fast", "best-coding", "reasoning", "gemini-3.5-flash-lite"} {
+			if m != activeModel {
+				candidates = append(candidates, m)
+			}
+		}
+
 		temp := 0.7
-		chatResp, chatErr := aiClient.Chat(c.Ctx(), &ai.ChatRequest{
-			Model:       config.ChatModel,
-			Messages:    messagesPayload,
-			Temperature: &temp,
-		})
+		var chatResp *ai.ChatResponse
+		var chatErr error
+		var usedModel string
+
+		for _, m := range candidates {
+			chatResp, chatErr = aiClient.Chat(c.Ctx(), &ai.ChatRequest{
+				Model:       m,
+				Messages:    messagesPayload,
+				Temperature: &temp,
+			})
+			if chatErr == nil && chatResp != nil && strings.TrimSpace(chatResp.Content) != "" {
+				usedModel = m
+				break
+			}
+		}
 
 		llmReply := "Нейросеть сформировала ответ."
 		chatLatency := time.Duration(0)
@@ -919,12 +963,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			llmReply = fmt.Sprintf("*(Ответ LLM временно недоступен: %s)*", chatErr.Error())
 		}
 
+		if usedModel == "" {
+			usedModel = config.ChatModel
+		}
+
 		hood.Register("ai_voice", TechCard{
 			Title:       "Распознавание речи Whisper STT & LLM Pipeline",
 			Endpoint:    "/v1/audio/transcriptions",
 			Method:      "POST",
 			FSMState:    "AI_STEP_VOICE",
-			Description: fmt.Sprintf("STT Whisper: %s (%s) | LLM %s (%s).", config.VoiceModel, sttLatency.Round(time.Millisecond), config.ChatModel, chatLatency.Round(time.Millisecond)),
+			Description: fmt.Sprintf("STT Whisper: %s (%s) | LLM %s (%s).", config.VoiceModel, sttLatency.Round(time.Millisecond), usedModel, chatLatency.Round(time.Millisecond)),
 			DocsLink:    "https://platform.openai.com/docs/api-reference/audio",
 		})
 
@@ -1682,6 +1730,31 @@ func extractAudioAttachmentBytes(c *bot.Context) ([]byte, string, bool) {
 	for _, att := range msg.Body.Attachments {
 		if att.Type == maxbot.UploadTypeAudio || att.Type == "voice" || att.Type == "audio" || att.Type == "file" {
 			if pMap, ok := att.Payload.(map[string]any); ok {
+				filename := "voice.ogg"
+				if n, ok := pMap["name"].(string); ok && n != "" {
+					filename = n
+				}
+				// If uploaded via generic "file" attachment, only treat as audio if filename extension matches audio formats
+				if att.Type == "file" || att.Type == maxbot.UploadTypeFile {
+					if !isAudioFilename(filename) {
+						continue
+					}
+				}
+				// 1. Check for in-memory base64 data
+				for _, b64Key := range []string{"b64_json", "base64", "data"} {
+					if b64Str, ok := pMap[b64Key].(string); ok && b64Str != "" {
+						cleanB64 := b64Str
+						if commaIdx := strings.Index(cleanB64, ","); commaIdx != -1 && strings.Contains(cleanB64[:commaIdx], "base64") {
+							cleanB64 = cleanB64[commaIdx+1:]
+						}
+						data, err := base64.StdEncoding.DecodeString(cleanB64)
+						if err == nil && len(data) > 0 {
+							return data, filename, true
+						}
+					}
+				}
+
+				// 2. Check for URL
 				var u string
 				for _, key := range []string{"url", "download_url", "link", "file_url"} {
 					if val, ok := pMap[key].(string); ok && val != "" {
@@ -1693,12 +1766,12 @@ func extractAudioAttachmentBytes(c *bot.Context) ([]byte, string, bool) {
 					if c.Client() != nil {
 						b, err := c.Client().DownloadFile(c.Ctx(), u)
 						if err == nil && len(b) > 0 {
-							return b, "voice.ogg", true
+							return b, filename, true
 						}
 					}
 					b, err := downloadMediaBytes(c.Ctx(), u)
 					if err == nil && len(b) > 0 {
-						return b, "voice.ogg", true
+						return b, filename, true
 					}
 				}
 			}
@@ -2245,4 +2318,12 @@ func cleanPDFString(raw []byte) string {
 	s = strings.ReplaceAll(s, "\\r", "\r")
 	s = strings.ReplaceAll(s, "\\t", "\t")
 	return strings.TrimSpace(s)
+}
+
+func isAudioFilename(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".ogg") || strings.HasSuffix(lower, ".mp3") ||
+		strings.HasSuffix(lower, ".wav") || strings.HasSuffix(lower, ".m4a") ||
+		strings.HasSuffix(lower, ".aac") || strings.HasSuffix(lower, ".opus") ||
+		strings.HasSuffix(lower, ".flac")
 }
