@@ -1,6 +1,10 @@
 package maxbot
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"path/filepath"
+	"strings"
+)
 
 // Standard update types dispatched by MAX Bot API.
 const (
@@ -148,8 +152,65 @@ type MessageLink struct {
 
 // Attachment represents an interactive or media attachment.
 type Attachment struct {
-	Type    string `json:"type"`
-	Payload any    `json:"payload"`
+	Type     string `json:"type"`
+	Payload  any    `json:"payload"`
+	Filename string `json:"filename,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Caption  string `json:"caption,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+}
+
+// GetFilename returns the file name from attachment metadata, payload or URL.
+func (a *Attachment) GetFilename() string {
+	if a == nil {
+		return ""
+	}
+	for _, n := range []string{a.Filename, a.Name, a.Title, a.Caption} {
+		if strings.TrimSpace(n) != "" {
+			return strings.TrimSpace(n)
+		}
+	}
+	if pMap, ok := a.Payload.(map[string]any); ok {
+		for _, k := range []string{"name", "filename", "file_name", "title", "caption"} {
+			if n, ok := pMap[k].(string); ok && strings.TrimSpace(n) != "" {
+				return strings.TrimSpace(n)
+			}
+		}
+		for _, k := range []string{"url", "download_url", "link", "file_url", "src"} {
+			if u, ok := pMap[k].(string); ok && u != "" {
+				cleanU := u
+				if qIdx := strings.Index(cleanU, "?"); qIdx != -1 {
+					cleanU = cleanU[:qIdx]
+				}
+				base := filepath.Base(cleanU)
+				if base != "" && base != "." && base != "/" && strings.Contains(base, ".") {
+					return base
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// GetSize returns the file size in bytes if available from attachment metadata or payload.
+func (a *Attachment) GetSize() int64 {
+	if a == nil {
+		return 0
+	}
+	if a.Size > 0 {
+		return a.Size
+	}
+	if pMap, ok := a.Payload.(map[string]any); ok {
+		if s, ok := pMap["size"].(float64); ok {
+			return int64(s)
+		} else if s, ok := pMap["size"].(int64); ok {
+			return s
+		} else if s, ok := pMap["size"].(int); ok {
+			return int64(s)
+		}
+	}
+	return 0
 }
 
 // Callback represents an interactive inline button click event.

@@ -1291,7 +1291,39 @@ func TestDocumentAndUnsupportedFileRouting(t *testing.T) {
 		t.Fatalf("chat completions should not be called for zip archive, got %d", chatCalled)
 	}
 
-	// 3. Test isSupportedDocument
+	// 3. MP4 video file sent with Filename on Attachment struct: MUST NOT call STT and MUST NOT call chat completions
+	mp4Ctx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 555, FirstName: "Alex"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 555, UserID: 555, ChatType: "dialog"},
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type:     "file",
+						Filename: "slovami-story.mp4",
+						Size:     1102532,
+						Payload: map[string]any{
+							"raw": []byte("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"),
+						},
+					},
+				},
+			},
+		},
+	})
+	mp4Ctx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(mp4Ctx); err != nil {
+		t.Fatalf("handle mp4 video message failed: %v", err)
+	}
+	if chatCalled != 1 {
+		t.Fatalf("chat completions should NOT be called for mp4 video, got %d", chatCalled)
+	}
+	if sttCalled != 0 {
+		t.Fatalf("Whisper STT should NOT be called for mp4 video!")
+	}
+
+	// 4. Test isSupportedDocument
 	if !isSupportedDocument("notes.txt", []byte("hello world")) {
 		t.Errorf("expected notes.txt to be supported")
 	}
@@ -1307,8 +1339,24 @@ func TestDocumentAndUnsupportedFileRouting(t *testing.T) {
 	if isSupportedDocument("program.exe", []byte("MZ...")) {
 		t.Errorf("expected program.exe NOT to be supported")
 	}
+	if isSupportedDocument("slovami-story.mp4", []byte("\x00\x00\x00\x18ftyp")) {
+		t.Errorf("expected slovami-story.mp4 NOT to be supported")
+	}
+	// Even if filename is document.txt, binary data with NUL byte must NOT be supported!
+	if isSupportedDocument("document.txt", []byte("some\x00binary\x00data")) {
+		t.Errorf("expected binary data with NUL bytes NOT to be supported even if named document.txt")
+	}
 
-	// 4. Test formatFileSize
+	// 5. Test getFileFormatDescription
+	category, tip := getFileFormatDescription("slovami-story.mp4", []byte("\x00\x00\x00\x18ftyp"))
+	if category != "видеофайл" {
+		t.Errorf("expected category 'видеофайл', got %q", category)
+	}
+	if !strings.Contains(tip, "аудиодорожку") {
+		t.Errorf("expected video tip, got %q", tip)
+	}
+
+	// 6. Test formatFileSize
 	if res := formatFileSize(500); res != "500 байт" {
 		t.Errorf("expected '500 байт', got %q", res)
 	}

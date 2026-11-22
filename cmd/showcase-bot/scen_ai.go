@@ -1184,7 +1184,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		// Check if file format is supported
 		if !isSupportedDocument(filename, fileBytes) {
-			return handleUnsupportedFile(c, filename, len(fileBytes))
+			return handleUnsupportedFile(c, filename, len(fileBytes), fileBytes)
 		}
 
 		_ = c.Typing()
@@ -2237,7 +2237,7 @@ func extractDocumentText(filename string, data []byte) (string, error) {
 	}
 
 	// For text files and source code (.txt, .md, .csv, .json, .yaml, .go, .py, etc.)
-	if utf8.Valid(data) {
+	if utf8.Valid(data) && bytes.IndexByte(data, 0) == -1 {
 		text := strings.TrimSpace(string(data))
 		runes := []rune(text)
 		if len(runes) > 8000 {
@@ -2246,14 +2246,7 @@ func extractDocumentText(filename string, data []byte) (string, error) {
 		return text, nil
 	}
 
-	// If not valid utf-8, replace invalid bytes
-	cleaned := strings.ToValidUTF8(string(data), "?")
-	cleaned = strings.TrimSpace(cleaned)
-	runes := []rune(cleaned)
-	if len(runes) > 8000 {
-		cleaned = string(runes[:8000]) + "\n\n...[содержимое файла сокращено]..."
-	}
-	return cleaned, nil
+	return "", fmt.Errorf("файл содержит нечитаемые бинарные данные")
 }
 
 // extractPDFText extracts readable plain text from uncompressed or flate-compressed PDF streams.
@@ -2424,7 +2417,32 @@ func isSupportedDocument(filename string, data []byte) bool {
 		ext = ext[:qIdx]
 	}
 
-	// 1. Direct supported text/document extensions
+	// 1. Known unsupported binary formats
+	unsupportedExts := map[string]bool{
+		".zip": true, ".rar": true, ".7z": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true,
+		".exe": true, ".dll": true, ".so": true, ".dylib": true, ".bin": true, ".iso": true, ".dmg": true,
+		".apk": true, ".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".wmv": true, ".flv": true,
+		".webm": true, ".m4v": true, ".3gp": true, ".doc": true, ".xlsx": true, ".xls": true,
+		".pptx": true, ".ppt": true, ".torrent": true,
+	}
+	if unsupportedExts[ext] {
+		return false
+	}
+
+	// 2. Sniff content type for media or binary
+	detected := http.DetectContentType(data)
+	if strings.HasPrefix(detected, "video/") || strings.HasPrefix(detected, "audio/") {
+		return false
+	}
+
+	// 3. For any document other than PDF or DOCX, it CANNOT contain NUL bytes (\x00) and MUST be valid UTF-8!
+	if ext != ".pdf" && ext != ".docx" {
+		if bytes.IndexByte(data, 0) != -1 || !utf8.Valid(data) {
+			return false
+		}
+	}
+
+	// 4. Direct supported text/document extensions
 	supportedExts := map[string]bool{
 		// Documents & Text
 		".txt": true, ".text": true, ".md": true, ".markdown": true, ".log": true,
@@ -2449,25 +2467,12 @@ func isSupportedDocument(filename string, data []byte) bool {
 		return true
 	}
 
-	// 2. Known unsupported binary formats
-	unsupportedExts := map[string]bool{
-		".zip": true, ".rar": true, ".7z": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true,
-		".exe": true, ".dll": true, ".so": true, ".dylib": true, ".bin": true, ".iso": true, ".dmg": true,
-		".apk": true, ".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".wmv": true, ".flv": true,
-		".webm": true, ".doc": true, ".xlsx": true, ".xls": true, ".pptx": true, ".ppt": true,
-		".torrent": true,
-	}
-	if unsupportedExts[ext] {
-		return false
+	// 5. Plain UTF-8 without NUL bytes for unknown extensions
+	if (strings.HasPrefix(detected, "text/") || detected == "application/json" || detected == "application/xml") &&
+		bytes.IndexByte(data, 0) == -1 && utf8.Valid(data) {
+		return true
 	}
 
-	// 3. Sniff content for unknown extensions
-	detected := http.DetectContentType(data)
-	if strings.HasPrefix(detected, "text/") || detected == "application/json" || detected == "application/xml" {
-		return bytes.IndexByte(data, 0) == -1
-	}
-
-	// Plain UTF-8 without NUL bytes
 	if utf8.Valid(data) && bytes.IndexByte(data, 0) == -1 {
 		return true
 	}
@@ -2486,7 +2491,7 @@ func formatFileSize(b int) string {
 }
 
 // getFileFormatDescription returns a friendly category and recommendation for unsupported formats.
-func getFileFormatDescription(filename string) (category string, tip string) {
+func getFileFormatDescription(filename string, data []byte) (category string, tip string) {
 	ext := strings.ToLower(filepath.Ext(filename))
 	if qIdx := strings.Index(ext, "?"); qIdx != -1 {
 		ext = ext[:qIdx]
@@ -2501,18 +2506,41 @@ func getFileFormatDescription(filename string) (category string, tip string) {
 		return "презентация Microsoft PowerPoint", "Экспортируйте презентацию в PDF и отправьте боту для анализа слайдов."
 	case ".doc":
 		return "устаревший документ Word (.doc)", "Сохраните документ в формате DOCX, PDF или TXT и отправьте боту."
-	case ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".flv":
+	case ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".flv", ".m4v", ".3gp":
 		return "видеофайл", "Бот анализирует аудио и изображения. Извлеките аудиодорожку (MP3/OGG/WAV) или сделайте скриншот кадра."
 	case ".exe", ".dll", ".so", ".bin", ".iso", ".dmg", ".apk":
 		return "бинарный исполняемый файл или системный образ", "Исполняемые файлы не содержат текстовых данных для анализа нейросетью."
-	default:
-		return "неподдерживаемый бинарный формат", "Вы можете скопировать текст из файла и отправить его сообщением в чат или конвертировать в PDF/TXT."
 	}
+
+	if len(data) > 0 {
+		detected := http.DetectContentType(data)
+		if strings.HasPrefix(detected, "video/") {
+			return "видеофайл", "Бот анализирует аудио и изображения. Извлеките аудиодорожку (MP3/OGG/WAV) или сделайте скриншот кадра."
+		}
+		if strings.HasPrefix(detected, "audio/") {
+			return "аудиофайл", "Отправьте аудио как голосовое сообщение или в поддерживаемом формате (OGG, MP3, WAV)."
+		}
+		if detected == "application/zip" {
+			return "архив файлов", "Распакуйте архив и отправьте нужные файлы документов или изображений по отдельности."
+		}
+	}
+
+	return "неподдерживаемый бинарный формат", "Вы можете скопировать текст из файла и отправить его сообщением в чат или конвертировать в PDF/TXT."
 }
 
 // handleUnsupportedFile sends an informative, structured explanation when a user uploads an unsupported file.
-func handleUnsupportedFile(c *bot.Context, filename string, size int) error {
-	desc, tip := getFileFormatDescription(filename)
+func handleUnsupportedFile(c *bot.Context, filename string, size int, data []byte) error {
+	desc, tip := getFileFormatDescription(filename, data)
+	if (filename == "" || filename == "document.txt" || filename == "файл") && len(data) > 0 {
+		detected := http.DetectContentType(data)
+		if strings.HasPrefix(detected, "video/") {
+			filename = "видеофайл.mp4"
+		} else if strings.HasPrefix(detected, "audio/") {
+			filename = "аудиофайл"
+		} else if detected == "application/zip" {
+			filename = "архив.zip"
+		}
+	}
 
 	text := fmt.Sprintf("📁 **Получен файл:** `%s` *(размер: %s)*\n\n"+
 		"Бот пока не поддерживает прямую обработку файлов этого типа (%s).\n\n"+
@@ -2535,17 +2563,10 @@ func handleUnsupportedFile(c *bot.Context, filename string, size int) error {
 
 // handleUnknownAttachment extracts filename and size from any unrecognized attachment and shows the unsupported file help.
 func handleUnknownAttachment(c *bot.Context, att maxbot.Attachment) error {
-	filename := "файл"
-	var size int
-	if pMap, ok := att.Payload.(map[string]any); ok {
-		if n := bot.ExtractAttachmentName(pMap); n != "" {
-			filename = n
-		}
-		if s, ok := pMap["size"].(float64); ok {
-			size = int(s)
-		} else if s, ok := pMap["size"].(int); ok {
-			size = s
-		}
+	filename := att.GetFilename()
+	if filename == "" {
+		filename = "файл"
 	}
-	return handleUnsupportedFile(c, filename, size)
+	size := int(att.GetSize())
+	return handleUnsupportedFile(c, filename, size, nil)
 }

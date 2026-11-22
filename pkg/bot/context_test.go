@@ -145,4 +145,41 @@ func TestAttachmentClassification(t *testing.T) {
 	if _, isFile := cWebp.FileAttachment(); isFile {
 		t.Errorf("expected .webp file NOT to be classified as FileAttachment")
 	}
+
+	// 4. Video file (.mp4) with Filename on Attachment struct directly
+	mp4Update := &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type:     "file",
+						Filename: "slovami-story.mp4",
+						Size:     1102532,
+						Payload: map[string]any{
+							"fileId": 5857870395,
+							"url":    "https://fd.oneme.ru/getfile?rq=test",
+						},
+					},
+				},
+			},
+		},
+	}
+	cMp4 := NewContext(context.Background(), nil, mp4Update)
+	att, isFile := cMp4.FileAttachment()
+	if !isFile || att == nil {
+		t.Fatalf("expected .mp4 to be returned as FileAttachment for inspection")
+	}
+	if att.GetFilename() != "slovami-story.mp4" {
+		t.Errorf("expected filename 'slovami-story.mp4', got %q", att.GetFilename())
+	}
+	if att.GetSize() != 1102532 {
+		t.Errorf("expected size 1102532, got %d", att.GetSize())
+	}
+	if _, isAudio := cMp4.AudioAttachment(); isAudio {
+		t.Errorf("expected .mp4 NOT to be AudioAttachment")
+	}
+	if _, isImg := cMp4.ImageAttachment(); isImg {
+		t.Errorf("expected .mp4 NOT to be ImageAttachment")
+	}
 }

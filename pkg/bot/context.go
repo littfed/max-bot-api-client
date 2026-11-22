@@ -213,11 +213,11 @@ func (c *Context) AudioAttachment() (*maxbot.Attachment, bool) {
 			return &att, true
 		}
 		if att.Type == maxbot.UploadTypeFile || att.Type == "file" {
+			name := att.GetFilename()
+			if isAudioExtension(strings.ToLower(name)) {
+				return &att, true
+			}
 			if pMap, ok := att.Payload.(map[string]any); ok {
-				name := extractAttachmentName(pMap)
-				if isAudioExtension(strings.ToLower(name)) {
-					return &att, true
-				}
 				for _, mimeKey := range []string{"content_type", "mime_type", "type", "mime"} {
 					if mimeVal, ok := pMap[mimeKey].(string); ok && mimeVal != "" {
 						mimeLower := strings.ToLower(mimeVal)
@@ -239,11 +239,11 @@ func (c *Context) AudioBytes() ([]byte, string, error) {
 		return nil, "", fmt.Errorf("no audio attachment found in message")
 	}
 
-	filename := "voice.ogg"
+	filename := att.GetFilename()
+	if filename == "" {
+		filename = "voice.ogg"
+	}
 	if pMap, ok := att.Payload.(map[string]any); ok {
-		if n := extractAttachmentName(pMap); n != "" {
-			filename = n
-		}
 		for _, b64Key := range []string{"b64_json", "base64", "data"} {
 			if b64Str, ok := pMap[b64Key].(string); ok && b64Str != "" {
 				cleanB64 := b64Str
@@ -309,8 +309,12 @@ func (c *Context) ImageAttachment() (*maxbot.Attachment, bool) {
 			att.Type == "picture" || att.Type == "sticker" {
 			return &att, true
 		}
-		// 2. File / Document attachments: check mime-type, filename, or URL
+		// 2. File / Document attachments: check filename, mime-type, or URL
 		if att.Type == maxbot.UploadTypeFile || att.Type == "file" || att.Type == "document" {
+			name := att.GetFilename()
+			if isImageExtension(strings.ToLower(name)) {
+				return &att, true
+			}
 			if pMap, ok := att.Payload.(map[string]any); ok {
 				// Check content-type / mime-type
 				for _, mimeKey := range []string{"content_type", "mime_type", "type", "mime"} {
@@ -319,11 +323,6 @@ func (c *Context) ImageAttachment() (*maxbot.Attachment, bool) {
 							return &att, true
 						}
 					}
-				}
-				// Check filename
-				name := extractAttachmentName(pMap)
-				if isImageExtension(strings.ToLower(name)) {
-					return &att, true
 				}
 				// Check url extension or data:image/
 				for _, urlKey := range []string{"url", "file_url", "src", "download_url", "link"} {
@@ -366,11 +365,11 @@ func (c *Context) ImageBytes() ([]byte, string, error) {
 		return nil, "", fmt.Errorf("no image attachment found in message")
 	}
 
-	filename := "image.jpg"
+	filename := att.GetFilename()
+	if filename == "" {
+		filename = "image.jpg"
+	}
 	if pMap, ok := att.Payload.(map[string]any); ok {
-		if n, ok := pMap["name"].(string); ok && n != "" {
-			filename = n
-		}
 		// If base64 payload is already present
 		for _, b64Key := range []string{"b64_json", "base64", "data"} {
 			if b64Str, ok := pMap[b64Key].(string); ok && b64Str != "" {
@@ -454,6 +453,11 @@ func (c *Context) FileAttachment() (*maxbot.Attachment, bool) {
 	}
 	for _, att := range msg.Body.Attachments {
 		if att.Type == maxbot.UploadTypeFile || att.Type == "file" || att.Type == "document" {
+			name := att.GetFilename()
+			nameLower := strings.ToLower(name)
+			if isAudioExtension(nameLower) || isImageExtension(nameLower) {
+				continue
+			}
 			if pMap, ok := att.Payload.(map[string]any); ok {
 				// Skip if mime_type or content_type is image or audio
 				for _, mimeKey := range []string{"content_type", "mime_type", "type", "mime"} {
@@ -463,11 +467,6 @@ func (c *Context) FileAttachment() (*maxbot.Attachment, bool) {
 							goto skip
 						}
 					}
-				}
-				name := extractAttachmentName(pMap)
-				nameLower := strings.ToLower(name)
-				if isAudioExtension(nameLower) || isImageExtension(nameLower) {
-					continue
 				}
 			}
 			return &att, true
@@ -497,11 +496,11 @@ func (c *Context) FileBytes() ([]byte, string, error) {
 		return nil, "", fmt.Errorf("no file attachment found in message")
 	}
 
-	filename := "document.txt"
+	filename := att.GetFilename()
+	if filename == "" {
+		filename = "document.txt"
+	}
 	if pMap, ok := att.Payload.(map[string]any); ok {
-		if n := extractAttachmentName(pMap); n != "" {
-			filename = n
-		}
 		for _, b64Key := range []string{"b64_json", "base64", "data"} {
 			if b64Str, ok := pMap[b64Key].(string); ok && b64Str != "" {
 				cleanB64 := b64Str
