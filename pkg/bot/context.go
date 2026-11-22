@@ -118,25 +118,48 @@ func (c *Context) AudioAttachment() (*maxbot.Attachment, bool) {
 	return nil, false
 }
 
-// ImageAttachment returns the first image or photo attachment from the message, if present.
+// ImageAttachment returns the first image, photo, or picture attachment from the message, if present.
 func (c *Context) ImageAttachment() (*maxbot.Attachment, bool) {
 	msg := c.Message()
 	if msg == nil {
 		return nil, false
 	}
 	for _, att := range msg.Body.Attachments {
-		if att.Type == maxbot.UploadTypeImage || att.Type == "photo" || att.Type == "image" {
+		// 1. Direct image, photo, picture, or sticker types
+		if att.Type == maxbot.UploadTypeImage || att.Type == "photo" || att.Type == "image" ||
+			att.Type == "picture" || att.Type == "sticker" {
 			return &att, true
 		}
-		if att.Type == maxbot.UploadTypeFile || att.Type == "file" {
+		// 2. File / Document attachments: check mime-type, filename, or URL
+		if att.Type == maxbot.UploadTypeFile || att.Type == "file" || att.Type == "document" {
 			if pMap, ok := att.Payload.(map[string]any); ok {
+				// Check content-type / mime-type
+				for _, mimeKey := range []string{"content_type", "mime_type", "type", "mime"} {
+					if mimeVal, ok := pMap[mimeKey].(string); ok && mimeVal != "" {
+						if strings.HasPrefix(strings.ToLower(mimeVal), "image/") {
+							return &att, true
+						}
+					}
+				}
+				// Check filename
 				name, _ := pMap["name"].(string)
-				nameLower := strings.ToLower(name)
-				if strings.HasSuffix(nameLower, ".jpg") || strings.HasSuffix(nameLower, ".jpeg") ||
-					strings.HasSuffix(nameLower, ".png") || strings.HasSuffix(nameLower, ".webp") ||
-					strings.HasSuffix(nameLower, ".gif") || strings.HasSuffix(nameLower, ".bmp") ||
-					strings.HasSuffix(nameLower, ".heic") || strings.HasSuffix(nameLower, ".tiff") {
+				if isImageExtension(strings.ToLower(name)) {
 					return &att, true
+				}
+				// Check url extension or data:image/
+				for _, urlKey := range []string{"url", "file_url", "src", "download_url", "link"} {
+					if u, ok := pMap[urlKey].(string); ok && u != "" {
+						if strings.HasPrefix(u, "data:image/") {
+							return &att, true
+						}
+						cleanURL := strings.ToLower(u)
+						if qIdx := strings.Index(cleanURL, "?"); qIdx != -1 {
+							cleanURL = cleanURL[:qIdx]
+						}
+						if isImageExtension(cleanURL) {
+							return &att, true
+						}
+					}
 				}
 			}
 		}
@@ -248,6 +271,15 @@ func (c *Context) FileAttachment() (*maxbot.Attachment, bool) {
 	for _, att := range msg.Body.Attachments {
 		if att.Type == maxbot.UploadTypeFile || att.Type == "file" || att.Type == "document" {
 			if pMap, ok := att.Payload.(map[string]any); ok {
+				// Skip if mime_type or content_type is image or audio
+				for _, mimeKey := range []string{"content_type", "mime_type", "type", "mime"} {
+					if mimeVal, ok := pMap[mimeKey].(string); ok && mimeVal != "" {
+						mimeLower := strings.ToLower(mimeVal)
+						if strings.HasPrefix(mimeLower, "image/") || strings.HasPrefix(mimeLower, "audio/") {
+							goto skip
+						}
+					}
+				}
 				name, _ := pMap["name"].(string)
 				nameLower := strings.ToLower(name)
 				if isAudioExtension(nameLower) || isImageExtension(nameLower) {
@@ -256,6 +288,7 @@ func (c *Context) FileAttachment() (*maxbot.Attachment, bool) {
 			}
 			return &att, true
 		}
+	skip:
 	}
 	return nil, false
 }
@@ -334,17 +367,50 @@ func (c *Context) FileBytes() ([]byte, string, error) {
 }
 
 func isAudioExtension(nameLower string) bool {
+	if qIdx := strings.Index(nameLower, "?"); qIdx != -1 {
+		nameLower = nameLower[:qIdx]
+	}
+	if fIdx := strings.Index(nameLower, "#"); fIdx != -1 {
+		nameLower = nameLower[:fIdx]
+	}
 	return strings.HasSuffix(nameLower, ".ogg") || strings.HasSuffix(nameLower, ".mp3") ||
 		strings.HasSuffix(nameLower, ".wav") || strings.HasSuffix(nameLower, ".m4a") ||
 		strings.HasSuffix(nameLower, ".aac") || strings.HasSuffix(nameLower, ".opus") ||
-		strings.HasSuffix(nameLower, ".flac")
+		strings.HasSuffix(nameLower, ".flac") || strings.HasSuffix(nameLower, ".wma") ||
+		strings.HasSuffix(nameLower, ".aiff") || strings.HasSuffix(nameLower, ".alac")
 }
 
 func isImageExtension(nameLower string) bool {
-	return strings.HasSuffix(nameLower, ".jpg") || strings.HasSuffix(nameLower, ".jpeg") ||
-		strings.HasSuffix(nameLower, ".png") || strings.HasSuffix(nameLower, ".webp") ||
-		strings.HasSuffix(nameLower, ".gif") || strings.HasSuffix(nameLower, ".bmp") ||
-		strings.HasSuffix(nameLower, ".heic") || strings.HasSuffix(nameLower, ".tiff")
+	if qIdx := strings.Index(nameLower, "?"); qIdx != -1 {
+		nameLower = nameLower[:qIdx]
+	}
+	if fIdx := strings.Index(nameLower, "#"); fIdx != -1 {
+		nameLower = nameLower[:fIdx]
+	}
+
+	extensions := []string{
+		// JPEG family
+		".jpg", ".jpeg", ".jfif", ".jpe", ".jif", ".jfi", ".pjpeg", ".pjp",
+		// Web / Modern formats
+		".webp", ".png", ".apng", ".gif", ".avif", ".avis", ".svg", ".svgz",
+		// Apple / Mobile high efficiency formats
+		".heic", ".heif", ".hif",
+		// Windows Bitmaps & Icons
+		".bmp", ".dib", ".ico", ".cur",
+		// TIFF
+		".tiff", ".tif",
+		// Camera RAW formats
+		".raw", ".dng", ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".rw2", ".orf", ".pef", ".raf",
+		// Graphics editing & raster formats
+		".psd", ".psb", ".ai", ".eps", ".tga", ".dds", ".hdr", ".exr", ".xcf",
+	}
+
+	for _, ext := range extensions {
+		if strings.HasSuffix(nameLower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractURLFromAttachmentPayload extracts an image URL from an attachment payload.

@@ -199,7 +199,71 @@ func (c *Client) GetMe(ctx context.Context) (*User, error) {
 	return &user, nil
 }
 
+// MaxMessageTextLength is the maximum safe character length for a single MAX message (API hard limit is 4000).
+const MaxMessageTextLength = 3900
+
+// SplitMessageText splits long text into chunks of at most maxLen runes,
+// preferring paragraph breaks (\n\n), line breaks (\n), sentence endings, or word spaces.
+func SplitMessageText(text string, maxLen int) []string {
+	if maxLen <= 0 {
+		maxLen = MaxMessageTextLength
+	}
+	runes := []rune(text)
+	if len(runes) <= maxLen {
+		return []string{text}
+	}
+
+	var chunks []string
+	remaining := string(runes)
+
+	for len([]rune(remaining)) > maxLen {
+		remRunes := []rune(remaining)
+		cutIdx := -1
+
+		sub := string(remRunes[:maxLen])
+		// 1. Paragraph break (\n\n)
+		if pIdx := strings.LastIndex(sub, "\n\n"); pIdx >= maxLen/2 {
+			cutIdx = len([]rune(sub[:pIdx+2]))
+		} else if nIdx := strings.LastIndex(sub, "\n"); nIdx >= maxLen/2 {
+			// 2. Single newline (\n)
+			cutIdx = len([]rune(sub[:nIdx+1]))
+		} else if sIdx := lastSentenceBreak(sub); sIdx >= maxLen/2 {
+			// 3. Sentence break (. / ! / ?)
+			cutIdx = len([]rune(sub[:sIdx]))
+		} else if spIdx := strings.LastIndex(sub, " "); spIdx >= maxLen/2 {
+			// 4. Word boundary
+			cutIdx = len([]rune(sub[:spIdx+1]))
+		} else {
+			// 5. Hard cut
+			cutIdx = maxLen
+		}
+
+		chunk := strings.TrimSpace(string(remRunes[:cutIdx]))
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+		remaining = strings.TrimSpace(string(remRunes[cutIdx:]))
+	}
+
+	if remaining != "" {
+		chunks = append(chunks, remaining)
+	}
+
+	return chunks
+}
+
+func lastSentenceBreak(s string) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if (s[i] == '.' || s[i] == '!' || s[i] == '?') && i+1 < len(s) && (s[i+1] == ' ' || s[i+1] == '\n') {
+			return i + 1
+		}
+	}
+	return -1
+}
+
 // SendMessage sends a structured message to a recipient (user or chat).
+// If msg.Text exceeds MaxMessageTextLength (4000 limit in MAX API), it automatically splits
+// the text into sequential messages, attaching interactive attachments (keyboards, links) to the final message.
 func (c *Client) SendMessage(ctx context.Context, recipient Recipient, msg *SendMessageRequest) (*Message, error) {
 	if recipient == nil {
 		return nil, fmt.Errorf("recipient cannot be nil")
@@ -208,6 +272,33 @@ func (c *Client) SendMessage(ctx context.Context, recipient Recipient, msg *Send
 		return nil, fmt.Errorf("message payload cannot be nil")
 	}
 
+	chunks := SplitMessageText(msg.Text, MaxMessageTextLength)
+	if len(chunks) > 1 {
+		var lastResult *Message
+		for i, chunk := range chunks {
+			isLast := (i == len(chunks) - 1)
+			chunkReq := &SendMessageRequest{
+				Text:   chunk,
+				Format: msg.Format,
+				Notify: msg.Notify,
+			}
+			if isLast {
+				chunkReq.Attachments = msg.Attachments
+				chunkReq.Link = msg.Link
+			}
+			res, err := c.sendSingleMessage(ctx, recipient, chunkReq)
+			if err != nil {
+				return lastResult, err
+			}
+			lastResult = res
+		}
+		return lastResult, nil
+	}
+
+	return c.sendSingleMessage(ctx, recipient, msg)
+}
+
+func (c *Client) sendSingleMessage(ctx context.Context, recipient Recipient, msg *SendMessageRequest) (*Message, error) {
 	q := make(url.Values)
 	recipient.ApplyRecipient(q)
 

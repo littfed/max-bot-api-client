@@ -158,7 +158,8 @@ func hasImageAttachment(msg *maxbot.Message) bool {
 		return false
 	}
 	for _, att := range msg.Body.Attachments {
-		if att.Type == maxbot.UploadTypeImage || att.Type == "photo" {
+		if att.Type == maxbot.UploadTypeImage || att.Type == "photo" || att.Type == "image" ||
+			att.Type == "picture" || att.Type == "sticker" {
 			return true
 		}
 	}

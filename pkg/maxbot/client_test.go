@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -278,5 +279,79 @@ func TestClientAuthError(t *testing.T) {
 
 	if !IsUnauthorized(err) {
 		t.Errorf("expected IsUnauthorized(err) to be true, got %v", err)
+	}
+}
+
+func TestSplitMessageText(t *testing.T) {
+	// 1. Short text stays as single chunk
+	short := "Hello world"
+	chunks := SplitMessageText(short, 100)
+	if len(chunks) != 1 || chunks[0] != short {
+		t.Fatalf("expected 1 chunk, got %v", chunks)
+	}
+
+	// 2. Paragraph splitting
+	p1 := strings.Repeat("A", 60)
+	p2 := strings.Repeat("B", 60)
+	full := p1 + "\n\n" + p2
+	chunks2 := SplitMessageText(full, 80)
+	if len(chunks2) != 2 {
+		t.Fatalf("expected 2 chunks, got %d: %v", len(chunks2), chunks2)
+	}
+	if chunks2[0] != p1 || chunks2[1] != p2 {
+		t.Errorf("unexpected chunks: %v", chunks2)
+	}
+
+	// 3. Sentence splitting
+	s1 := "First sentence is quite long here."
+	s2 := "Second sentence continues nicely."
+	chunks3 := SplitMessageText(s1+" "+s2, 40)
+	if len(chunks3) != 2 {
+		t.Fatalf("expected 2 chunks for sentences, got %d: %v", len(chunks3), chunks3)
+	}
+}
+
+func TestSendMessage_SplitsLargeMessage(t *testing.T) {
+	sentCount := 0
+	var receivedTexts []string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/messages" && r.Method == http.MethodPost {
+			var req SendMessageRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			sentCount++
+			receivedTexts = append(receivedTexts, req.Text)
+
+			_ = json.NewEncoder(w).Encode(Message{
+				MessageID: "msg-chunk",
+				Body: MessageBody{
+					Text: req.Text,
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	client, err := NewClient("test-token", WithBaseURL(ts.URL), WithRussianCerts(false))
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	// Message with 6000 characters (exceeds 3900 limit)
+	longText := strings.Repeat("Paragraph 1 with important text.\n\n", 150)
+	_, err = client.SendTextMessage(context.Background(), ToUser(12345), longText)
+	if err != nil {
+		t.Fatalf("SendTextMessage failed: %v", err)
+	}
+
+	if sentCount < 2 {
+		t.Fatalf("expected at least 2 split message chunks sent, got %d", sentCount)
+	}
+	for i, chunk := range receivedTexts {
+		if len([]rune(chunk)) > MaxMessageTextLength {
+			t.Errorf("chunk %d exceeded MaxMessageTextLength: length=%d", i, len([]rune(chunk)))
+		}
 	}
 }

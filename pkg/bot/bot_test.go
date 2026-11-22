@@ -509,4 +509,45 @@ func TestContextImageAttachmentAndRouting(t *testing.T) {
 	if !handledImage {
 		t.Fatal("expected OnImage handler to be invoked")
 	}
+
+	// 6. Test various image formats (.webp, .avif, .jfif, .svg, .heif, .dng)
+	testFormats := []struct {
+		name     string
+		attType  string
+		payload  map[string]any
+		isImage  bool
+	}{
+		{name: "webp file", attType: "file", payload: map[string]any{"name": "photo.webp"}, isImage: true},
+		{name: "avif file", attType: "file", payload: map[string]any{"name": "banner.avif"}, isImage: true},
+		{name: "jfif file", attType: "file", payload: map[string]any{"name": "camera.jfif"}, isImage: true},
+		{name: "heif document", attType: "document", payload: map[string]any{"name": "shot.heif"}, isImage: true},
+		{name: "svg document", attType: "document", payload: map[string]any{"name": "icon.svg"}, isImage: true},
+		{name: "dng raw document", attType: "document", payload: map[string]any{"name": "raw.dng"}, isImage: true},
+		{name: "sticker type", attType: "sticker", payload: map[string]any{"url": "https://example.com/sticker"}, isImage: true},
+		{name: "document with mime image/webp", attType: "document", payload: map[string]any{"mime_type": "image/webp"}, isImage: true},
+		{name: "url with query and webp", attType: "file", payload: map[string]any{"url": "https://example.com/img.webp?token=xyz"}, isImage: true},
+		{name: "text file is not image", attType: "file", payload: map[string]any{"name": "readme.txt"}, isImage: false},
+	}
+
+	for _, tc := range testFormats {
+		testCtx := &Context{
+			Update: &maxbot.Update{
+				UpdateType: maxbot.UpdateTypeMessageCreated,
+				Message: &maxbot.Message{
+					Body: maxbot.MessageBody{
+						Attachments: []maxbot.Attachment{
+							{
+								Type:    tc.attType,
+								Payload: tc.payload,
+							},
+						},
+					},
+				},
+			},
+		}
+		_, detected := testCtx.ImageAttachment()
+		if detected != tc.isImage {
+			t.Errorf("[%s] expected ImageAttachment=%v, got %v", tc.name, tc.isImage, detected)
+		}
+	}
 }
