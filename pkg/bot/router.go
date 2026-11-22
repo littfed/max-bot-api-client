@@ -117,6 +117,17 @@ func (r *Router) OnVoiceNoteAttempt(handler HandlerFunc) {
 	}, handler)
 }
 
+// OnFile registers a handler matching messages containing file or document attachments.
+func (r *Router) OnFile(handler HandlerFunc) {
+	r.addRoute(func(c *Context) bool {
+		if c.Update == nil || c.Update.UpdateType != maxbot.UpdateTypeMessageCreated {
+			return false
+		}
+		_, ok := c.FileAttachment()
+		return ok
+	}, handler)
+}
+
 // OnIdleMessage registers a handler for plain incoming messages when the user is not in any active FSM dialog state and not running a command.
 func (r *Router) OnIdleMessage(handler HandlerFunc) {
 	r.addRoute(func(c *Context) bool {
@@ -130,6 +141,9 @@ func (r *Router) OnIdleMessage(handler HandlerFunc) {
 			return false
 		}
 		if _, hasImage := c.ImageAttachment(); hasImage {
+			return false
+		}
+		if _, hasFile := c.FileAttachment(); hasFile {
 			return false
 		}
 		val, ok := c.Get("fsm_context")

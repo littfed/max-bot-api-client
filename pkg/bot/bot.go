@@ -186,6 +186,11 @@ func (b *Bot) OnImage(handler HandlerFunc) {
 	b.router.OnImage(handler)
 }
 
+// OnFile registers a handler for incoming document or file messages.
+func (b *Bot) OnFile(handler HandlerFunc) {
+	b.router.OnFile(handler)
+}
+
 // OnVoiceNoteAttempt registers a handler invoked when a user records a voice note via the MAX mobile app microphone.
 func (b *Bot) OnVoiceNoteAttempt(handler HandlerFunc) {
 	b.router.OnVoiceNoteAttempt(handler)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -884,5 +885,140 @@ func TestSmartIntentDrawingAndWebLinks(t *testing.T) {
 	st, _ := fsmCtx.GetState()
 	if st != "AI_STEP_CHAT" {
 		t.Errorf("expected state AI_STEP_CHAT after drawing generation, got %q", st)
+	}
+}
+
+func TestDocumentAndCodeProcessing(t *testing.T) {
+	// 1. Text extraction tests
+	txtData := []byte("Пункт 1: Исполнитель обязуется разработать бота.\nПункт 2: Стоимость составляет 50000 рублей.")
+	txtRes, err := extractDocumentText("agreement.txt", txtData)
+	if err != nil {
+		t.Fatalf("extract text failed: %v", err)
+	}
+	if !strings.Contains(txtRes, "Исполнитель обязуется") {
+		t.Errorf("expected agreement text, got: %s", txtRes)
+	}
+
+	// Code file
+	codeData := []byte("package main\n\nfunc main() {\n\tprintln(\"hello world\")\n}")
+	codeRes, err := extractDocumentText("server.go", codeData)
+	if err != nil {
+		t.Fatalf("extract code failed: %v", err)
+	}
+	if !strings.Contains(codeRes, "package main") {
+		t.Errorf("expected Go code, got: %s", codeRes)
+	}
+
+	// PDF stream
+	pdfData := []byte("%PDF-1.4\nstream\nBT\n/F1 12 Tf\n(Contract Agreement for Services) Tj\nET\nendstream\n%%EOF")
+	pdfRes, err := extractDocumentText("doc.pdf", pdfData)
+	if err != nil {
+		t.Fatalf("extract pdf failed: %v", err)
+	}
+	if !strings.Contains(pdfRes, "Contract Agreement for Services") {
+		t.Errorf("expected PDF text, got: %s", pdfRes)
+	}
+
+	// 2. Integration test with Bot dispatcher
+	mockAIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			var req ai.ChatRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			userMsg := ""
+			for _, m := range req.Messages {
+				if m.Role == ai.RoleUser {
+					if s, ok := m.Content.(string); ok {
+						userMsg = s
+					}
+				}
+			}
+			reply := "Анализ документа завершен: условия согласованы."
+			if strings.Contains(userMsg, "Какая стоимость") {
+				reply = "Стоимость услуг составляет 50000 рублей."
+			}
+			resp := map[string]any{
+				"id":      "chatcmpl-test",
+				"model":   "auto",
+				"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": reply}}},
+				"usage":   map[string]any{"total_tokens": 50},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockAIServer.Close()
+
+	hood := NewHoodEngine()
+	hood.SetAIAvailable(true)
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	aiClient := ai.NewClient(mockAIServer.URL, "test-api-key")
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+
+	RegisterMenuRoutes(botInstance, hood, aiClient)
+	RegisterAIScenario(botInstance, hood, aiClient)
+
+	key := fsm.SessionKey{UserID: 909, ChatID: 909}
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, key)
+
+	// Send file attachment without caption
+	filePayload := map[string]any{
+		"name": "agreement.txt",
+		"data": base64.StdEncoding.EncodeToString(txtData),
+	}
+	docCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 909, FirstName: "Alice"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 909, UserID: 909, ChatType: "dialog"},
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type:    maxbot.UploadTypeFile,
+						Payload: filePayload,
+					},
+				},
+			},
+		},
+	})
+	docCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(docCtx); err != nil {
+		t.Fatalf("handle document attachment failed: %v", err)
+	}
+
+	history := loadChatHistory(fsmCtx)
+	if len(history) != 2 {
+		t.Fatalf("expected 2 messages in history, got %d", len(history))
+	}
+	if history[1].Content != "Анализ документа завершен: условия согласованы." {
+		t.Errorf("unexpected reply: %s", history[1].Content)
+	}
+
+	// Follow-up question about the document
+	qCtx := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 909, FirstName: "Alice"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 909, UserID: 909, ChatType: "dialog"},
+			Body:      maxbot.MessageBody{Text: "Какая стоимость указана в договоре?"},
+		},
+	})
+	qCtx.Set("fsm_context", fsmCtx)
+
+	if err := botInstance.Router().Handle(qCtx); err != nil {
+		t.Fatalf("handle follow-up question failed: %v", err)
+	}
+
+	history = loadChatHistory(fsmCtx)
+	if len(history) != 4 {
+		t.Fatalf("expected 4 messages in history after follow-up question, got %d", len(history))
+	}
+	if history[3].Content != "Стоимость услуг составляет 50000 рублей." {
+		t.Errorf("unexpected follow-up reply: %s", history[3].Content)
 	}
 }

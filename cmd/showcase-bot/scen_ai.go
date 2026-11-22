@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,10 +14,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
@@ -293,6 +296,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 	var processVoiceAudio func(c *bot.Context, audioBytes []byte, filename string) error
 	var processTextConversation func(c *bot.Context, userText string) error
 	var processWebPageSummary func(c *bot.Context, rawURL, userQuery string) error
+	var processDocumentFile func(c *bot.Context) error
 	var dispatchAIMessage func(c *bot.Context) error
 
 	// Helper for Multimodal Vision Image Recognition
@@ -1098,6 +1102,177 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return sendErr
 	}
 
+	// Helper for Document / Source Code File Processing & Q&A
+	processDocumentFile = func(c *bot.Context) error {
+		userID := getUserID(c)
+		fsmCtx := fsm.FromContext(c)
+
+		if aiClient == nil {
+			_, err := c.Reply("⚠️ AI-шлюз не настроен или недоступен. Проверьте переменную AI_GATEWAY_URL.")
+			return err
+		}
+
+		_ = c.Typing()
+
+		fileBytes, filename, err := c.FileBytes()
+		if err != nil || len(fileBytes) == 0 {
+			_, rErr := c.Reply("⚠️ Не удалось загрузить файл из вложения. Пожалуйста, отправьте документ еще раз.")
+			return rErr
+		}
+
+		statusMsg, _ := c.Reply(fmt.Sprintf("📄 **Обрабатываю документ:** «%s» *(размер: %d байт)*\n*(Извлекаю текст и формирую выжимку...)*", filename, len(fileBytes)))
+
+		docText, extractErr := extractDocumentText(filename, fileBytes)
+		if extractErr != nil || strings.TrimSpace(docText) == "" {
+			if statusMsg != nil && c.Client() != nil {
+				_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
+			}
+			errMsg := "не удалось прочитать текст документа"
+			if extractErr != nil {
+				errMsg = extractErr.Error()
+			}
+			errText := fmt.Sprintf("⚠️ **Ошибка чтения документа «%s»:**\n%s\n\nВы можете скопировать текст документа и отправить его в чат сообщением.", filename, errMsg)
+			kb := maxbot.NewInlineKeyboard().
+				Row(
+					maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+					maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
+				)
+			_, rErr := c.ReplyKeyboard(errText, kb)
+			return rErr
+		}
+
+		stopTyping := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(4 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopTyping:
+					return
+				case <-ticker.C:
+					_ = c.Typing()
+				}
+			}
+		}()
+
+		userCaption := strings.TrimSpace(c.Text())
+		var promptText string
+		if userCaption != "" {
+			promptText = fmt.Sprintf("Пользователь прикрепил документ «%s» и задал вопрос:\n«%s»\n\n[Текст документа]:\n%s\n\nОтветь на вопрос пользователя подробно и точно на русском языке, опираясь на содержимое документа.", filename, userCaption, docText)
+		} else {
+			promptText = fmt.Sprintf("Пользователь прикрепил документ «%s».\n\n[Текст документа]:\n%s\n\nСделай структурированный и качественный анализ документа на русском языке:\n1. 📄 **О чем документ:** краткая суть (1-2 предложения)\n2. 📌 **Ключевые факты и тезисы:** 3-6 основных пунктов\n3. 💡 **Выводы:** полезный итог\n\nВ конце дружелюбно предложи пользователю задать любые уточняющие вопросы по файлу.", filename, docText)
+		}
+
+		history := loadChatHistory(fsmCtx)
+		userHistoryEntry := fmt.Sprintf("[Пользователь прикрепил документ «%s»]", filename)
+		if userCaption != "" {
+			userHistoryEntry += fmt.Sprintf(": %s", userCaption)
+		}
+		history = append(history, ai.ChatMessage{
+			Role:    ai.RoleUser,
+			Content: userHistoryEntry,
+		})
+
+		messagesPayload := make([]ai.ChatMessage, 0, len(history)+2)
+		messagesPayload = append(messagesPayload, ai.ChatMessage{
+			Role:    ai.RoleSystem,
+			Content: aiSystemPrompt,
+		})
+		messagesPayload = append(messagesPayload, ai.ChatMessage{
+			Role:    ai.RoleUser,
+			Content: promptText,
+		})
+
+		activeModel := config.ChatModel
+		if fsmCtx != nil {
+			if m, ok := fsmCtx.Get("ai_active_chat_model"); ok {
+				if mStr, isStr := m.(string); isStr && mStr != "" {
+					activeModel = mStr
+				}
+			}
+		}
+
+		candidates := []string{activeModel}
+		for _, m := range []string{"auto", "fast", "best-coding", "reasoning", "gemini-3.5-flash-lite"} {
+			if m != activeModel {
+				candidates = append(candidates, m)
+			}
+		}
+
+		temp := 0.5
+		chatReq := &ai.ChatRequest{
+			Model:       activeModel,
+			Messages:    messagesPayload,
+			Temperature: &temp,
+		}
+
+		var chatResp *ai.ChatResponse
+		var lastErr error
+		var usedModel string
+
+		for _, m := range candidates {
+			chatReq.Model = m
+			chatResp, lastErr = aiClient.Chat(c.Ctx(), chatReq)
+			if lastErr == nil && chatResp != nil && strings.TrimSpace(chatResp.Content) != "" {
+				usedModel = m
+				break
+			}
+		}
+		close(stopTyping)
+
+		if statusMsg != nil && c.Client() != nil {
+			_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
+		}
+
+		if chatResp == nil || strings.TrimSpace(chatResp.Content) == "" {
+			errDesc := "ошибка обработки текста"
+			if lastErr != nil {
+				errDesc = lastErr.Error()
+			}
+			errText := fmt.Sprintf("⚠️ **Ошибка анализа документа:** %s\n\nПопробуйте повторить запрос или очистить контекст.", errDesc)
+			kb := maxbot.NewInlineKeyboard().
+				Row(maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"))
+			_, rErr := c.ReplyKeyboard(errText, kb)
+			return rErr
+		}
+
+		replyText := chatResp.Content
+
+		history = append(history, ai.ChatMessage{
+			Role:    ai.RoleAssistant,
+			Content: replyText,
+		})
+		if len(history) > 10 {
+			history = history[len(history)-10:]
+		}
+		_ = saveChatHistory(fsmCtx, history)
+		if fsmCtx != nil {
+			_ = fsmCtx.Set("last_ai_reply", replyText)
+			_ = fsmCtx.SetState("AI_STEP_CHAT")
+		}
+
+		hood.Register("ai_chat", TechCard{
+			Title:       "Анализ документа & Вопросы по файлу (Document Q&A)",
+			Endpoint:    "/v1/chat/completions",
+			Method:      "POST",
+			FSMState:    "AI_STEP_CHAT",
+			Description: fmt.Sprintf("Файл: %s | Модель: %s | Задержка: %s | Токенов: %d.", filename, usedModel, chatResp.Latency.Round(time.Millisecond), chatResp.TotalTokens),
+			DocsLink:    "https://platform.openai.com/docs/api-reference/chat",
+		})
+
+		responseBody := fmt.Sprintf("📄 **Анализ документа `%s`:**\n\n%s", filename, replyText)
+		formatted := hood.Format(userID, responseBody, "ai_chat")
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(
+				maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
+				maxbot.NewCallbackButton("🔊 Озвучить", "ai:tts:speak_last"),
+			)
+
+		_, sendErr := c.ReplyKeyboard(formatted, kb)
+		return sendErr
+	}
+
 	// dispatchAIMessage is the central multimodal message router for all user inputs.
 	dispatchAIMessage = func(c *bot.Context) error {
 		if c == nil {
@@ -1111,7 +1286,11 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		if audioBytes, filename, hasAudio := extractAudioAttachmentBytes(c); hasAudio && len(audioBytes) > 0 {
 			return processVoiceAudio(c, audioBytes, filename)
 		}
-		// 3. Priority: Text message
+		// 3. Priority: Document / File attachment -> Document parser & LLM summary / Q&A
+		if _, hasFile := c.FileAttachment(); hasFile {
+			return processDocumentFile(c)
+		}
+		// 4. Priority: Text message
 		userText := strings.TrimSpace(c.Text())
 		if userText == "" {
 			return nil
@@ -1427,6 +1606,11 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 	b.OnImage(func(c *bot.Context) error {
 		prompt := strings.TrimSpace(c.Text())
 		return processVisionImage(c, prompt)
+	})
+
+	// 12. Global File / Document handler for document analysis anywhere in the bot!
+	b.OnFile(func(c *bot.Context) error {
+		return dispatchAIMessage(c)
 	})
 }
 
@@ -1923,4 +2107,142 @@ func fetchAndExtractWebPageText(ctx context.Context, targetURL string) (title st
 	}
 
 	return title, cleanContent, nil
+}
+
+// extractDocumentText extracts plain text from document attachments (txt, md, code files, pdf, etc.).
+func extractDocumentText(filename string, data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", fmt.Errorf("файл пуст")
+	}
+
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	if ext == ".pdf" {
+		return extractPDFText(data)
+	}
+
+	// For text files and source code (.txt, .md, .csv, .json, .yaml, .go, .py, etc.)
+	if utf8.Valid(data) {
+		text := strings.TrimSpace(string(data))
+		runes := []rune(text)
+		if len(runes) > 8000 {
+			text = string(runes[:8000]) + "\n\n...[содержимое файла сокращено для размера контекста]..."
+		}
+		return text, nil
+	}
+
+	// If not valid utf-8, replace invalid bytes
+	cleaned := strings.ToValidUTF8(string(data), "?")
+	cleaned = strings.TrimSpace(cleaned)
+	runes := []rune(cleaned)
+	if len(runes) > 8000 {
+		cleaned = string(runes[:8000]) + "\n\n...[содержимое файла сокращено]..."
+	}
+	return cleaned, nil
+}
+
+// extractPDFText extracts readable plain text from uncompressed or flate-compressed PDF streams.
+func extractPDFText(data []byte) (string, error) {
+	var sb strings.Builder
+
+	streamIdx := 0
+	for {
+		sStart := bytes.Index(data[streamIdx:], []byte("stream"))
+		if sStart == -1 {
+			break
+		}
+		streamContentStart := streamIdx + sStart + len("stream")
+		if streamContentStart < len(data) && data[streamContentStart] == '\r' {
+			streamContentStart++
+		}
+		if streamContentStart < len(data) && data[streamContentStart] == '\n' {
+			streamContentStart++
+		}
+
+		sEnd := bytes.Index(data[streamContentStart:], []byte("endstream"))
+		if sEnd == -1 {
+			break
+		}
+		streamBytes := data[streamContentStart : streamContentStart+sEnd]
+
+		headerStart := streamIdx + sStart - 128
+		if headerStart < 0 {
+			headerStart = 0
+		}
+		header := data[headerStart : streamIdx+sStart]
+
+		var content []byte
+		if bytes.Contains(header, []byte("/FlateDecode")) {
+			zr, err := zlib.NewReader(bytes.NewReader(streamBytes))
+			if err == nil {
+				decompressed, rErr := io.ReadAll(zr)
+				_ = zr.Close()
+				if rErr == nil && len(decompressed) > 0 {
+					content = decompressed
+				}
+			}
+		} else {
+			content = streamBytes
+		}
+
+		if len(content) > 0 {
+			text := parsePDFContentStream(content)
+			if text != "" {
+				if sb.Len() > 0 {
+					sb.WriteString("\n")
+				}
+				sb.WriteString(text)
+			}
+		}
+
+		streamIdx = streamContentStart + sEnd + len("endstream")
+	}
+
+	result := strings.TrimSpace(sb.String())
+	if result == "" {
+		return "", fmt.Errorf("текстовый слой в PDF не обнаружен (возможно, документ содержит только отсканированные изображения)")
+	}
+	return result, nil
+}
+
+func parsePDFContentStream(stream []byte) string {
+	var parts []string
+
+	reTj := regexp.MustCompile(`\((.*?)\)\s*Tj`)
+	matches := reTj.FindAllSubmatch(stream, -1)
+	for _, m := range matches {
+		if len(m) > 1 {
+			parts = append(parts, cleanPDFString(m[1]))
+		}
+	}
+
+	reTJ := regexp.MustCompile(`\[(.*?)\]\s*TJ`)
+	tjMatches := reTJ.FindAllSubmatch(stream, -1)
+	for _, m := range tjMatches {
+		if len(m) > 1 {
+			innerRe := regexp.MustCompile(`\((.*?)\)`)
+			innerMatches := innerRe.FindAllSubmatch(m[1], -1)
+			var word strings.Builder
+			for _, im := range innerMatches {
+				if len(im) > 1 {
+					word.WriteString(cleanPDFString(im[1]))
+				}
+			}
+			if word.Len() > 0 {
+				parts = append(parts, word.String())
+			}
+		}
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func cleanPDFString(raw []byte) string {
+	s := string(raw)
+	s = strings.ReplaceAll(s, "\\(", "(")
+	s = strings.ReplaceAll(s, "\\)", ")")
+	s = strings.ReplaceAll(s, "\\n", "\n")
+	s = strings.ReplaceAll(s, "\\r", "\r")
+	s = strings.ReplaceAll(s, "\\t", "\t")
+	return strings.TrimSpace(s)
 }

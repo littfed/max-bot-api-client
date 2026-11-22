@@ -239,6 +239,114 @@ func (c *Context) ImageBytes() ([]byte, string, error) {
 	return data, filename, nil
 }
 
+// FileAttachment returns the first non-image, non-audio document attachment from the message, if present.
+func (c *Context) FileAttachment() (*maxbot.Attachment, bool) {
+	msg := c.Message()
+	if msg == nil {
+		return nil, false
+	}
+	for _, att := range msg.Body.Attachments {
+		if att.Type == maxbot.UploadTypeFile || att.Type == "file" || att.Type == "document" {
+			if pMap, ok := att.Payload.(map[string]any); ok {
+				name, _ := pMap["name"].(string)
+				nameLower := strings.ToLower(name)
+				if isAudioExtension(nameLower) || isImageExtension(nameLower) {
+					continue
+				}
+			}
+			return &att, true
+		}
+	}
+	return nil, false
+}
+
+// FileURL returns the direct download URL of the attached document, if available.
+func (c *Context) FileURL() (string, bool) {
+	att, ok := c.FileAttachment()
+	if !ok || att == nil {
+		return "", false
+	}
+	u := extractURLFromAttachmentPayload(att.Payload)
+	if u != "" {
+		return u, true
+	}
+	return "", false
+}
+
+// FileBytes downloads or decodes the binary file payload from document attachments.
+func (c *Context) FileBytes() ([]byte, string, error) {
+	att, ok := c.FileAttachment()
+	if !ok || att == nil {
+		return nil, "", fmt.Errorf("no file attachment found in message")
+	}
+
+	filename := "document.txt"
+	if pMap, ok := att.Payload.(map[string]any); ok {
+		if n, ok := pMap["name"].(string); ok && n != "" {
+			filename = n
+		}
+		for _, b64Key := range []string{"b64_json", "base64", "data"} {
+			if b64Str, ok := pMap[b64Key].(string); ok && b64Str != "" {
+				cleanB64 := b64Str
+				if commaIdx := strings.Index(cleanB64, ","); commaIdx != -1 && strings.Contains(cleanB64[:commaIdx], "base64") {
+					cleanB64 = cleanB64[commaIdx+1:]
+				}
+				data, err := base64.StdEncoding.DecodeString(cleanB64)
+				if err == nil && len(data) > 0 {
+					return data, filename, nil
+				}
+			}
+		}
+	}
+
+	u := extractURLFromAttachmentPayload(att.Payload)
+	if u == "" {
+		return nil, "", fmt.Errorf("cannot extract file url or data from payload")
+	}
+
+	if c.client != nil {
+		data, err := c.client.DownloadFile(c.Ctx(), u)
+		if err == nil && len(data) > 0 {
+			return data, filename, nil
+		}
+	}
+
+	httpClient := &http.Client{Timeout: 25 * time.Second}
+	req, err := http.NewRequestWithContext(c.Ctx(), http.MethodGet, u, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create http request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("file download returned status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read file body: %w", err)
+	}
+	return data, filename, nil
+}
+
+func isAudioExtension(nameLower string) bool {
+	return strings.HasSuffix(nameLower, ".ogg") || strings.HasSuffix(nameLower, ".mp3") ||
+		strings.HasSuffix(nameLower, ".wav") || strings.HasSuffix(nameLower, ".m4a") ||
+		strings.HasSuffix(nameLower, ".aac") || strings.HasSuffix(nameLower, ".opus") ||
+		strings.HasSuffix(nameLower, ".flac")
+}
+
+func isImageExtension(nameLower string) bool {
+	return strings.HasSuffix(nameLower, ".jpg") || strings.HasSuffix(nameLower, ".jpeg") ||
+		strings.HasSuffix(nameLower, ".png") || strings.HasSuffix(nameLower, ".webp") ||
+		strings.HasSuffix(nameLower, ".gif") || strings.HasSuffix(nameLower, ".bmp") ||
+		strings.HasSuffix(nameLower, ".heic") || strings.HasSuffix(nameLower, ".tiff")
+}
+
 // extractURLFromAttachmentPayload extracts an image URL from an attachment payload.
 func extractURLFromAttachmentPayload(payload any) string {
 	if payload == nil {
