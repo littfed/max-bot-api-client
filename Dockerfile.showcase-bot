@@ -33,6 +33,8 @@ COPY --from=builder /bin/showcase-bot /app/showcase-bot
 # Expose Mini App / Webhook / Health check HTTP port
 EXPOSE 8080
 
+ENV LOG_LEVEL=debug
+
 USER appuser
 
 ENTRYPOINT ["/app/showcase-bot"]
