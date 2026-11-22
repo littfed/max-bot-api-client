@@ -99,6 +99,17 @@ func (r *Router) OnAudio(handler HandlerFunc) {
 	}, handler)
 }
 
+// OnImage registers a handler for messages containing image or photo attachments.
+func (r *Router) OnImage(handler HandlerFunc) {
+	r.addRoute(func(c *Context) bool {
+		if c.Update == nil || c.Update.UpdateType != maxbot.UpdateTypeMessageCreated {
+			return false
+		}
+		_, hasImage := c.ImageAttachment()
+		return hasImage
+	}, handler)
+}
+
 // OnVoiceNoteAttempt registers a handler invoked when a user records a voice note via the MAX mobile app microphone.
 func (r *Router) OnVoiceNoteAttempt(handler HandlerFunc) {
 	r.addRoute(func(c *Context) bool {
@@ -116,6 +127,9 @@ func (r *Router) OnIdleMessage(handler HandlerFunc) {
 			return false
 		}
 		if _, hasAudio := c.AudioAttachment(); hasAudio {
+			return false
+		}
+		if _, hasImage := c.ImageAttachment(); hasImage {
 			return false
 		}
 		val, ok := c.Get("fsm_context")

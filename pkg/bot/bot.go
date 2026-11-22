@@ -181,6 +181,11 @@ func (b *Bot) OnAudio(handler HandlerFunc) {
 	b.router.OnAudio(handler)
 }
 
+// OnImage registers a handler for incoming image or photo messages.
+func (b *Bot) OnImage(handler HandlerFunc) {
+	b.router.OnImage(handler)
+}
+
 // OnVoiceNoteAttempt registers a handler invoked when a user records a voice note via the MAX mobile app microphone.
 func (b *Bot) OnVoiceNoteAttempt(handler HandlerFunc) {
 	b.router.OnVoiceNoteAttempt(handler)

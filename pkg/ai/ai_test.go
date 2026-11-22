@@ -123,6 +123,19 @@ func TestAIClientWorkflow(t *testing.T) {
 	if audioResp.Text != "Сколько стоит доставка в Москву?" {
 		t.Fatalf("unexpected transcription text: %s", audioResp.Text)
 	}
+
+	// 5. Vision Analysis
+	visionResp, err := client.Vision(ctx, &VisionRequest{
+		Prompt:     "Распознай картинку",
+		ImageURL:   "https://example.com/test.jpg",
+		ImageBytes: []byte("fake_image_bytes"),
+	})
+	if err != nil {
+		t.Fatalf("Vision failed: %v", err)
+	}
+	if visionResp.Content != "Привет! Я AI-ассистент в MAX." {
+		t.Fatalf("unexpected vision content: %s", visionResp.Content)
+	}
 }
 
 func TestAIClientErrors(t *testing.T) {

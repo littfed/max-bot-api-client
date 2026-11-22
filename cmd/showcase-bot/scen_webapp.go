@@ -696,12 +696,15 @@ func RegisterWebappScenario(
 			"💡 *Откройте Mini App по веб-ссылке или через нативную кнопку `open_app`:*"
 
 		formatted := hood.Format(userID, text, "webapp_open_app")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 
 	// Simulate order callback
 	b.OnCallbackPayload("webapp:simulate_order", func(c *bot.Context) error {
+		// Anti-Ghost-Click: clear interactive button on previous message
+		_, _ = c.ClearKeyboard()
+
 		_ = c.AnswerCallback(&maxbot.AnswerCallbackRequest{
 			Notification: "🧪 WebBridge: заказ из Mini App получен!",
 		})

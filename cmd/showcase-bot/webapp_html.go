@@ -21,11 +21,47 @@ const miniAppHTML = `<!DOCTYPE html>
       --danger: #ef4444;
       --purple: #8b5cf6;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: var(--bg); color: var(--text); padding-bottom: 74px; min-height: 100vh; display: flex; flex-direction: column; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    input, textarea {
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    html, body {
+      overscroll-behavior: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      padding-top: max(12px, env(safe-area-inset-top, 12px));
+      padding-bottom: max(74px, calc(74px + env(safe-area-inset-bottom, 0px)));
+      min-height: 100vh;
+      min-height: var(--tg-viewport-stable-height, 100vh);
+      display: flex;
+      flex-direction: column;
+    }
     
     /* Top Header */
-    header { background: #111827; padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 40; }
+    header {
+      background: #111827;
+      padding: max(12px, env(safe-area-inset-top, 12px)) 16px 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 40;
+    }
     .brand { display: flex; align-items: center; gap: 8px; }
     .brand-icon { font-size: 20px; }
     .brand-title { font-size: 15px; font-weight: 700; }
@@ -120,7 +156,20 @@ const miniAppHTML = `<!DOCTYPE html>
     .quiz-opt.wrong { background: rgba(239,68,68,0.2); border-color: var(--danger); color: #f87171; }
 
     /* Bottom Navigation */
-    nav.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; height: 60px; background: #111827; border-top: 1px solid var(--border); display: flex; justify-content: space-around; align-items: center; z-index: 50; }
+    nav.bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: calc(60px + env(safe-area-inset-bottom, 0px));
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      background: #111827;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      z-index: 50;
+    }
     .nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-decoration: none; font-size: 11px; flex: 1; height: 100%; cursor: pointer; }
     .nav-item.active { color: #60a5fa; font-weight: 600; }
     .nav-icon { font-size: 18px; margin-bottom: 2px; }
@@ -129,6 +178,47 @@ const miniAppHTML = `<!DOCTYPE html>
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 60; padding: 16px; }
     .modal-overlay.open { display: flex; }
     .modal-card { background: #1e293b; border: 1px solid var(--border); border-radius: 16px; max-width: 440px; width: 100%; padding: 20px; }
+
+    /* Modern Toast System (Replacing browser alert) */
+    #toast-container {
+      position: fixed;
+      bottom: calc(75px + env(safe-area-inset-bottom, 0px));
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 100;
+      pointer-events: none;
+      width: calc(100% - 32px);
+      max-width: 440px;
+    }
+    .toast-msg {
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      animation: toastSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      pointer-events: auto;
+    }
+    .toast-msg.success { border-color: var(--success); }
+    .toast-msg.error { border-color: var(--danger); }
+    .toast-msg.fade-out { animation: toastFadeOut 0.3s forwards; }
+    @keyframes toastSlideUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes toastFadeOut {
+      from { opacity: 1; transform: translateY(0); }
+      to { opacity: 0; transform: translateY(-8px); }
+    }
   </style>
 </head>
 <body>
@@ -397,6 +487,8 @@ const miniAppHTML = `<!DOCTYPE html>
     </div>
   </div>
 
+  <div id="toast-container"></div>
+
   <script>
     const OWNER_ID = 396393759;
     let currentUser = { id: 0, first_name: 'Пользователь', username: '' };
@@ -408,6 +500,70 @@ const miniAppHTML = `<!DOCTYPE html>
     // Booking state
     let selectedBookingService = { id: 'srv_audit', name: 'Архитектурный аудит Go / MAX', price: 5000 };
     let selectedBookingSlot = 'Завтра, 11:00';
+
+    // Unified Haptic Feedback Engine
+    function triggerHaptic(type) {
+      try {
+        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
+          const hf = window.Telegram.WebApp.HapticFeedback;
+          if (type === 'light' || type === 'medium' || type === 'heavy' || type === 'rigid' || type === 'soft') {
+            hf.impactOccurred(type);
+            return;
+          }
+          if (type === 'success' || type === 'warning' || type === 'error') {
+            hf.notificationOccurred(type);
+            return;
+          }
+          if (type === 'selection') {
+            hf.selectionChanged();
+            return;
+          }
+        }
+        if (window.Max && window.Max.WebApp && window.Max.WebApp.HapticFeedback) {
+          window.Max.WebApp.HapticFeedback.impactOccurred(type);
+          return;
+        }
+        if (navigator.vibrate) {
+          if (type === 'success') navigator.vibrate([20, 30, 20]);
+          else if (type === 'error') navigator.vibrate([40, 60, 40]);
+          else navigator.vibrate(15);
+        }
+      } catch (e) {}
+    }
+
+    // Modern Toast Notification (replaces blocking browser alert)
+    function showToast(text, type = 'info') {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+      const toast = document.createElement('div');
+      toast.className = 'toast-msg ' + type;
+      let icon = 'ℹ️';
+      if (type === 'success') icon = '✅';
+      else if (type === 'error') icon = '⚠️';
+      toast.innerHTML = '<span>' + icon + '</span><span>' + text + '</span>';
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.classList.add('fade-out');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // Unsaved Changes / Cart Protection
+    function updateClosingConfirmation() {
+      let totalItems = 0;
+      for (const q of Object.values(cart)) totalItems += q;
+      const hasUnsaved = totalItems > 0;
+      if (window.Telegram && window.Telegram.WebApp) {
+        if (hasUnsaved && window.Telegram.WebApp.enableClosingConfirmation) {
+          window.Telegram.WebApp.enableClosingConfirmation();
+        } else if (!hasUnsaved && window.Telegram.WebApp.disableClosingConfirmation) {
+          window.Telegram.WebApp.disableClosingConfirmation();
+        }
+      }
+      if (window.Max && window.Max.WebApp && window.Max.WebApp.enableClosingConfirmation) {
+        if (hasUnsaved) window.Max.WebApp.enableClosingConfirmation();
+      }
+    }
 
     const products = [
       { id: 'gopher_hoodie', name: 'Худи Go Gopher Edition', category: 'merch', price: 3990, icon: '🐹', desc: 'Теплое хлопковое худи с вышивкой талисмана Go Gopher. Ограниченная серия MAX Dev.' },
@@ -422,6 +578,13 @@ const miniAppHTML = `<!DOCTYPE html>
 
     function parseInitData() {
       try {
+        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.expand) {
+          window.Telegram.WebApp.expand();
+        }
+        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.disableVerticalSwipes) {
+          window.Telegram.WebApp.disableVerticalSwipes();
+        }
+
         let raw = window.location.search.substring(1);
         if (!raw && window.location.hash) {
           raw = window.location.hash.substring(1).replace('tgWebAppData=', '');
@@ -495,6 +658,7 @@ const miniAppHTML = `<!DOCTYPE html>
 
     let activeCategory = 'all';
     function setCategory(cat, btn) {
+      triggerHaptic('selection');
       activeCategory = cat;
       document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
@@ -512,10 +676,12 @@ const miniAppHTML = `<!DOCTYPE html>
     }
 
     function changeQty(id, delta) {
+      triggerHaptic('light');
       cart[id] = Math.max(0, (cart[id] || 0) + delta);
       const el = document.getElementById('qty-' + id);
       if (el) el.innerText = cart[id];
       updateTotals();
+      updateClosingConfirmation();
     }
 
     function updateTotals() {
@@ -542,25 +708,29 @@ const miniAppHTML = `<!DOCTYPE html>
       const code = document.getElementById('promo-code').value.trim().toUpperCase();
       if (code.includes('30') || code.includes('QUIZ')) {
         discountPercent = 30;
-        alert('🎉 Промокод применен: Скидка 30%!');
+        showToast('Промокод применен: Скидка 30%!', 'success');
+        triggerHaptic('success');
       } else if (code.includes('25') || code === 'PROMO-25-MAX') {
         discountPercent = 25;
-        alert('🎉 Промокод применен: Скидка 25%!');
+        showToast('Промокод применен: Скидка 25%!', 'success');
+        triggerHaptic('success');
       } else if (code.includes('15') || code.includes('LUCK')) {
         discountPercent = 15;
-        alert('🎉 Промокод применен: Скидка 15%!');
+        showToast('Промокод применен: Скидка 15%!', 'success');
+        triggerHaptic('success');
       } else if (code) {
         discountPercent = 10;
-        alert('🎉 Промокод применен: Скидка 10%!');
+        showToast('Промокод применен: Скидка 10%!', 'success');
+        triggerHaptic('success');
       }
       updateTotals();
     }
-
     async function submitCart() {
       let totalItems = 0;
       for (const q of Object.values(cart)) totalItems += q;
       if (totalItems === 0) {
-        alert('Корзина пуста. Добавьте товары кнопками +');
+        showToast('Корзина пуста. Добавьте товары кнопками +', 'error');
+        triggerHaptic('error');
         return;
       }
 
@@ -582,17 +752,26 @@ const miniAppHTML = `<!DOCTYPE html>
         });
         const data = await res.json();
         if (data.success) {
-          alert('✅ Заказ оформлен! Номер: ' + (data.data.order_id || 'WEB') + '. Подтверждение отправлено в бот.');
+          showToast('✅ Заказ оформлен! Номер: ' + (data.data.order_id || 'WEB') + '. Чек отправлен в чат.', 'success');
+          triggerHaptic('success');
+          // Clear cart on successful order
+          for (const k in cart) cart[k] = 0;
+          updateTotals();
+          updateClosingConfirmation();
+          renderCatalog(products);
           loadOrders();
         } else {
-          alert('Ошибка оформления: ' + (data.error || 'попробуйте снова'));
+          showToast('Ошибка оформления: ' + (data.error || 'попробуйте снова'), 'error');
+          triggerHaptic('error');
         }
       } catch (e) {
-        alert('Ошибка связи с сервером WebBridge');
+        showToast('Ошибка связи с сервером WebBridge', 'error');
+        triggerHaptic('error');
       }
     }
 
     function switchTab(tab, btn) {
+      triggerHaptic('selection');
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
       const target = document.getElementById('tab-' + tab);
@@ -605,6 +784,7 @@ const miniAppHTML = `<!DOCTYPE html>
     function openModal(id) {
       const p = products.find(x => x.id === id);
       if (!p) return;
+      triggerHaptic('selection');
       activeModalItem = p;
       document.getElementById('modal-title').innerText = p.icon + ' ' + p.name;
       document.getElementById('modal-desc').innerText = p.desc;
@@ -620,7 +800,7 @@ const miniAppHTML = `<!DOCTYPE html>
       if (!activeModalItem) return;
       const channelID = document.getElementById('studio-channel').value;
       if (currentUser.id !== OWNER_ID && channelID !== '0') {
-        alert('ℹ️ В демо-режиме публикация доступна в демо-канал или владельцу бота.');
+        showToast('В демо-режиме публикация доступна в демо-канал или владельцу бота.', 'info');
       }
       const res = await fetch('/api/webapp/publish_post', {
         method: 'POST',
@@ -635,21 +815,24 @@ const miniAppHTML = `<!DOCTYPE html>
       });
       const data = await res.json();
       if (data.success) {
-        alert('📢 Товар опубликован! ID сообщения: ' + data.message_id);
+        showToast('📢 Товар опубликован! ID сообщения: ' + data.message_id, 'success');
+        triggerHaptic('success');
         closeModal();
       } else {
-        alert('Информация: ' + (data.error || 'Готово'));
+        showToast('Информация: ' + (data.error || 'Готово'), 'info');
       }
     }
 
     // Booking Handlers
     function selectService(el, id, name, price) {
+      triggerHaptic('selection');
       document.querySelectorAll('.service-option').forEach(o => o.classList.remove('selected'));
       el.classList.add('selected');
       selectedBookingService = { id, name, price };
     }
 
     function selectSlot(el, slot) {
+      triggerHaptic('selection');
       document.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
       el.classList.add('selected');
       selectedBookingSlot = slot;
@@ -684,18 +867,22 @@ const miniAppHTML = `<!DOCTYPE html>
         });
         const data = await res.json();
         if (data.success) {
-          alert('📅 Запись успешно подтверждена! Номер брони: ' + (data.data.booking_id || 'BOK') + ' на ' + selectedBookingSlot + '. Карточка отправлена в чат.');
+          showToast('📅 Запись успешно подтверждена! Номер: ' + (data.data.booking_id || 'BOK') + ' на ' + selectedBookingSlot, 'success');
+          triggerHaptic('success');
           loadOrders();
         } else {
-          alert('Ошибка записи: ' + (data.error || 'попробуйте снова'));
+          showToast('Ошибка записи: ' + (data.error || 'попробуйте снова'), 'error');
+          triggerHaptic('error');
         }
       } catch (e) {
-        alert('Ошибка связи с сервером WebBridge');
+        showToast('Ошибка связи с сервером WebBridge', 'error');
+        triggerHaptic('error');
       }
     }
 
     // AI Studio Handlers
     function switchAISub(sub) {
+      triggerHaptic('selection');
       document.getElementById('ai-sub-image').style.display = sub === 'image' ? 'block' : 'none';
       document.getElementById('ai-sub-chat').style.display = sub === 'chat' ? 'block' : 'none';
       document.getElementById('btn-sub-image').classList.toggle('active', sub === 'image');
@@ -703,6 +890,7 @@ const miniAppHTML = `<!DOCTYPE html>
     }
 
     function selectStyle(el, style) {
+      triggerHaptic('selection');
       document.querySelectorAll('.chip-cloud .chip').forEach(c => c.classList.remove('selected'));
       el.classList.add('selected');
       selectedStyle = style;
@@ -736,13 +924,18 @@ const miniAppHTML = `<!DOCTYPE html>
           placeholder.style.display = 'none';
           btnSend.style.display = 'block';
           if (sendToChat) {
-            alert('🎨 Арт успешно отправлен в ваш чат мессенджера MAX!');
+            showToast('🎨 Арт успешно отправлен в ваш чат мессенджера MAX!', 'success');
+            triggerHaptic('success');
+          } else {
+            triggerHaptic('light');
           }
         } else {
-          alert('Не удалось сгенерировать изображение');
+          showToast('Не удалось сгенерировать изображение', 'error');
+          triggerHaptic('error');
         }
       } catch (e) {
-        alert('Ошибка связи с AI Gateway');
+        showToast('Ошибка связи с AI Gateway', 'error');
+        triggerHaptic('error');
       } finally {
         btnGen.innerText = '✨ Сгенерировать арт';
         btnGen.disabled = false;
@@ -760,6 +953,7 @@ const miniAppHTML = `<!DOCTYPE html>
       const model = document.getElementById('ai-chat-model').value;
       const resBubble = document.getElementById('ai-chat-result');
       
+      triggerHaptic('light');
       resBubble.style.display = 'block';
       resBubble.innerText = '⏳ Думаю... (' + model + ')';
 
@@ -776,11 +970,14 @@ const miniAppHTML = `<!DOCTYPE html>
         const data = await res.json();
         if (data.success && data.text) {
           resBubble.innerHTML = '<div style="font-size: 11px; color: #60a5fa; margin-bottom: 6px;">🧠 ' + data.model + ' • ' + (data.latency_ms || 350) + 'ms</div>' + data.text;
+          triggerHaptic('light');
         } else {
           resBubble.innerText = 'Ошибка получения ответа';
+          triggerHaptic('error');
         }
       } catch (e) {
         resBubble.innerText = 'Ошибка связи с сервером AI';
+        triggerHaptic('error');
       }
     }
 
@@ -788,6 +985,7 @@ const miniAppHTML = `<!DOCTYPE html>
     async function generateAIPost() {
       const prompt = document.getElementById('studio-prompt').value.trim() || 'Анонс магазина и новых поступлений мерча MAX';
       document.getElementById('studio-preview').innerText = '⏳ Gemini генерирует пост...';
+      triggerHaptic('light');
       try {
         const res = await fetch('/api/webapp/generate_post', {
           method: 'POST',
@@ -798,6 +996,7 @@ const miniAppHTML = `<!DOCTYPE html>
         if (data.success && data.text) {
           document.getElementById('studio-body').value = data.text;
           document.getElementById('studio-preview').innerText = data.text;
+          triggerHaptic('success');
         } else {
           const fallback = '🚀 **Обновление витрины MAX Store!**\n\nЭксклюзивный мерч для разработчиков и участников сообщества доступен в Mini App.\n\n• Доставка по РФ\n• Оплата через СБП\n• Скидка 15% по промокоду PROMO-15-MAX';
           document.getElementById('studio-body').value = fallback;
@@ -805,6 +1004,7 @@ const miniAppHTML = `<!DOCTYPE html>
         }
       } catch (e) {
         document.getElementById('studio-preview').innerText = 'Ошибка связи с AI Gateway';
+        triggerHaptic('error');
       }
     }
 
@@ -815,7 +1015,8 @@ const miniAppHTML = `<!DOCTYPE html>
     async function publishPostToChannel() {
       const text = document.getElementById('studio-body').value.trim();
       if (!text) {
-        alert('Введите текст публикации');
+        showToast('Введите текст публикации', 'error');
+        triggerHaptic('error');
         return;
       }
       const channelID = parseInt(document.getElementById('studio-channel').value, 10);
@@ -823,7 +1024,7 @@ const miniAppHTML = `<!DOCTYPE html>
       const rx = document.getElementById('studio-rx').checked;
 
       if (currentUser.id !== OWNER_ID && channelID !== 0) {
-        alert('ℹ️ В демо-режиме пост промодерирован и симулирован! Полная публикация в живой канал доступна администратору.');
+        showToast('В демо-режиме пост промодерирован и симулирован!', 'info');
         return;
       }
 
@@ -840,14 +1041,16 @@ const miniAppHTML = `<!DOCTYPE html>
       });
       const data = await res.json();
       if (data.success) {
-        alert('🚀 Пост успешно опубликован в канале (MessageID: ' + data.message_id + ')!');
+        showToast('🚀 Пост успешно опубликован в канале (ID: ' + data.message_id + ')!', 'success');
+        triggerHaptic('success');
       } else {
-        alert('Ответ сервера: ' + (data.error || 'Успешно'));
+        showToast('Ответ сервера: ' + (data.error || 'Успешно'), 'info');
       }
     }
 
     // Wheel of fortune
     async function spinWheel() {
+      triggerHaptic('heavy');
       const icon = document.getElementById('wheel-icon');
       icon.style.transform = 'rotate(' + (1440 + Math.floor(Math.random() * 360)) + 'deg)';
       try {
@@ -858,6 +1061,8 @@ const miniAppHTML = `<!DOCTYPE html>
         });
         const data = await res.json();
         setTimeout(() => {
+          showToast('🎉 Победа! Ваш промокод: ' + data.code + ' (скидка ' + data.discount + '%)!', 'success');
+          triggerHaptic('success');
           document.getElementById('wheel-result').innerText = '🎉 Победа! Ваш промокод: ' + data.code + ' (скидка ' + data.discount + '%)!';
           document.getElementById('promo-code').value = data.code;
           applyPromo();
@@ -914,8 +1119,10 @@ const miniAppHTML = `<!DOCTYPE html>
       if (idx === item.correct) {
         btn.classList.add('correct');
         quizScore++;
+        triggerHaptic('success');
       } else {
         btn.classList.add('wrong');
+        triggerHaptic('error');
       }
       setTimeout(() => {
         currentQuizIndex++;
@@ -924,6 +1131,7 @@ const miniAppHTML = `<!DOCTYPE html>
     }
 
     function applyQuizPromo() {
+      triggerHaptic('selection');
       document.getElementById('promo-code').value = 'QUIZ-PRO-30';
       applyPromo();
       switchTab('store', document.querySelector('.nav-item'));

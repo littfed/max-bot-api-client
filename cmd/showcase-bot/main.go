@@ -216,9 +216,9 @@ func main() {
 			"Все клики по кнопкам замеряют Time-to-Click (TTK) и обогащаются UTM-метками.", len(events), *portFlag)
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("◀️ В меню", "nav:menu"))
+			Row(maxbot.NewCallbackButton("◀️ В меню", "nav:menu").WithIntent(maxbot.IntentPrimary))
 
-		_, err := c.ReplyKeyboard(text, kb)
+		_, err := c.EditOrReplyKeyboard(text, kb)
 		return err
 	})
 

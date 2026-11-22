@@ -45,6 +45,13 @@ func WithDefaultAudioModel(model string) Option {
 	}
 }
 
+// WithDefaultVisionModel sets the fallback multimodal vision model.
+func WithDefaultVisionModel(model string) Option {
+	return func(c *Client) {
+		c.defaultVisionModel = model
+	}
+}
+
 // WithTimeout sets a custom request timeout.
 func WithTimeout(timeout time.Duration) Option {
 	return func(c *Client) {
@@ -54,12 +61,13 @@ func WithTimeout(timeout time.Duration) Option {
 
 // Client is a lightweight, zero-dependency client for OpenAI/Anthropic compatible AI gateways (like go-model-api).
 type Client struct {
-	endpoint          string
-	apiKey            string
-	httpClient        *http.Client
-	defaultChatModel  string
-	defaultImageModel string
-	defaultAudioModel string
+	endpoint           string
+	apiKey             string
+	httpClient         *http.Client
+	defaultChatModel   string
+	defaultImageModel  string
+	defaultAudioModel  string
+	defaultVisionModel string
 }
 
 // NewClient initializes a new AI gateway client.
@@ -70,12 +78,13 @@ func NewClient(endpoint string, apiKey string, opts ...Option) *Client {
 	}
 
 	c := &Client{
-		endpoint:          cleanEndpoint,
-		apiKey:            apiKey,
-		httpClient:        &http.Client{Timeout: 90 * time.Second},
-		defaultChatModel:  "gpt-4o-mini",
-		defaultImageModel: "flux",
-		defaultAudioModel: "whisper-1",
+		endpoint:           cleanEndpoint,
+		apiKey:             apiKey,
+		httpClient:         &http.Client{Timeout: 90 * time.Second},
+		defaultChatModel:   "gpt-4o-mini",
+		defaultImageModel:  "flux",
+		defaultAudioModel:  "whisper-1",
+		defaultVisionModel: "auto",
 	}
 
 	for _, opt := range opts {
@@ -380,4 +389,42 @@ func (c *Client) TranscribeAudio(ctx context.Context, req *AudioRequest) (*Audio
 		Model:   model,
 		Latency: time.Since(start),
 	}, nil
+}
+
+// Vision performs a multimodal vision analysis request against /chat/completions.
+func (c *Client) Vision(ctx context.Context, req *VisionRequest) (*ChatResponse, error) {
+	if req == nil {
+		return nil, errors.New("ai: vision request cannot be nil")
+	}
+
+	model := req.Model
+	if model == "" {
+		model = c.defaultVisionModel
+	}
+
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		prompt = "Опиши подробно, что изображено на картинке. Если на ней присутствует текст, приведи точную расшифровку (OCR)."
+	}
+
+	var userMsg ChatMessage
+	if len(req.ImageBytes) > 0 {
+		userMsg = NewMultimodalMessageWithBytes(prompt, req.MimeType, req.ImageBytes)
+	} else if req.ImageURL != "" {
+		userMsg = NewMultimodalMessage(prompt, req.ImageURL)
+	} else {
+		return nil, errors.New("ai: either ImageBytes or ImageURL must be provided for vision")
+	}
+
+	messages := []ChatMessage{
+		NewTextMessage(RoleSystem, "Ты эксперт по компьютерному зрению и анализу изображений. Внимательно изучай детали картинок и давай четкие, структурированные ответы на русском языке."),
+		userMsg,
+	}
+
+	return c.Chat(ctx, &ChatRequest{
+		Model:       model,
+		Messages:    messages,
+		Temperature: req.Temperature,
+		MaxTokens:   req.MaxTokens,
+	})
 }

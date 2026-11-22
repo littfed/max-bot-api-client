@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,20 +13,17 @@ import (
 
 // RegisterVisionHandlers registers the vision recognition handler for image attachments.
 func RegisterVisionHandlers(b *bot.Bot, gmaClient *gma.Client, sm *gma.SessionManager, logger *slog.Logger) {
-	// Match any incoming message that has an image attachment
-	b.Router().OnMessage(func(c *bot.Context) error {
-		msg := c.Message()
-		if msg == nil {
+	// Match incoming messages that contain an image attachment
+	b.OnImage(func(c *bot.Context) error {
+		imageURL, _ := c.ImageURL()
+		imgBytes, _, _ := c.ImageBytes()
+
+		if imageURL == "" && len(imgBytes) == 0 {
 			return nil
 		}
 
-		imageURL := extractImageURL(msg)
-		if imageURL == "" {
-			return nil // No image attached, let other handlers process
-		}
-
-		prompt := strings.TrimSpace(msg.Body.Text)
-		if prompt == "" {
+		prompt := strings.TrimSpace(c.Text())
+		if prompt == "" || prompt == "Распознай картинку" || prompt == "Опиши фото" || prompt == "/vision" {
 			prompt = "Опиши подробно, что изображено на этом изображении. Если на картинке присутствует текст, приведи его полную и точную расшифровку (OCR)."
 		}
 
@@ -39,21 +37,30 @@ func RegisterVisionHandlers(b *bot.Bot, gmaClient *gma.Client, sm *gma.SessionMa
 			slog.Int64("user_id", userID),
 			slog.String("model", visionModel),
 			slog.String("image_url", imageURL),
+			slog.Int("image_bytes_len", len(imgBytes)),
 			slog.String("prompt", prompt),
 		)
+
+		var multimodalMsg gma.ChatMessage
+		if len(imgBytes) > 0 {
+			dataURI := fmt.Sprintf("data:image/jpeg;base64,%s", base64.StdEncoding.EncodeToString(imgBytes))
+			multimodalMsg = gma.NewMultimodalMessage(prompt, dataURI)
+		} else {
+			multimodalMsg = gma.NewMultimodalMessage(prompt, imageURL)
+		}
 
 		req := &gma.ChatCompletionRequest{
 			Model: visionModel,
 			Messages: []gma.ChatMessage{
 				gma.NewTextMessage(gma.RoleSystem, "Ты эксперт по компьютерному зрению и анализу изображений. Внимательно изучай детали картинок и давай четкие структурированные ответы на русском языке."),
-				gma.NewMultimodalMessage(prompt, imageURL),
+				multimodalMsg,
 			},
 		}
 
 		resp, err := gmaClient.ChatCompletion(c.Ctx(), req)
 		if err != nil {
 			logger.Error("ошибка распознавания изображения в GMA", slog.Any("error", err), slog.String("model", visionModel))
-			_, replyErr := c.Reply(fmt.Sprintf("⚠️ **Ошибка распознавания фото:** %s\n\nУбедитесь, что изображение доступно по прямой ссылке, или смените модель Vision в `/model`.", err.Error()))
+			_, replyErr := c.Reply(fmt.Sprintf("⚠️ **Ошибка распознавания фото:** %s\n\nУбедитесь, что изображение доступно, или смените модель Vision в `/model`.", err.Error()))
 			return replyErr
 		}
 
@@ -76,38 +83,11 @@ func extractImageURL(msg *maxbot.Message) string {
 	if msg == nil {
 		return ""
 	}
-
-	for _, att := range msg.Body.Attachments {
-		if att.Type != maxbot.UploadTypeImage && att.Type != "photo" {
-			continue
-		}
-
-		switch payload := att.Payload.(type) {
-		case map[string]any:
-			if u, ok := payload["url"].(string); ok && u != "" {
-				return u
-			}
-			if u, ok := payload["file_url"].(string); ok && u != "" {
-				return u
-			}
-			if u, ok := payload["src"].(string); ok && u != "" {
-				return u
-			}
-			if photos, ok := payload["photos"].(map[string]any); ok {
-				for _, v := range photos {
-					if pMap, ok := v.(map[string]any); ok {
-						if u, ok := pMap["url"].(string); ok && u != "" {
-							return u
-						}
-					}
-				}
-			}
-		case string:
-			if strings.HasPrefix(payload, "http://") || strings.HasPrefix(payload, "https://") {
-				return payload
-			}
-		}
+	c := &bot.Context{
+		Update: &maxbot.Update{
+			Message: msg,
+		},
 	}
-
-	return ""
+	u, _ := c.ImageURL()
+	return u
 }

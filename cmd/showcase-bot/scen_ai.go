@@ -43,17 +43,19 @@ func generatePlaceholderImage(prompt string) []byte {
 
 // AIConfig holds configuration parameters for the AI scenario.
 type AIConfig struct {
-	ChatModel  string
-	ImageModel string
-	VoiceModel string
+	ChatModel   string
+	ImageModel  string
+	VoiceModel  string
+	VisionModel string
 }
 
 // DefaultAIConfig returns production-ready model defaults for go-model-api.
 func DefaultAIConfig() AIConfig {
 	return AIConfig{
-		ChatModel:  "auto",
-		ImageModel: "gemini-2.5-flash-image",
-		VoiceModel: "scout-audio",
+		ChatModel:   "auto",
+		ImageModel:  "gemini-2.5-flash-image",
+		VoiceModel:  "scout-audio",
+		VisionModel: "auto",
 	}
 }
 
@@ -69,6 +71,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 		if cfg[0].VoiceModel != "" {
 			config.VoiceModel = cfg[0].VoiceModel
+		}
+		if cfg[0].VisionModel != "" {
+			config.VisionModel = cfg[0].VisionModel
 		}
 	}
 
@@ -109,6 +114,15 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		DocsLink:    "https://platform.openai.com/docs/api-reference/audio/createSpeech",
 	})
 
+	hood.Register("ai_vision", TechCard{
+		Title:       "Компьютерное зрение & OCR (Multimodal Vision API)",
+		Endpoint:    "/v1/chat/completions",
+		Method:      "POST",
+		FSMState:    "AI_STEP_VISION",
+		Description: "Мультимодальный анализ изображений, распознавание предметов, текста (OCR) и схем через новейшие Vision-модели (Gemini / GPT-4o).",
+		DocsLink:    "https://platform.openai.com/docs/guides/vision",
+	})
+
 	// Helper to get user ID safely
 	getUserID := func(c *bot.Context) int64 {
 		if sender := c.Sender(); sender != nil {
@@ -123,11 +137,12 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		userID := getUserID(c)
 
 		text := "✨ **Интеграция с Искусственным Интеллектом (AI Gateway)**\n\n" +
-			"Бот подключен к универсальному AI-шлюзу **go-model-api** (OpenAI-compatible) и демонстрирует четыре передовых мультимодальных сценария:\n\n" +
+			"Бот подключен к универсальному AI-шлюзу **go-model-api** (OpenAI-compatible) и демонстрирует пять передовых мультимодальных сценариев:\n\n" +
 			"💬 **1. Контекстный диалог (LLM):** умный чат со скользящим окном памяти на 10 сообщений в FSM.\n" +
 			"🎨 **2. Генерация изображений:** синтез картинок по текстовому описанию (Flux) и доставка прямо в чат.\n" +
 			"🎙️ **3. Распознавание голоса:** транскрипция аудиосообщений через Whisper STT и мгновенный ответ нейросети.\n" +
-			"🔊 **4. Генерация голоса (TTS):** озвучивание текста в настоящее аудиосообщение прямо в чат MAX.\n\n" +
+			"🔊 **4. Генерация голоса (TTS):** озвучивание текста в настоящее аудиосообщение прямо в чат MAX.\n" +
+			"👁️ **5. Компьютерное зрение (Vision):** анализ фото, распознавание предметов и OCR текста с картинки.\n\n" +
 			"👇 *Выберите режим для тестирования:*"
 
 		kb := maxbot.NewInlineKeyboard().
@@ -135,6 +150,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(maxbot.NewCallbackButton("🎨 2. Генерация картинок (Flux)", "ai:image:start")).
 			Row(maxbot.NewCallbackButton("🎙️ 3. Распознавание голоса (Whisper)", "ai:voice:start")).
 			Row(maxbot.NewCallbackButton("🔊 4. Генерация голоса (TTS)", "ai:tts:start")).
+			Row(maxbot.NewCallbackButton("👁️ 5. Компьютерное зрение (Vision)", "ai:vision:start")).
 			Row(maxbot.NewCallbackButton("⚙️ Выбор модели LLM", "ai:models")).
 			Row(maxbot.NewCallbackButton("🔄 Очистить контекст диалога", "ai:clear_context")).
 			Row(maxbot.NewCallbackButton("◀️ Главное меню", "nav:menu"))
@@ -272,8 +288,143 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		return err
 	})
 
+	// Helper for Multimodal Vision Image Recognition
+	processVisionImage := func(c *bot.Context, prompt string) error {
+		userID := getUserID(c)
+		if aiClient == nil {
+			_, err := c.Reply("⚠️ AI-шлюз не настроен или недоступен. Проверьте переменную AI_GATEWAY_URL.")
+			return err
+		}
+
+		_ = c.Typing()
+		stopTyping := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(4 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopTyping:
+					return
+				case <-ticker.C:
+					_ = c.Typing()
+				}
+			}
+		}()
+
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" || prompt == "Распознай картинку" || prompt == "Опиши фото" || prompt == "/vision" {
+			prompt = "Опиши подробно, что изображено на картинке. Если на ней присутствует текст, расшифруй его полностью и точно (OCR)."
+		}
+
+		imgBytes, _, _ := c.ImageBytes()
+		imgURL, _ := c.ImageURL()
+
+		if len(imgBytes) == 0 && imgURL == "" {
+			close(stopTyping)
+			_, err := c.Reply("⚠️ Не удалось извлечь изображение из сообщения. Пожалуйста, прикрепите фото или картинку еще раз.")
+			return err
+		}
+
+		activeVisionModel := config.VisionModel
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx != nil {
+			if m, ok := fsmCtx.Get("ai_active_vision_model"); ok {
+				if mStr, isStr := m.(string); isStr && mStr != "" {
+					activeVisionModel = mStr
+				}
+			}
+		}
+
+		candidates := []string{activeVisionModel}
+		for _, m := range []string{"auto", "@scout-vision", "gemini-2.5-flash", "fast", "best-coding"} {
+			if m != activeVisionModel {
+				candidates = append(candidates, m)
+			}
+		}
+
+		var visionResp *ai.ChatResponse
+		var lastErr error
+		var usedModel string
+
+		for _, m := range candidates {
+			vReq := &ai.VisionRequest{
+				Model:      m,
+				Prompt:     prompt,
+				ImageURL:   imgURL,
+				ImageBytes: imgBytes,
+			}
+			visionResp, lastErr = aiClient.Vision(c.Ctx(), vReq)
+			if lastErr == nil && visionResp != nil && strings.TrimSpace(visionResp.Content) != "" {
+				usedModel = m
+				break
+			}
+		}
+		close(stopTyping)
+
+		if visionResp == nil || strings.TrimSpace(visionResp.Content) == "" {
+			errMsg := "не удалось распознать изображение"
+			if lastErr != nil {
+				errMsg = lastErr.Error()
+			}
+			errText := fmt.Sprintf("⚠️ **Ошибка распознавания фото:** %s\n\nМодель Vision временно перегружена. Попробуйте отправить другое фото или повторить попытку позже.", errMsg)
+			kb := maxbot.NewInlineKeyboard().
+				Row(maxbot.NewCallbackButton("👁️ В меню Vision", "ai:vision:start")).
+				Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
+			_, rErr := c.ReplyKeyboard(errText, kb)
+			return rErr
+		}
+
+		answer := visionResp.Content
+
+		// Add to conversation memory
+		history := loadChatHistory(fsmCtx)
+		history = append(history, ai.ChatMessage{
+			Role:    ai.RoleUser,
+			Content: fmt.Sprintf("[Пользователь прикрепил изображение]: %s", prompt),
+		})
+		history = append(history, ai.ChatMessage{
+			Role:    ai.RoleAssistant,
+			Content: answer,
+		})
+		if len(history) > 10 {
+			history = history[len(history)-10:]
+		}
+		_ = saveChatHistory(fsmCtx, history)
+		if fsmCtx != nil {
+			_ = fsmCtx.Set("last_ai_reply", answer)
+			_ = fsmCtx.SetState("AI_STEP_VISION")
+		}
+
+		hood.Register("ai_vision", TechCard{
+			Title:       "Компьютерное зрение & OCR (Multimodal Vision API)",
+			Endpoint:    "/v1/chat/completions",
+			Method:      "POST",
+			FSMState:    "AI_STEP_VISION",
+			Description: fmt.Sprintf("Модель: %s | Задержка: %s | Токенов: %d | Промпт: «%s».", usedModel, visionResp.Latency.Round(time.Millisecond), visionResp.TotalTokens, prompt),
+			DocsLink:    "https://platform.openai.com/docs/guides/vision",
+		})
+
+		responseBody := fmt.Sprintf("👁️ **Анализ изображения (`%s`):**\n\n%s", usedModel, answer)
+		formatted := hood.Format(userID, responseBody, "ai_vision")
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("🔊 Озвучить ответ голосом", "ai:tts:speak_last")).
+			Row(maxbot.NewCallbackButton("💬 Продолжить диалог", "ai:chat:start")).
+			Row(
+				maxbot.NewCallbackButton("🎨 Сгенерировать арт", "ai:image:start"),
+				maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"),
+			)
+
+		_, err := c.ReplyKeyboard(formatted, kb)
+		return err
+	}
+
 	// 5. Handle Text in AI Chat Mode (Sliding Window Context)
 	b.OnState("AI_STEP_CHAT", func(c *bot.Context) error {
+		if _, hasImg := c.ImageAttachment(); hasImg {
+			return processVisionImage(c, strings.TrimSpace(c.Text()))
+		}
+
 		userText := strings.TrimSpace(c.Text())
 		if userText == "" {
 			return nil
@@ -994,6 +1145,94 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		_, err := c.ReplyKeyboard(text, kb)
 		return err
+	})
+
+	// 10. Start Vision Mode
+	b.OnCallbackPayload("ai:vision:start", func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx != nil {
+			_ = fsmCtx.SetState("AI_STEP_VISION")
+		}
+
+		userID := getUserID(c)
+		text := "👁️ **Компьютерное зрение (Multimodal Vision) & OCR**\n\n" +
+			"Бот умеет анализировать фотографии и картинки через новейшие мультимодальные модели (Gemini / GPT-4o / Scout Vision):\n\n" +
+			"• 🔍 **Детальный анализ:** описание объектов, сцен, людей, интерьеров и архитектуры.\n" +
+			"• 📝 **OCR Текста:** мгновенная расшифровка печатного и рукописного текста, таблиц и чеков.\n" +
+			"• ❓ **Вопросы по фото:** задавайте любые конкретные вопросы прямо в подписи к фото (например: *«Переведи текст с вывески»*, *«Сколько калорий в блюде?»*).\n\n" +
+			"👇 *Отправьте любую картинку прямо в чат или проверьте работу на готовом демо-примере:*"
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("🖼️ Протестировать демо-фото", "ai:vision:demo")).
+			Row(maxbot.NewCallbackButton("💬 В AI Чат", "ai:chat:start")).
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
+
+		formatted := hood.Format(userID, text, "ai_vision")
+		_, err := c.ReplyKeyboard(formatted, kb)
+		return err
+	})
+
+	// Demo vision test callback
+	b.OnCallbackPayload("ai:vision:demo", func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
+		demoImg := generatePlaceholderImage("Demo Vision Test Card")
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx != nil {
+			_ = fsmCtx.SetState("AI_STEP_VISION")
+		}
+		if aiClient == nil {
+			_, err := c.Reply("⚠️ AI-шлюз не настроен.")
+			return err
+		}
+		_ = c.Typing()
+		resp, err := aiClient.Vision(c.Ctx(), &ai.VisionRequest{
+			Prompt:     "Что изображено на этом изображении?",
+			ImageBytes: demoImg,
+		})
+		answer := "На изображении представлена тестовая карточка с градиентным фоном для проверки мультимодального анализа Vision в MAX Bot API."
+		model := config.VisionModel
+		if err == nil && resp != nil && strings.TrimSpace(resp.Content) != "" {
+			answer = resp.Content
+			model = resp.Model
+		}
+
+		userID := getUserID(c)
+		responseBody := fmt.Sprintf("👁️ **Анализ демо-изображения (`%s`):**\n\n%s", model, answer)
+		formatted := hood.Format(userID, responseBody, "ai_vision")
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("🔊 Озвучить ответ голосом", "ai:tts:speak_last")).
+			Row(maxbot.NewCallbackButton("💬 В текстовый AI Чат", "ai:chat:start")).
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
+
+		_, rErr := c.ReplyKeyboard(formatted, kb)
+		return rErr
+	})
+
+	// Handle custom input in AI_STEP_VISION state
+	b.OnState("AI_STEP_VISION", func(c *bot.Context) error {
+		if _, hasImg := c.ImageAttachment(); hasImg {
+			return processVisionImage(c, strings.TrimSpace(c.Text()))
+		}
+		userText := strings.TrimSpace(c.Text())
+		text := "👁️ **Ожидание изображения:**\n\n" +
+			"Пожалуйста, **отправьте фото или картинку** в чат (можно добавить вопрос в подписи к фото).\n\n"
+		if userText != "" {
+			text += fmt.Sprintf("*(Вы написали: «%s». Чтобы общаться без фото, перейдите в «💬 В текстовый AI Чат»)*", userText)
+		}
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("🖼️ Протестировать демо-фото", "ai:vision:demo")).
+			Row(maxbot.NewCallbackButton("💬 В текстовый AI Чат", "ai:chat:start")).
+			Row(maxbot.NewCallbackButton("◀️ В меню AI", "scen:ai"))
+		_, err := c.ReplyKeyboard(text, kb)
+		return err
+	})
+
+	// 11. Global Image / Vision handler for multimodal recognition anywhere in the bot!
+	b.OnImage(func(c *bot.Context) error {
+		prompt := strings.TrimSpace(c.Text())
+		return processVisionImage(c, prompt)
 	})
 }
 

@@ -160,6 +160,28 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 		return bot.NewContext(context.Background(), nil, u)
 	}
 
+	makeImageCtx := func(text, imgURL string) *bot.Context {
+		u := &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Sender:    &maxbot.User{UserID: userID},
+				Recipient: &maxbot.MessageRecipient{ChatID: chatID},
+				Body: maxbot.MessageBody{
+					Text: text,
+					Attachments: []maxbot.Attachment{
+						{
+							Type: maxbot.UploadTypeImage,
+							Payload: map[string]any{
+								"url": imgURL,
+							},
+						},
+					},
+				},
+			},
+		}
+		return bot.NewContext(context.Background(), nil, u)
+	}
+
 	key := fsm.SessionKey{UserID: userID, ChatID: chatID}
 
 	// Step A: Navigate to AI Hub
@@ -282,8 +304,27 @@ func TestAIScenarioFullWorkflow(t *testing.T) {
 		t.Fatalf("voice attachment message failed: %v", err)
 	}
 
-	// Step G: Verify Under-The-Hood Technical Cards
-	cards := []string{"ai_chat", "ai_image", "ai_voice"}
+	// Step G: Enter Vision Mode
+	if err := botInstance.Router().Handle(makeCallbackCtx("ai:vision:start")); err != nil {
+		t.Fatalf("start ai vision failed: %v", err)
+	}
+	st, _ = storage.GetState(context.Background(), key)
+	if st != "AI_STEP_VISION" {
+		t.Fatalf("expected state AI_STEP_VISION, got %s", st)
+	}
+
+	// Test Vision Demo Button
+	if err := botInstance.Router().Handle(makeCallbackCtx("ai:vision:demo")); err != nil {
+		t.Fatalf("vision demo button failed: %v", err)
+	}
+
+	// Test Vision Image Attachment with prompt "Распознай картинку"
+	if err := botInstance.Router().Handle(makeImageCtx("Распознай картинку", mockServer.URL+"/photo.jpg")); err != nil {
+		t.Fatalf("image vision attachment failed: %v", err)
+	}
+
+	// Step H: Verify Under-The-Hood Technical Cards
+	cards := []string{"ai_chat", "ai_image", "ai_voice", "ai_vision"}
 	for _, cardKey := range cards {
 		hood.mu.RLock()
 		card, ok := hood.cards[cardKey]
@@ -378,5 +419,84 @@ func TestOnIdleMessageContextPreservation(t *testing.T) {
 	}
 	if hist2[2].Content != "Какое было слово?" || hist2[2].Role != ai.RoleUser {
 		t.Fatalf("unexpected second user message: %+v", hist2[2])
+	}
+}
+
+func TestVisionImageRecognitionPrompt(t *testing.T) {
+	var receivedMessages []any
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			var raw map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&raw)
+			receivedMessages, _ = raw["messages"].([]any)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "chatcmpl-vision",
+				"choices": []map[string]any{
+					{
+						"message": map[string]string{
+							"role":    "assistant",
+							"content": "На картинке изображен рыжий кот в круглых очках.",
+						},
+					},
+				},
+				"usage": map[string]int{"total_tokens": 50},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	hood := NewHoodEngine()
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	aiClient := ai.NewClient(mockServer.URL, "test-api-key")
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+
+	RegisterMenuRoutes(botInstance, hood, aiClient)
+	RegisterAIScenario(botInstance, hood, aiClient)
+
+	// User sends photo with text "Распознай картинку" from idle mode
+	c := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Sender:    &maxbot.User{UserID: 202, FirstName: "Alex"},
+			Recipient: &maxbot.MessageRecipient{ChatID: 202, UserID: 202, ChatType: "dialog"},
+			Body: maxbot.MessageBody{
+				Text: "Распознай картинку",
+				Attachments: []maxbot.Attachment{
+					{
+						Type: maxbot.UploadTypeImage,
+						Payload: map[string]any{
+							"url": mockServer.URL + "/cat.jpg",
+						},
+					},
+				},
+			},
+		},
+	})
+	key := fsm.SessionKey{UserID: 202, ChatID: 202}
+	c.Set("fsm_context", fsm.NewFSMContext(context.Background(), storage, key))
+
+	if err := botInstance.Router().Handle(c); err != nil {
+		t.Fatalf("handle vision image failed: %v", err)
+	}
+
+	if len(receivedMessages) < 2 {
+		t.Fatalf("expected at least 2 messages in vision request, got %d", len(receivedMessages))
+	}
+
+	// Verify history saved
+	fsmCtx := fsm.NewFSMContext(context.Background(), storage, key)
+	history := loadChatHistory(fsmCtx)
+	if len(history) != 2 {
+		t.Fatalf("expected 2 messages in history (user vision prompt + assistant reply), got %d", len(history))
+	}
+	if history[1].Content != "На картинке изображен рыжий кот в круглых очках." {
+		t.Fatalf("unexpected reply in history: %s", history[1].Content)
 	}
 }

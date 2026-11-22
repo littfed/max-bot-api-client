@@ -72,8 +72,8 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		fsm.WithOnCancel(func(c *bot.Context) error {
 			_ = c.AnswerNotification("Заказ отменен")
 			kb := maxbot.NewInlineKeyboard().
-				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
-			_, err := c.ReplyKeyboard("❌ Оформление заказа отменено. Вы можете начать заново в любой момент.", kb)
+				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu").WithIntent(maxbot.IntentPrimary))
+			_, err := c.EditOrReplyKeyboard("❌ Оформление заказа отменено. Вы можете начать заново в любой момент.", kb)
 			return err
 		}),
 		fsm.WithOnTimeout(func(c *bot.Context) error {
@@ -123,7 +123,7 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			Row(maxbot.NewIntentCallbackButton("🧪 Симулировать оплату (Sandbox)", sandboxPayload, maxbot.IntentPositive)).
 			Row(
 				maxbot.NewCallbackButton("↩️ Назад", "wizard:back"),
-				maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel"),
+				maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel").WithIntent(maxbot.IntentNegative),
 			)
 
 		summary := fmt.Sprintf("📦 **Подтверждение заказа #%s**\n\n"+
@@ -134,7 +134,7 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			orderID, prod.Icon, prod.Name, prod.Price, deliveryText)
 
 		formatted := hood.Format(userID, summary, "ecom_sbp")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		if err != nil {
 			return err
 		}
@@ -175,7 +175,7 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			"Выберите товар для оформления заказа:"
 
 		formatted := hood.Format(userID, text, "ecom_catalog")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 
@@ -200,14 +200,14 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		_ = c.AnswerNotification(fmt.Sprintf("Выбрано: %s", prod.Name))
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("🏢 Заберу самовывозом", "ecom:pickup")).
-			Row(maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel"))
+			Row(maxbot.NewCallbackButton("🏢 Заберу самовывозом", "ecom:pickup").WithIntent(maxbot.IntentPrimary)).
+			Row(maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel").WithIntent(maxbot.IntentNegative))
 
 		msg := fmt.Sprintf("Вы выбрали: **%s %s** (%.0f ₽)\n_%s_\n\n"+
 			"📍 **Шаг 1 из 2:** Введите адрес доставки ответным сообщением (или нажмите «Заберу самовывозом»):",
 			prod.Icon, prod.Name, prod.Price, prod.Desc)
 
-		_, err := c.ReplyKeyboard(msg, kb)
+		_, err := c.EditOrReplyKeyboard(msg, kb)
 		return err
 	})
 
@@ -232,8 +232,11 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		amount, _ := strconv.ParseFloat(parts[3], 64)
 		userID, _ := strconv.ParseInt(parts[5], 10, 64)
 
+		// Anti-Ghost-Click: clear the payment keyboard on the previous message
+		_, _ = c.ClearKeyboard()
+
 		_ = c.AnswerCallback(&maxbot.AnswerCallbackRequest{
-			Notification: "🧪 Sandbox: оплата успешно симулирована!",
+			Notification: "🧪 Sandbox: оплата успешно подтверждена!",
 		})
 
 		// Reset FSM session upon completion
@@ -250,7 +253,7 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			orderID, amount, time.Now().Format("02.01.2006 15:04:05"))
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu").WithIntent(maxbot.IntentPrimary))
 
 		formatted := hood.Format(userID, receiptText, "ecom_webhook")
 		_, err := c.ReplyKeyboard(formatted, kb)

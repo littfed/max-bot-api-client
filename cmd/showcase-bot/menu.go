@@ -20,16 +20,16 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 
 	kb := maxbot.NewInlineKeyboard().
 		Row(
-			maxbot.NewCallbackButton("🛍️ 1. Магазин & СБП Checkout", "scen:ecom"),
+			maxbot.NewCallbackButton("🛍️ 1. Магазин & СБП Checkout", "scen:ecom").WithIntent(maxbot.IntentPrimary),
 		).
 		Row(
-			maxbot.NewCallbackButton("📅 2. Запись на услуги & Контакт", "scen:booking"),
+			maxbot.NewCallbackButton("📅 2. Запись на услуги & Контакт", "scen:booking").WithIntent(maxbot.IntentPrimary),
 		).
 		Row(
 			maxbot.NewCallbackButton("🧠 3. Интерактивный Квиз & TTK", "scen:quiz"),
 		).
 		Row(
-			maxbot.NewCallbackButton("📱 4. Mini App (HTML5 WebView)", "scen:webapp"),
+			maxbot.NewCallbackButton("📱 4. Mini App (HTML5 WebView)", "scen:webapp").WithIntent(maxbot.IntentPositive),
 		).
 		Row(
 			maxbot.NewCallbackButton("🛡️ 5. Модерация & Капча-гейт", "scen:guard"),
@@ -50,7 +50,7 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 		maxbot.NewCallbackButton("📊 Метрики", "nav:stats"),
 	).
 		Row(
-			maxbot.NewCallbackButton("🔄 Сбросить сессию", "nav:reset"),
+			maxbot.NewCallbackButton("🔄 Сбросить сессию", "nav:reset").WithIntent(maxbot.IntentNegative),
 			maxbot.NewCallbackButton("ℹ️ О витрине", "nav:info"),
 		)
 
@@ -81,7 +81,7 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 
 		kb := BuildMainMenuKeyboard(hood, userID)
 		formatted := hood.Format(userID, greeting, "main_menu")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	}
 
@@ -145,6 +145,7 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 	})
 
 	b.OnCallbackPayload("nav:info", func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
 		infoText := "🤖 **Флагманский бот-витрина MAX Bot API**\n\n" +
 			"• **Библиотека:** `github.com/littfed/max-bot-api-client`\n" +
 			"• **TLS:** Встроенные сертификаты Минцифры РФ (Zero-Config)\n" +
@@ -155,10 +156,14 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 			"• **Телеметрия:** OpenMetrics & Prometheus экспортер (/metrics)"
 
 		kb := maxbot.NewInlineKeyboard().
-			Row(maxbot.NewCallbackButton("◀️ Назад в меню", "nav:menu"))
+			Row(maxbot.NewCallbackButton("◀️ Назад в меню", "nav:menu").WithIntent(maxbot.IntentPrimary))
 
-		_, err := c.ReplyKeyboard(infoText, kb)
-		_ = c.AnswerCallback(nil)
+		userID := int64(0)
+		if cb := c.Callback(); cb != nil && cb.User != nil {
+			userID = cb.User.UserID
+		}
+		formatted := hood.Format(userID, infoText, "main_menu")
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 

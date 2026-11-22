@@ -2,8 +2,12 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 )
@@ -111,6 +115,180 @@ func (c *Context) AudioAttachment() (*maxbot.Attachment, bool) {
 		}
 	}
 	return nil, false
+}
+
+// ImageAttachment returns the first image or photo attachment from the message, if present.
+func (c *Context) ImageAttachment() (*maxbot.Attachment, bool) {
+	msg := c.Message()
+	if msg == nil {
+		return nil, false
+	}
+	for _, att := range msg.Body.Attachments {
+		if att.Type == maxbot.UploadTypeImage || att.Type == "photo" || att.Type == "image" {
+			return &att, true
+		}
+		if att.Type == maxbot.UploadTypeFile || att.Type == "file" {
+			if pMap, ok := att.Payload.(map[string]any); ok {
+				name, _ := pMap["name"].(string)
+				nameLower := strings.ToLower(name)
+				if strings.HasSuffix(nameLower, ".jpg") || strings.HasSuffix(nameLower, ".jpeg") ||
+					strings.HasSuffix(nameLower, ".png") || strings.HasSuffix(nameLower, ".webp") ||
+					strings.HasSuffix(nameLower, ".gif") || strings.HasSuffix(nameLower, ".bmp") ||
+					strings.HasSuffix(nameLower, ".heic") || strings.HasSuffix(nameLower, ".tiff") {
+					return &att, true
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
+// ImageURL returns the direct download or preview URL of the attached image, if available.
+func (c *Context) ImageURL() (string, bool) {
+	att, ok := c.ImageAttachment()
+	if !ok || att == nil {
+		return "", false
+	}
+	u := extractURLFromAttachmentPayload(att.Payload)
+	if u != "" {
+		return u, true
+	}
+	return "", false
+}
+
+// ImageBytes downloads or decodes the binary image payload from the message attachments.
+func (c *Context) ImageBytes() ([]byte, string, error) {
+	att, ok := c.ImageAttachment()
+	if !ok || att == nil {
+		return nil, "", fmt.Errorf("no image attachment found in message")
+	}
+
+	filename := "image.jpg"
+	if pMap, ok := att.Payload.(map[string]any); ok {
+		if n, ok := pMap["name"].(string); ok && n != "" {
+			filename = n
+		}
+		// If base64 payload is already present
+		for _, b64Key := range []string{"b64_json", "base64", "data"} {
+			if b64Str, ok := pMap[b64Key].(string); ok && b64Str != "" {
+				cleanB64 := b64Str
+				if commaIdx := strings.Index(cleanB64, ","); commaIdx != -1 && strings.Contains(cleanB64[:commaIdx], "base64") {
+					cleanB64 = cleanB64[commaIdx+1:]
+				}
+				data, err := base64.StdEncoding.DecodeString(cleanB64)
+				if err == nil && len(data) > 0 {
+					return data, filename, nil
+				}
+			}
+		}
+	}
+
+	u := extractURLFromAttachmentPayload(att.Payload)
+	if u == "" {
+		return nil, "", fmt.Errorf("cannot extract image url or data from payload")
+	}
+
+	// If data URI
+	if strings.HasPrefix(u, "data:") {
+		commaIdx := strings.Index(u, ",")
+		if commaIdx != -1 {
+			cleanB64 := u[commaIdx+1:]
+			data, err := base64.StdEncoding.DecodeString(cleanB64)
+			if err == nil && len(data) > 0 {
+				return data, filename, nil
+			}
+		}
+	}
+
+	// Try using bot client DownloadFile first (handles Russian TLS certificates and bot auth)
+	if c.client != nil {
+		data, err := c.client.DownloadFile(c.Ctx(), u)
+		if err == nil && len(data) > 0 {
+			return data, filename, nil
+		}
+	}
+
+	// Fallback to standard http.Get with timeout
+	httpClient := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequestWithContext(c.Ctx(), http.MethodGet, u, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create http request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to download image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("image download returned status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read image body: %w", err)
+	}
+	return data, filename, nil
+}
+
+// extractURLFromAttachmentPayload extracts an image URL from an attachment payload.
+func extractURLFromAttachmentPayload(payload any) string {
+	if payload == nil {
+		return ""
+	}
+	switch v := payload.(type) {
+	case string:
+		if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "data:image/") {
+			return v
+		}
+	case map[string]any:
+		for _, key := range []string{"url", "file_url", "src", "download_url", "link", "preview_url", "full_url"} {
+			if u, ok := v[key].(string); ok && u != "" {
+				return u
+			}
+		}
+		// Check "photos" as []any
+		if photosSlice, ok := v["photos"].([]any); ok {
+			for i := len(photosSlice) - 1; i >= 0; i-- {
+				if pMap, ok := photosSlice[i].(map[string]any); ok {
+					for _, key := range []string{"url", "file_url", "src", "link"} {
+						if u, ok := pMap[key].(string); ok && u != "" {
+							return u
+						}
+					}
+				}
+			}
+		}
+		// Check "photos" as map[string]any
+		if photosMap, ok := v["photos"].(map[string]any); ok {
+			for _, val := range photosMap {
+				if pMap, ok := val.(map[string]any); ok {
+					for _, key := range []string{"url", "file_url", "src", "link"} {
+						if u, ok := pMap[key].(string); ok && u != "" {
+							return u
+						}
+					}
+				}
+			}
+		}
+		// Check "photo" as map[string]any
+		if pMap, ok := v["photo"].(map[string]any); ok {
+			for _, key := range []string{"url", "file_url", "src", "link"} {
+				if u, ok := pMap[key].(string); ok && u != "" {
+					return u
+				}
+			}
+		}
+		// Check "file" as map[string]any
+		if fMap, ok := v["file"].(map[string]any); ok {
+			for _, key := range []string{"url", "file_url", "src", "download_url"} {
+				if u, ok := fMap[key].(string); ok && u != "" {
+					return u
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // IsVoiceNoteAttempt returns true if this update represents a microphone voice note event from MAX Messenger.
@@ -259,6 +437,74 @@ func (c *Context) SendChatAction(action string) error {
 // Typing sends the "typing_on" action to display the typing indicator.
 func (c *Context) Typing() error {
 	return c.SendChatAction(maxbot.ActionTypingOn)
+}
+
+// EditMessage edits the message using an explicit EditMessageRequest.
+func (c *Context) EditMessage(req *maxbot.EditMessageRequest) (*maxbot.Message, error) {
+	if c.client == nil {
+		return &maxbot.Message{}, nil
+	}
+	msg := c.Message()
+	if msg == nil || msg.Body.MID == "" {
+		return nil, fmt.Errorf("cannot edit message: message ID is empty")
+	}
+	return c.client.EditMessage(c.Ctx(), msg.Body.MID, req)
+}
+
+// Edit edits the text of the current message (e.g. from an incoming button callback).
+func (c *Context) Edit(text string) (*maxbot.Message, error) {
+	return c.EditKeyboard(text, nil)
+}
+
+// EditKeyboard edits the text and inline keyboard of the current message in place.
+func (c *Context) EditKeyboard(text string, kb *maxbot.InlineKeyboard) (*maxbot.Message, error) {
+	if c.client == nil {
+		return &maxbot.Message{}, nil
+	}
+	msg := c.Message()
+	if msg == nil || msg.Body.MID == "" {
+		return nil, fmt.Errorf("cannot edit message: message ID is empty")
+	}
+	req := &maxbot.EditMessageRequest{
+		Text:   text,
+		Format: "markdown",
+	}
+	if kb != nil {
+		req.Attachments = []maxbot.Attachment{kb.ToAttachment()}
+	}
+	return c.client.EditMessage(c.Ctx(), msg.Body.MID, req)
+}
+
+// EditOrReplyKeyboard attempts to edit the current message in place if a message ID is available
+// (e.g. from an incoming button callback). If editing is not applicable (e.g. initial command /start)
+// or fails, it falls back to sending a new message with ReplyKeyboard.
+func (c *Context) EditOrReplyKeyboard(text string, kb *maxbot.InlineKeyboard) (*maxbot.Message, error) {
+	if msg := c.Message(); msg != nil && msg.Body.MID != "" {
+		res, err := c.EditKeyboard(text, kb)
+		if err == nil {
+			return res, nil
+		}
+	}
+	return c.ReplyKeyboard(text, kb)
+}
+
+// ClearKeyboard removes the inline keyboard from the current message, keeping its existing text.
+func (c *Context) ClearKeyboard() (*maxbot.Message, error) {
+	if c.client == nil {
+		return &maxbot.Message{}, nil
+	}
+	msg := c.Message()
+	if msg == nil || msg.Body.MID == "" {
+		return nil, fmt.Errorf("cannot clear keyboard: message ID is empty")
+	}
+	req := &maxbot.EditMessageRequest{
+		Text:   msg.Body.Text,
+		Format: msg.Body.Format,
+	}
+	if req.Format == "" {
+		req.Format = "markdown"
+	}
+	return c.client.EditMessage(c.Ctx(), msg.Body.MID, req)
 }
 
 // Command parses the message text as a command (e.g. "/ping arg1 arg2").

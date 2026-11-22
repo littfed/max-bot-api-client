@@ -164,10 +164,10 @@ func RegisterQuizScenario(b *bot.Bot, hood *HoodEngine) {
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewClipboardButton("📋 Скопировать результат", shareText)).
-			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu").WithIntent(maxbot.IntentPrimary))
 
 		formatted := hood.Format(userID, resultMsg, "quiz_clipboard")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 }
@@ -180,7 +180,7 @@ func sendQuizQuestion(c *bot.Context, hood *HoodEngine, qIdx int) error {
 		payload := fmt.Sprintf("quiz:ans:%d:%d", qIdx, i)
 		kb.Row(maxbot.NewCallbackButton(opt, payload))
 	}
-	kb.Row(maxbot.NewCallbackButton("❌ Прервать квиз", "nav:menu"))
+	kb.Row(maxbot.NewCallbackButton("❌ Прервать квиз", "nav:menu").WithIntent(maxbot.IntentNegative))
 
 	userID := int64(0)
 	if sender := c.Sender(); sender != nil {
@@ -191,6 +191,6 @@ func sendQuizQuestion(c *bot.Context, hood *HoodEngine, qIdx int) error {
 		qIdx+1, len(demoQuizQuestions), q.Question)
 
 	formatted := hood.Format(userID, text, "quiz_buttons")
-	_, err := c.ReplyKeyboard(formatted, kb)
+	_, err := c.EditOrReplyKeyboard(formatted, kb)
 	return err
 }

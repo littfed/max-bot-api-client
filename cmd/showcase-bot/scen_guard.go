@@ -73,7 +73,7 @@ func RegisterGuardScenario(b *bot.Bot, hood *HoodEngine, client *maxbot.Client) 
 			"💡 *Выберите действие для тестирования:* "
 
 		formatted := hood.Format(userID, text, "guard_captcha")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 
@@ -102,7 +102,7 @@ func RegisterGuardScenario(b *bot.Bot, hood *HoodEngine, client *maxbot.Client) 
 			userName, userID)
 
 		formatted := hood.Format(userID, text, "guard_captcha")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 

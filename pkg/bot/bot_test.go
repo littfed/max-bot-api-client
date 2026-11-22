@@ -312,3 +312,201 @@ func TestContextAudioAttachmentFile(t *testing.T) {
 		t.Fatal("expected AudioAttachment to detect .ogg file attachment")
 	}
 }
+
+func TestContextEditingMethods(t *testing.T) {
+	var lastMethod string
+	var lastPath string
+	var lastBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastMethod = r.Method
+		lastPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&lastBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": map[string]any{
+				"body": map[string]any{
+					"mid":  "mid_123",
+					"text": "updated",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client, err := maxbot.NewClient("test-token", maxbot.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	c := &Context{
+		client: client,
+		Update: &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCallback,
+			Callback: &maxbot.Callback{
+				CallbackID: "cb_999",
+				Message: &maxbot.Message{
+					Body: maxbot.MessageBody{
+						MID:  "mid_123",
+						Text: "initial",
+					},
+				},
+			},
+		},
+	}
+
+	// 1. Test EditKeyboard
+	kb := maxbot.NewInlineKeyboard().Row(maxbot.NewCallbackButton("btn", "payload"))
+	msg, err := c.EditKeyboard("new text", kb)
+	if err != nil {
+		t.Fatalf("EditKeyboard failed: %v", err)
+	}
+	if msg == nil || msg.Body.MID != "mid_123" {
+		t.Errorf("expected mid_123, got %+v", msg)
+	}
+	if lastMethod != http.MethodPut || lastPath != "/messages" {
+		t.Errorf("expected PUT /messages, got %s %s", lastMethod, lastPath)
+	}
+
+	// 2. Test EditOrReplyKeyboard in-place
+	msg, err = c.EditOrReplyKeyboard("edited in place", kb)
+	if err != nil {
+		t.Fatalf("EditOrReplyKeyboard failed: %v", err)
+	}
+	if msg == nil || msg.Body.MID != "mid_123" {
+		t.Errorf("expected mid_123, got %+v", msg)
+	}
+
+	// 3. Test ClearKeyboard
+	msg, err = c.ClearKeyboard()
+	if err != nil {
+		t.Fatalf("ClearKeyboard failed: %v", err)
+	}
+	if msg == nil {
+		t.Errorf("expected valid message from ClearKeyboard")
+	}
+}
+
+func TestContextImageAttachmentAndRouting(t *testing.T) {
+	// 1. Direct image upload attachment
+	c1 := &Context{
+		Update: &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Body: maxbot.MessageBody{
+					Text: "Распознай картинку",
+					Attachments: []maxbot.Attachment{
+						{
+							Type: maxbot.UploadTypeImage,
+							Payload: map[string]any{
+								"url": "https://example.com/photo.jpg",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	att1, hasImg1 := c1.ImageAttachment()
+	if !hasImg1 || att1 == nil {
+		t.Fatal("expected ImageAttachment to detect image attachment")
+	}
+	u1, ok1 := c1.ImageURL()
+	if !ok1 || u1 != "https://example.com/photo.jpg" {
+		t.Fatalf("expected url https://example.com/photo.jpg, got %s", u1)
+	}
+
+	// 2. Photos array variant
+	c2 := &Context{
+		Update: &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Body: maxbot.MessageBody{
+					Attachments: []maxbot.Attachment{
+						{
+							Type: "photo",
+							Payload: map[string]any{
+								"photos": []any{
+									map[string]any{"url": "https://example.com/thumb.jpg"},
+									map[string]any{"url": "https://example.com/large.jpg"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	att2, hasImg2 := c2.ImageAttachment()
+	if !hasImg2 || att2 == nil {
+		t.Fatal("expected ImageAttachment to detect photo attachment")
+	}
+	u2, ok2 := c2.ImageURL()
+	if !ok2 || u2 != "https://example.com/large.jpg" {
+		t.Fatalf("expected highest resolution url https://example.com/large.jpg, got %s", u2)
+	}
+
+	// 3. File attachment with image extension (.png)
+	c3 := &Context{
+		Update: &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Body: maxbot.MessageBody{
+					Attachments: []maxbot.Attachment{
+						{
+							Type: "file",
+							Payload: map[string]any{
+								"name": "screenshot.png",
+								"url":  "https://example.com/screenshot.png",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	att3, hasImg3 := c3.ImageAttachment()
+	if !hasImg3 || att3 == nil {
+		t.Fatal("expected ImageAttachment to detect .png file as image")
+	}
+
+	// 4. Base64 payload decoding via ImageBytes
+	c4 := &Context{
+		Update: &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Body: maxbot.MessageBody{
+					Attachments: []maxbot.Attachment{
+						{
+							Type: "image",
+							Payload: map[string]any{
+								"b64_json": "aGVsbG8gd29ybGQ=",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	bytes4, _, err4 := c4.ImageBytes()
+	if err4 != nil || string(bytes4) != "hello world" {
+		t.Fatalf("expected 'hello world', got %s, err: %v", string(bytes4), err4)
+	}
+
+	// 5. Router OnImage matching
+	b := NewWithClient(nil)
+	var handledImage bool
+	b.OnImage(func(c *Context) error {
+		handledImage = true
+		return nil
+	})
+
+	err := b.Router().Handle(c1)
+	if err != nil {
+		t.Fatalf("router handle failed: %v", err)
+	}
+	if !handledImage {
+		t.Fatal("expected OnImage handler to be invoked")
+	}
+}

@@ -111,7 +111,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			)
 
 		formatted := hood.Format(userID, body, "chan_admin")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 

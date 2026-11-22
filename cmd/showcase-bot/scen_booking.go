@@ -78,8 +78,8 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 		fsm.WithOnCancel(func(c *bot.Context) error {
 			_ = c.AnswerNotification("Запись отменена")
 			kb := maxbot.NewInlineKeyboard().
-				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
-			_, err := c.ReplyKeyboard("❌ Запись на услугу отменена.", kb)
+				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu").WithIntent(maxbot.IntentPrimary))
+			_, err := c.EditOrReplyKeyboard("❌ Запись на услугу отменена.", kb)
 			return err
 		}),
 	)
@@ -163,7 +163,7 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 			"Выберите желаемую услугу:"
 
 		formatted := hood.Format(userID, text, "booking_slots")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 
@@ -193,14 +193,14 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 		}
 		kb.Row(
 			maxbot.NewCallbackButton("↩️ К списку услуг", "scen:booking"),
-			maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel"),
+			maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel").WithIntent(maxbot.IntentNegative),
 		)
 
 		text := fmt.Sprintf("Вы выбрали: **%s %s** (%s)\n\n"+
 			"🗓 **Шаг 1 из 2:** Выберите удобный день и время визита:",
 			srv.Icon, srv.Name, srv.Duration)
 
-		_, err := c.ReplyKeyboard(text, kb)
+		_, err := c.EditOrReplyKeyboard(text, kb)
 		return err
 	})
 
@@ -229,8 +229,8 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewContactButton("📱 Поделиться номером телефона")).
-			Row(maxbot.NewCallbackButton("⚡ Использовать +7 (999) 123-45-67", "booking:quick_phone")).
-			Row(maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel"))
+			Row(maxbot.NewCallbackButton("⚡ Использовать +7 (999) 123-45-67", "booking:quick_phone").WithIntent(maxbot.IntentPrimary)).
+			Row(maxbot.NewCallbackButton("❌ Отмена", "wizard:cancel").WithIntent(maxbot.IntentNegative))
 
 		text := fmt.Sprintf("🗓 Выбран слот: **%s**\n\n"+
 			"📱 **Шаг 2 из 2:** Пожалуйста, отправьте контактный номер телефона для подтверждения записи.\n"+
@@ -242,7 +242,7 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 		}
 
 		formatted := hood.Format(userID, text, "booking_contact")
-		_, err := c.ReplyKeyboard(formatted, kb)
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
 	})
 
