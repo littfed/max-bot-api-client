@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -813,6 +814,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 
 		_ = c.Typing()
+
+		// Transcode to 16kHz mono WAV if ffmpeg is available (guarantees universal STT compatibility across all models)
+		audioBytes, filename, _ = convertAudioToWAV(c.Ctx(), audioBytes, filename)
 
 		// 1. Whisper Transcription
 		audioReq := &ai.AudioRequest{
@@ -1769,6 +1773,55 @@ func extractAudioAttachmentBytes(c *bot.Context) ([]byte, string, bool) {
 		}
 	}
 	return nil, "", false
+}
+
+// convertAudioToWAV converts any audio input (OGG Opus, MP3, AAC, M4A, etc.) to 16kHz mono WAV format using ffmpeg.
+// If ffmpeg is not available or conversion fails, it returns the original bytes and filename.
+func convertAudioToWAV(ctx context.Context, inputBytes []byte, originalFilename string) ([]byte, string, error) {
+	if len(inputBytes) == 0 {
+		return nil, originalFilename, fmt.Errorf("empty audio bytes")
+	}
+
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		slog.Warn("ffmpeg not found in PATH, proceeding with original audio format", slog.String("filename", originalFilename))
+		return inputBytes, originalFilename, nil
+	}
+
+	cmd := exec.CommandContext(ctx, ffmpegPath,
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", "pipe:0",
+		"-ar", "16000",
+		"-ac", "1",
+		"-c:a", "pcm_s16le",
+		"-f", "wav",
+		"pipe:1",
+	)
+	cmd.Stdin = bytes.NewReader(inputBytes)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	if err := cmd.Run(); err != nil {
+		slog.Warn("ffmpeg conversion to WAV failed, falling back to original audio",
+			slog.Any("error", err),
+			slog.String("stderr", errBuf.String()),
+			slog.String("filename", originalFilename),
+		)
+		return inputBytes, originalFilename, nil
+	}
+
+	wavBytes := outBuf.Bytes()
+	if len(wavBytes) > 44 { // Valid WAV header is at least 44 bytes
+		slog.Info("audio successfully transcoded to 16kHz WAV for STT",
+			slog.Int("original_bytes", len(inputBytes)),
+			slog.Int("wav_bytes", len(wavBytes)),
+		)
+		return wavBytes, "voice.wav", nil
+	}
+
+	return inputBytes, originalFilename, nil
 }
 
 // translatePromptToEnglish uses the LLM to translate and enrich a user prompt into a high-quality visual English prompt.

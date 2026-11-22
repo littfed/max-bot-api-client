@@ -1160,3 +1160,18 @@ func TestSeamlessVoiceWorkflow(t *testing.T) {
 		t.Fatalf("handle tts speak_last callback failed: %v", err)
 	}
 }
+
+func TestConvertAudioToWAV(t *testing.T) {
+	// 1. Empty bytes returns error
+	_, _, err := convertAudioToWAV(context.Background(), nil, "test.ogg")
+	if err == nil {
+		t.Fatal("expected error on empty bytes")
+	}
+
+	// 2. Non-empty invalid stream safely falls back to original input
+	fake := []byte("not a real audio stream")
+	res, fn, _ := convertAudioToWAV(context.Background(), fake, "voice.ogg")
+	if len(res) == 0 || fn == "" {
+		t.Fatalf("expected non-empty fallback from convertAudioToWAV")
+	}
+}

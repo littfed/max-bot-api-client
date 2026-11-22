@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"time"
 )
@@ -334,9 +335,28 @@ func (c *Client) TranscribeAudio(ctx context.Context, req *AudioRequest) (*Audio
 	bodyBuf := &bytes.Buffer{}
 	writer := multipart.NewWriter(bodyBuf)
 
-	part, err := writer.CreateFormFile("file", filename)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	mimeType := "audio/wav"
+	lower := strings.ToLower(filename)
+	if strings.HasSuffix(lower, ".mp3") {
+		mimeType = "audio/mpeg"
+	} else if strings.HasSuffix(lower, ".ogg") || strings.HasSuffix(lower, ".oga") || strings.HasSuffix(lower, ".opus") {
+		mimeType = "audio/ogg"
+	} else if strings.HasSuffix(lower, ".webm") {
+		mimeType = "audio/webm"
+	} else if strings.HasSuffix(lower, ".flac") {
+		mimeType = "audio/flac"
+	} else if strings.HasSuffix(lower, ".m4a") {
+		mimeType = "audio/m4a"
+	} else if strings.HasSuffix(lower, ".aac") {
+		mimeType = "audio/aac"
+	}
+	h.Set("Content-Type", mimeType)
+
+	part, err := writer.CreatePart(h)
 	if err != nil {
-		return nil, fmt.Errorf("ai: create form file failed: %w", err)
+		return nil, fmt.Errorf("ai: create form part failed: %w", err)
 	}
 	if _, err := part.Write(req.AudioBytes); err != nil {
 		return nil, fmt.Errorf("ai: write audio failed: %w", err)
