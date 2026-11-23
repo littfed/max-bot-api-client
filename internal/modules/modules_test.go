@@ -267,7 +267,7 @@ func TestSupportModule_ConfidenceThresholdAndEscalation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
-	if ticket == nil || ticket.ID == 0 || ticket.Status != "open" {
+	if ticket == nil || ticket.ID == 0 || ticket.Status != "open" || ticket.Message != "Не проходит платеж по карте" {
 		t.Errorf("Unexpected ticket created: %+v", ticket)
 	}
 }

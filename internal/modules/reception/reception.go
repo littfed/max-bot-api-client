@@ -177,7 +177,10 @@ func (m *Module) SubmitOnboarding(ctx context.Context, userID int64, answers map
 	return nil
 }
 
-var phoneRegex = regexp.MustCompile(`^[+]?[0-9\s\-()]{7,20}$`)
+var (
+	phoneRegex    = regexp.MustCompile(`^[+]?[0-9\s\-()]{7,20}$`)
+	nonDigitRegex = regexp.MustCompile(`\D`)
+)
 
 // validateContact checks phone or telegram handle.
 func validateContact(input string) bool {
@@ -185,7 +188,7 @@ func validateContact(input string) bool {
 	if strings.HasPrefix(trimmed, "@") && len(trimmed) >= 3 {
 		return true
 	}
-	digitsOnly := regexp.MustCompile(`\D`).ReplaceAllString(trimmed, "")
+	digitsOnly := nonDigitRegex.ReplaceAllString(trimmed, "")
 	if len(digitsOnly) >= 7 && phoneRegex.MatchString(trimmed) {
 		return true
 	}

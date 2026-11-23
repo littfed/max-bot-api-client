@@ -20,6 +20,7 @@ type Ticket struct {
 	Platform  string    `json:"platform"`
 	ModeScope string    `json:"mode_scope"`
 	Subject   string    `json:"subject"`
+	Message   string    `json:"message"`
 	Status    string    `json:"status"` // "open", "answered", "closed"
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -199,6 +200,7 @@ func (m *Module) CreateTicket(ctx context.Context, userID int64, platform string
 		Platform:  platform,
 		ModeScope: modeScope,
 		Subject:   subject,
+		Message:   message,
 		Status:    "open",
 		CreatedAt: time.Now(),
 	}

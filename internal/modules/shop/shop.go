@@ -144,7 +144,7 @@ func (m *Module) CreateOrder(ctx context.Context, userID int64, productID string
 		return nil, errors.New("product not found")
 	}
 
-	orderID := fmt.Sprintf("ord_%s_%d", productID, time.Now().Unix())
+	orderID := fmt.Sprintf("ord_%s_%d", productID, time.Now().UnixNano())
 	qrPayload := fmt.Sprintf("https://combot.littfed.ru/pay/demo?order=%s&amount=%d", orderID, p.Price)
 
 	ord := &Order{
