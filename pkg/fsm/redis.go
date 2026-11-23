@@ -402,6 +402,49 @@ func (c *respClient) Set(ctx context.Context, key string, value string, ttl time
 	return nil
 }
 
+func (c *respClient) SetNX(ctx context.Context, key string, value string, ttl time.Duration) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	conn, r, err := c.getConn()
+	if err != nil {
+		return false, err
+	}
+
+	var cmd string
+	if ttl > 0 {
+		cmd = formatRESPCommand("SET", key, value, "NX", "EX", strconv.Itoa(int(ttl.Seconds())))
+	} else {
+		cmd = formatRESPCommand("SET", key, value, "NX")
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(c.timeout))
+	if _, err := conn.Write([]byte(cmd)); err != nil {
+		c.closeConn()
+		return false, err
+	}
+
+	res, err := readRESP(r)
+	if err != nil {
+		c.closeConn()
+		return false, err
+	}
+
+	if res == nil {
+		return false, nil
+	}
+
+	if str, ok := res.(string); ok {
+		if strings.HasPrefix(str, "ERR") {
+			return false, errors.New(str)
+		}
+		if str == "OK" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (c *respClient) Del(ctx context.Context, keys ...string) error {
 	if len(keys) == 0 {
 		return nil

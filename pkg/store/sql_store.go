@@ -644,6 +644,27 @@ func (s *SQLStore) GetUser(ctx context.Context, id int64) (*User, error) {
 	return &u, nil
 }
 
+// SetUserActiveMode updates the active mode for a user.
+func (s *SQLStore) SetUserActiveMode(ctx context.Context, userID int64, modeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	query := `UPDATE users SET active_mode_id = $1, updated_at = $2 WHERE id = $3;`
+	res, err := s.db.ExecContext(ctx, query, modeID, now, userID)
+	if err != nil {
+		return fmt.Errorf("failed to set user active mode: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user %d not found: %w", userID, sql.ErrNoRows)
+	}
+	return nil
+}
+
 // ResolveUserIdentity finds or creates a user and identity for a platform and platformUserID.
 func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUserID, username, firstName, phone string) (*User, error) {
 	s.mu.Lock()
