@@ -236,4 +236,12 @@ func TestMiniAppAccessibilityAndUXGuidelines(t *testing.T) {
 	if !strings.Contains(miniAppHTML, "empty-state") {
 		t.Errorf("miniAppHTML must support empty-state component")
 	}
+
+	// Clean Mini App UI & Respectful User Identity
+	if strings.Contains(miniAppHTML, "MAX SuperApp Suite") {
+		t.Errorf("miniAppHTML must not contain redundant legacy header 'MAX SuperApp Suite'")
+	}
+	if strings.Contains(miniAppHTML, "Гость (Демо)") || strings.Contains(miniAppHTML, "(Гость)") {
+		t.Errorf("miniAppHTML must not display discriminatory 'Гость' badges")
+	}
 }

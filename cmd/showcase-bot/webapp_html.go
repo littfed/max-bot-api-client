@@ -172,25 +172,80 @@ const miniAppHTML = `<!DOCTYPE html>
       transform: translateX(3px);
     }
 
-    /* Top Header */
-    header {
-      background: #111827;
-      padding: max(12px, env(safe-area-inset-top, 12px)) 16px 12px 16px;
-      border-bottom: 1px solid var(--border);
+    /* Store Hero & User Pill */
+    .store-hero {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      position: sticky;
-      top: 0;
-      z-index: 40;
+      margin-bottom: 14px;
     }
-    .brand { display: flex; align-items: center; gap: 8px; }
-    .brand-icon { font-size: 20px; }
-    .brand-title { font-size: 15px; font-weight: 700; }
-    .user-pill { font-size: 11px; background: rgba(37,99,235,0.15); color: #60a5fa; padding: 4px 10px; border-radius: 9999px; border: 1px solid rgba(37,99,235,0.3); max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .welcome-sub {
+      font-size: 11px;
+      color: var(--muted);
+      display: block;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    .welcome-name {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.2;
+    }
+    .user-pill {
+      font-size: 11px;
+      background: rgba(37,99,235,0.12);
+      color: #60a5fa;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      border: 1px solid rgba(37,99,235,0.25);
+      max-width: 180px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    /* Profile Card in Tab 5 */
+    .profile-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .profile-avatar {
+      font-size: 22px;
+      background: rgba(37,99,235,0.15);
+      color: #60a5fa;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .profile-info { flex: 1; min-width: 0; }
+    .profile-name { font-weight: 700; font-size: 15px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-id { font-size: 12px; color: var(--muted); margin-top: 1px; }
+    .profile-badge { font-size: 11px; background: rgba(16,185,129,0.12); color: #34d399; padding: 4px 10px; border-radius: 9999px; border: 1px solid rgba(16,185,129,0.25); white-space: nowrap; font-weight: 600; }
 
     /* Main Container */
-    .container { padding: 14px; max-width: 600px; margin: 0 auto; width: 100%; flex: 1; }
+    .container {
+      padding: max(14px, env(safe-area-inset-top, 14px)) 14px max(80px, env(safe-area-inset-bottom, 80px)) 14px;
+      max-width: 600px;
+      margin: 0 auto;
+      width: 100%;
+      flex: 1;
+    }
 
     /* Tabs Content */
     .tab-content { display: none; }
@@ -378,17 +433,20 @@ const miniAppHTML = `<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <span class="brand-icon" aria-hidden="true">⚡</span>
-      <div class="brand-title">MAX SuperApp Suite</div>
-    </div>
-    <div class="user-pill" id="user-badge" aria-label="Профиль пользователя">Гость (Демо)</div>
-  </header>
-
   <main class="container">
     <!-- TAB 1: STORE -->
     <section class="tab-content active" id="tab-store" role="tabpanel" aria-labelledby="tab-store-btn">
+      <div class="store-hero">
+        <div class="user-welcome">
+          <span class="welcome-sub">Добро пожаловать</span>
+          <h1 class="welcome-name" id="user-display-name">Пользователь</h1>
+        </div>
+        <div class="user-pill" id="user-badge" aria-label="Профиль">
+          <span>🛍️</span>
+          <span id="user-badge-text">Клиент</span>
+        </div>
+      </div>
+
       <label for="search-input" class="sr-only">Поиск товаров</label>
       <input type="text" class="search-box" id="search-input" placeholder="🔍 Поиск мерча и гаджетов…" oninput="filterCatalog()" aria-label="Поиск товаров">
       
@@ -582,6 +640,16 @@ const miniAppHTML = `<!DOCTYPE html>
 
     <!-- TAB 5: REWARDS & ORDERS -->
     <section class="tab-content" id="tab-orders" role="tabpanel" aria-labelledby="tab-orders-btn">
+      <!-- Profile Card -->
+      <div class="profile-card">
+        <div class="profile-avatar" id="profile-avatar" aria-hidden="true">👤</div>
+        <div class="profile-info">
+          <div class="profile-name" id="profile-name">Пользователь</div>
+          <div class="profile-id" id="profile-id">ID: —</div>
+        </div>
+        <div class="profile-badge" id="profile-status">Клиент MAX</div>
+      </div>
+
       <!-- Wheel of fortune -->
       <div class="wheel-card">
         <div style="font-weight: 700; font-size: 15px;">🎁 Колесо бонусов MAX</div>
@@ -797,7 +865,26 @@ const miniAppHTML = `<!DOCTYPE html>
 
       if (currentUser.first_name) {
         const isOwner = currentUser.id === OWNER_ID;
-        document.getElementById('user-badge').innerText = currentUser.first_name + (isOwner ? ' (Владелец ⭐)' : ' (Гость)');
+        const nameEl = document.getElementById('user-display-name');
+        if (nameEl) nameEl.innerText = currentUser.first_name;
+
+        const badgeText = document.getElementById('user-badge-text');
+        if (badgeText) {
+          badgeText.innerText = isOwner ? 'Владелец ⭐' : (currentUser.username ? '@' + currentUser.username : 'Клиент');
+        }
+
+        const userBadge = document.getElementById('user-badge');
+        if (userBadge) {
+          userBadge.setAttribute('aria-label', 'Профиль: ' + currentUser.first_name);
+        }
+
+        const profName = document.getElementById('profile-name');
+        if (profName) profName.innerText = currentUser.first_name + (currentUser.last_name ? ' ' + currentUser.last_name : '');
+        const profID = document.getElementById('profile-id');
+        if (profID && currentUser.id) profID.innerText = 'MAX ID: ' + currentUser.id;
+        const profStatus = document.getElementById('profile-status');
+        if (profStatus) profStatus.innerText = isOwner ? 'Владелец ⭐' : 'Клиент MAX';
+
         document.getElementById('booking-name').value = currentUser.first_name;
         if (isOwner) {
           const badge = document.getElementById('studio-demo-badge');
