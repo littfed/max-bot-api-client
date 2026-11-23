@@ -753,6 +753,18 @@ const miniAppHTML = `<!DOCTYPE html>
         <div class="profile-badge" id="profile-status">Клиент MAX</div>
       </div>
 
+      <!-- History of Orders & Bookings -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; margin-top: 14px;">
+        <div style="font-weight: 700; font-size: 15px;">📦 Мои заказы и записи</div>
+        <button type="button" onclick="loadOrders()" aria-label="Обновить список заказов" style="background: none; border: none; color: #60a5fa; font-size: 12px; cursor: pointer;">🔄 Обновить</button>
+      </div>
+      <div id="orders-list" aria-label="Список оформленных заказов" style="margin-bottom: 18px;">
+        <div style="font-size: 13px; color: var(--muted); text-align: center; padding: 20px;">Заказы загружаются…</div>
+      </div>
+
+      <!-- Bonuses & Rewards -->
+      <div style="font-weight: 700; font-size: 15px; margin-bottom: 10px; margin-top: 6px;">🎁 Бонусы и спецпредложения</div>
+
       <!-- Wheel of fortune -->
       <div class="wheel-card">
         <div style="font-weight: 700; font-size: 15px;">🎁 Колесо бонусов MAX</div>
@@ -772,15 +784,6 @@ const miniAppHTML = `<!DOCTYPE html>
           <div class="quiz-opts" id="quiz-options"></div>
         </div>
         <div id="quiz-result" style="display: none; font-size: 13px; font-weight: 600; color: #34d399; margin-top: 8px;" aria-live="polite"></div>
-      </div>
-
-      <!-- History of Orders & Bookings -->
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-        <div style="font-weight: 700; font-size: 15px;">📦 Заказы и Записи</div>
-        <button type="button" onclick="loadOrders()" aria-label="Обновить список заказов" style="background: none; border: none; color: #60a5fa; font-size: 12px; cursor: pointer;">🔄 Обновить</button>
-      </div>
-      <div id="orders-list" aria-label="Список оформленных заказов">
-        <div style="font-size: 13px; color: var(--muted); text-align: center; padding: 20px;">Заказы загружаются…</div>
       </div>
     </section>
   </main>
@@ -816,8 +819,8 @@ const miniAppHTML = `<!DOCTYPE html>
       <div>Студия</div>
     </button>
     <button type="button" class="nav-item" id="tab-orders-btn" role="tab" aria-selected="false" aria-controls="tab-orders" onclick="switchTab('orders', this)">
-      <div class="nav-icon" aria-hidden="true">🎁</div>
-      <div>Бонусы</div>
+      <div class="nav-icon" aria-hidden="true">📦</div>
+      <div>Заказы</div>
     </button>
   </nav>
 

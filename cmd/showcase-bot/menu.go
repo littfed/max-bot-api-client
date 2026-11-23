@@ -33,6 +33,9 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 			maxbot.NewCallbackButton("📱 4. Mini App (HTML5 WebView)", "scen:webapp").WithIntent(maxbot.IntentPositive),
 		).
 		Row(
+			maxbot.NewCallbackButton("📦 Мои заказы и записи", "nav:orders"),
+		).
+		Row(
 			maxbot.NewCallbackButton("🛡️ 5. Модерация & Капча-гейт", "scen:guard"),
 		)
 

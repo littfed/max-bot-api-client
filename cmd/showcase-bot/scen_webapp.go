@@ -72,6 +72,13 @@ func RegisterWebappScenario(
 		DocsLink:    "https://dev.max.ru/docs/webapps#security",
 	})
 
+	hood.Register("orders_history", TechCard{
+		Title:       "История заказов и бронирований",
+		Endpoint:    "/api/webapp/orders",
+		Method:      "GET",
+		Description: "Выборка сохраненных заказов и бронирований пользователя из постоянного хранилища (PostgreSQL/SQLite) через sql_store.",
+	})
+
 	// 2. Setup WebBridge & HTTP Static Server
 	bridge := webapp.NewBridge(token).SetAllowUnauthenticated(true)
 	bridge.OnAction("submit_cart", func(ctx context.Context, data *webapp.InitData, payload json.RawMessage) (any, error) {
@@ -878,4 +885,130 @@ func RegisterWebappScenario(
 		_, err := c.ReplyKeyboard(formatted, kb)
 		return err
 	})
+
+	// Handler for viewing orders & bookings in chat
+	showOrdersHandler := func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
+
+		userID := int64(0)
+		userName := "Пользователь"
+		if sender := c.Sender(); sender != nil {
+			userID = sender.UserID
+			if sender.FirstName != "" {
+				userName = sender.FirstName
+			}
+		} else if cb := c.Callback(); cb != nil && cb.User != nil {
+			userID = cb.User.UserID
+			if cb.User.FirstName != "" {
+				userName = cb.User.FirstName
+			}
+		}
+
+		var orders []store.Order
+		if appStore != nil && userID != 0 {
+			orders = appStore.ListOrdersByUser(userID)
+		}
+
+		if len(orders) == 0 {
+			text := fmt.Sprintf("📦 **Мои заказы и записи**\n\n"+
+				"%s, у вас пока нет оформленных заказов или бронирований.\n\n"+
+				"Вы можете выбрать товары в магазине или записаться на консультацию:", userName)
+
+			kb := maxbot.NewInlineKeyboard().
+				Row(
+					maxbot.NewCallbackButton("🛍️ В магазин", "scen:ecom").WithIntent(maxbot.IntentPrimary),
+					maxbot.NewCallbackButton("📅 На запись", "scen:booking").WithIntent(maxbot.IntentPrimary),
+				).
+				Row(
+					maxbot.NewCallbackButton("📱 Открыть витрину Mini App", "scen:webapp").WithIntent(maxbot.IntentPositive),
+				).
+				Row(
+					maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"),
+				)
+
+			formatted := hood.Format(userID, text, "orders_history")
+			_, err := c.EditOrReplyKeyboard(formatted, kb)
+			return err
+		}
+
+		var sb strings.Builder
+		sb.WriteString("📦 **Мои заказы и бронирования**\n\n")
+		sb.WriteString(fmt.Sprintf("Всего записей: **%d**\n\n", len(orders)))
+
+		limit := 5
+		if len(orders) < limit {
+			limit = len(orders)
+		}
+
+		for i := 0; i < limit; i++ {
+			o := orders[i]
+			isBooking := o.DeliveryType == "booking"
+			dateStr := o.CreatedAt.Format("02.01.2006 15:04")
+
+			statusLabel := "Принят 🟢"
+			switch o.Status {
+			case "paid", "completed":
+				statusLabel = "Оплачено ✅"
+			case "processing":
+				statusLabel = "В обработке ⏳"
+			case "cancelled":
+				statusLabel = "Отменен ❌"
+			}
+
+			if isBooking {
+				srvName := "Консультация"
+				if len(o.Items) > 0 && o.Items[0].Title != "" {
+					srvName = o.Items[0].Title
+				}
+				priceStr := "Бесплатно"
+				if o.Total > 0 {
+					priceStr = fmt.Sprintf("%d ₽", o.Total)
+				}
+				sb.WriteString(fmt.Sprintf("📅 **Бронь #%s** [%s]\n", o.ID, statusLabel))
+				sb.WriteString(fmt.Sprintf("• **Услуга:** %s\n", srvName))
+				if o.Address != "" {
+					sb.WriteString(fmt.Sprintf("• **Детали:** %s\n", o.Address))
+				}
+				sb.WriteString(fmt.Sprintf("• **Стоимость:** %s\n", priceStr))
+				sb.WriteString(fmt.Sprintf("• **Дата:** %s\n\n", dateStr))
+			} else {
+				totalStr := fmt.Sprintf("%d ₽", o.Total)
+				sb.WriteString(fmt.Sprintf("🛍️ **Заказ #%s** [%s]\n", o.ID, statusLabel))
+				if len(o.Items) > 0 {
+					itemNames := make([]string, 0, len(o.Items))
+					for _, it := range o.Items {
+						if it.Quantity > 1 {
+							itemNames = append(itemNames, fmt.Sprintf("%s (%d шт.)", it.Title, it.Quantity))
+						} else {
+							itemNames = append(itemNames, it.Title)
+						}
+					}
+					sb.WriteString(fmt.Sprintf("• **Товары:** %s\n", strings.Join(itemNames, ", ")))
+				}
+				sb.WriteString(fmt.Sprintf("• **Сумма:** %s\n", totalStr))
+				sb.WriteString(fmt.Sprintf("• **Дата:** %s\n\n", dateStr))
+			}
+		}
+
+		if len(orders) > limit {
+			sb.WriteString(fmt.Sprintf("💡 *Показаны последние %d из %d записей. Полную историю можно просмотреть в Mini App.*\n", limit, len(orders)))
+		}
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(
+				maxbot.NewCallbackButton("🔄 Обновить", "nav:orders"),
+				maxbot.NewCallbackButton("📱 Открыть в Mini App", "scen:webapp").WithIntent(maxbot.IntentPositive),
+			).
+			Row(
+				maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"),
+			)
+
+		formatted := hood.Format(userID, sb.String(), "orders_history")
+		_, err := c.EditOrReplyKeyboard(formatted, kb)
+		return err
+	}
+
+	b.OnCallbackPayload("nav:orders", showOrdersHandler)
+	b.OnCommand("orders", showOrdersHandler)
+	b.OnCommand("myorders", showOrdersHandler)
 }

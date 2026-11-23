@@ -374,3 +374,83 @@ func TestWebappMediaHistoryAPI(t *testing.T) {
 		t.Fatalf("expected 2 image artifacts after generate_image, got %d", len(imgList))
 	}
 }
+
+func TestOrdersHistoryInBot(t *testing.T) {
+	hood := NewHoodEngine()
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	appStore, _ := store.New("")
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+	hood.RegisterRoutes(botInstance.Router())
+
+	mux := http.NewServeMux()
+	RegisterWebappScenario(botInstance, hood, mux, "test_token_123", "8080", appStore, nil, nil, "gemini-2.5-flash")
+
+	testUID := int64(999123)
+
+	// 1. Test /orders command when user has 0 orders
+	ctxEmpty := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Body: maxbot.MessageBody{
+				Text: "/orders",
+			},
+			Sender: &maxbot.User{UserID: testUID, FirstName: "Алексей"},
+		},
+	})
+	if err := botInstance.Router().Handle(ctxEmpty); err != nil {
+		t.Fatalf("handle /orders empty failed: %v", err)
+	}
+
+	// 2. Add an order and a booking
+	_ = appStore.CreateOrder(store.Order{
+		ID:           "WEB-11111",
+		UserID:       testUID,
+		UserName:     "Алексей",
+		Items:        []store.OrderItem{{Title: "Худи Go Gopher", Quantity: 1, Price: 4990}},
+		Total:        4990,
+		DeliveryType: "delivery",
+		Status:       "paid",
+		CreatedAt:    time.Now(),
+	})
+	_ = appStore.CreateOrder(store.Order{
+		ID:           "BOK-22222",
+		UserID:       testUID,
+		UserName:     "Алексей",
+		Items:        []store.OrderItem{{Title: "Аудит архитектуры", Quantity: 1, Price: 0}},
+		Total:        0,
+		DeliveryType: "booking",
+		Address:      "Специалист: Lead Go | Слот: Завтра, 11:00",
+		Status:       "accepted",
+		CreatedAt:    time.Now().Add(1 * time.Minute),
+	})
+
+	// 3. Test nav:orders callback
+	ctxCallback := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Callback: &maxbot.Callback{
+			CallbackID: "cb_orders",
+			Payload:    "nav:orders",
+			User:       &maxbot.User{UserID: testUID, FirstName: "Алексей"},
+		},
+	})
+	if err := botInstance.Router().Handle(ctxCallback); err != nil {
+		t.Fatalf("handle nav:orders callback failed: %v", err)
+	}
+
+	// 4. Test /orders command with existing items
+	ctxWithOrders := bot.NewContext(context.Background(), nil, &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			Body: maxbot.MessageBody{
+				Text: "/orders",
+			},
+			Sender: &maxbot.User{UserID: testUID, FirstName: "Алексей"},
+		},
+	})
+	if err := botInstance.Router().Handle(ctxWithOrders); err != nil {
+		t.Fatalf("handle /orders with orders failed: %v", err)
+	}
+}

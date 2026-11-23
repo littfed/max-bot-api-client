@@ -248,6 +248,7 @@ func main() {
 			{Name: "model", Description: "Выбор активной модели AI (LLM)"},
 			{Name: "img", Description: "Сгенерировать картинку нейросетью"},
 			{Name: "app", Description: "Открыть Mini App (витрина, AI, заказы)"},
+			{Name: "orders", Description: "Мои заказы и бронирования"},
 			{Name: "menu", Description: "Витрина возможностей MAX (Магазин, Бронь, Mini App)"},
 			{Name: "dev", Description: "Режим разработчика (Под капотом)"},
 			{Name: "stats", Description: "Телеметрия активной сессии"},
