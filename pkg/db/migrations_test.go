@@ -20,7 +20,14 @@ func TestRunMigrations_SQLite(t *testing.T) {
 	}
 
 	// Verify all tables were created
-	tables := []string{"channels", "orders", "reactions", "polls", "giveaways", "media_history"}
+	tables := []string{
+		"channels", "orders", "reactions", "polls", "giveaways", "media_history",
+		"users", "user_identities", "user_mode_states", "mode_configs", "leads",
+		"mascot_phrases", "products", "services", "time_slots", "bookings",
+		"events", "event_registrations", "onboarding_submissions", "knowledge_documents",
+		"knowledge_chunks", "support_tickets", "support_messages", "chat_sessions",
+		"admin_audit_logs",
+	}
 	for _, tbl := range tables {
 		var name string
 		query := "SELECT name FROM sqlite_master WHERE type='table' AND name=?;"

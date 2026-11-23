@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -621,6 +622,289 @@ FROM media_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2;`
 		}
 	}
 	return result, nil
+}
+
+// --- Bot Hub Operations ---
+
+// GetUser retrieves a User by internal primary key ID.
+func (s *SQLStore) GetUser(ctx context.Context, id int64) (*User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT id, active_mode_id, role, timezone, created_at, updated_at FROM users WHERE id = $1;`
+	row := s.db.QueryRowContext(ctx, query, id)
+
+	var u User
+	if err := row.Scan(&u.ID, &u.ActiveModeID, &u.Role, &u.Timezone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("user %d not found: %w", id, sql.ErrNoRows)
+		}
+		return nil, fmt.Errorf("failed to get user %d: %w", id, err)
+	}
+	return &u, nil
+}
+
+// ResolveUserIdentity finds or creates a user and identity for a platform and platformUserID.
+func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUserID, username, firstName, phone string) (*User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. Check if identity exists
+	findQuery := `SELECT id, user_id FROM user_identities WHERE platform = $1 AND platform_user_id = $2;`
+	var identityID, userID int64
+	err := s.db.QueryRowContext(ctx, findQuery, platform, platformUserID).Scan(&identityID, &userID)
+	if err == nil {
+		// Update user identity metadata if changed
+		updateQuery := `UPDATE user_identities SET username = $1, first_name = $2, phone = $3 WHERE id = $4;`
+		_, _ = s.db.ExecContext(ctx, updateQuery, username, firstName, phone, identityID)
+
+		var u User
+		getUserQuery := `SELECT id, active_mode_id, role, timezone, created_at, updated_at FROM users WHERE id = $1;`
+		if err := s.db.QueryRowContext(ctx, getUserQuery, userID).Scan(&u.ID, &u.ActiveModeID, &u.Role, &u.Timezone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to fetch existing user %d: %w", userID, err)
+		}
+		return &u, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("failed to lookup user identity: %w", err)
+	}
+
+	// 2. Not found: create new user
+	now := time.Now()
+	var user User
+	user.ActiveModeID = "shop"
+	user.Role = "user"
+	user.Timezone = "UTC+3"
+	user.CreatedAt = now
+	user.UpdatedAt = now
+
+	if s.dialect == "postgres" {
+		insertUserQuery := `INSERT INTO users (active_mode_id, role, timezone, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5) RETURNING id;`
+		if err := s.db.QueryRowContext(ctx, insertUserQuery, user.ActiveModeID, user.Role, user.Timezone, user.CreatedAt, user.UpdatedAt).Scan(&user.ID); err != nil {
+			return nil, fmt.Errorf("failed to create user: %w", err)
+		}
+	} else {
+		insertUserQuery := `INSERT INTO users (active_mode_id, role, timezone, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5);`
+		res, err := s.db.ExecContext(ctx, insertUserQuery, user.ActiveModeID, user.Role, user.Timezone, user.CreatedAt, user.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create user in sqlite: %w", err)
+		}
+		user.ID, err = res.LastInsertId()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get last insert id: %w", err)
+		}
+	}
+
+	// 3. Create identity linked to user
+	insertIdentQuery := `INSERT INTO user_identities (user_id, platform, platform_user_id, username, first_name, phone, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7);`
+	if _, err := s.db.ExecContext(ctx, insertIdentQuery, user.ID, platform, platformUserID, username, firstName, phone, now); err != nil {
+		return nil, fmt.Errorf("failed to create user identity: %w", err)
+	}
+
+	return &user, nil
+}
+
+// GetUserModeState fetches the composite FSM state for a user and mode.
+func (s *SQLStore) GetUserModeState(ctx context.Context, userID int64, modeID string) (*UserModeState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT user_id, mode_id, current_step, payload, updated_at FROM user_mode_states WHERE user_id = $1 AND mode_id = $2;`
+	row := s.db.QueryRowContext(ctx, query, userID, modeID)
+
+	var st UserModeState
+	var payloadStr string
+	if err := row.Scan(&st.UserID, &st.ModeID, &st.CurrentStep, &payloadStr, &st.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("mode state not found for user %d mode %s: %w", userID, modeID, sql.ErrNoRows)
+		}
+		return nil, fmt.Errorf("failed to get user mode state: %w", err)
+	}
+	st.Payload = json.RawMessage(payloadStr)
+	return &st, nil
+}
+
+// SaveUserModeState creates or updates composite FSM state for a user and mode.
+func (s *SQLStore) SaveUserModeState(ctx context.Context, state *UserModeState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if state == nil {
+		return errors.New("state cannot be nil")
+	}
+	if len(state.Payload) == 0 {
+		state.Payload = json.RawMessage("{}")
+	}
+	if state.UpdatedAt.IsZero() {
+		state.UpdatedAt = time.Now()
+	}
+
+	query := `INSERT INTO user_mode_states (user_id, mode_id, current_step, payload, updated_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (user_id, mode_id) DO UPDATE SET
+	current_step = EXCLUDED.current_step,
+	payload = EXCLUDED.payload,
+	updated_at = EXCLUDED.updated_at;`
+
+	_, err := s.db.ExecContext(ctx, query, state.UserID, state.ModeID, state.CurrentStep, string(state.Payload), state.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to save user mode state: %w", err)
+	}
+	return nil
+}
+
+// GetModeConfigs retrieves all mode configurations and maintenance switch flags.
+func (s *SQLStore) GetModeConfigs(ctx context.Context) ([]ModeConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT mode_id, title, is_active, maintenance_message, daily_quota, updated_at FROM mode_configs ORDER BY mode_id ASC;`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mode configs: %w", err)
+	}
+	defer rows.Close()
+
+	var configs []ModeConfig
+	for rows.Next() {
+		var cfg ModeConfig
+		if err := rows.Scan(&cfg.ModeID, &cfg.Title, &cfg.IsActive, &cfg.MaintenanceMessage, &cfg.DailyQuota, &cfg.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan mode config: %w", err)
+		}
+		configs = append(configs, cfg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error in mode configs: %w", err)
+	}
+	return configs, nil
+}
+
+// SetModeActive updates the active status and optional maintenance message for a mode.
+func (s *SQLStore) SetModeActive(ctx context.Context, modeID string, isActive bool, maintMsg string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	var err error
+	if maintMsg != "" {
+		query := `UPDATE mode_configs SET is_active = $1, maintenance_message = $2, updated_at = $3 WHERE mode_id = $4;`
+		_, err = s.db.ExecContext(ctx, query, isActive, maintMsg, now, modeID)
+	} else {
+		query := `UPDATE mode_configs SET is_active = $1, updated_at = $2 WHERE mode_id = $3;`
+		_, err = s.db.ExecContext(ctx, query, isActive, now, modeID)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to set mode active for %s: %w", modeID, err)
+	}
+	return nil
+}
+
+// SaveLead creates a new lead and returns its generated ID.
+func (s *SQLStore) SaveLead(ctx context.Context, lead *Lead) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if lead == nil {
+		return 0, errors.New("lead cannot be nil")
+	}
+	if lead.Status == "" {
+		lead.Status = "new"
+	}
+	if len(lead.TestedModes) == 0 {
+		lead.TestedModes = json.RawMessage("[]")
+	}
+	if lead.CreatedAt.IsZero() {
+		lead.CreatedAt = time.Now()
+	}
+
+	if s.dialect == "postgres" {
+		query := `INSERT INTO leads (user_id, platform, source_mode, tested_modes, contact, comment, status, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id;`
+		err := s.db.QueryRowContext(ctx, query, lead.UserID, lead.Platform, lead.SourceMode, string(lead.TestedModes), lead.Contact, lead.Comment, lead.Status, lead.CreatedAt).Scan(&lead.ID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to save lead in postgres: %w", err)
+		}
+	} else {
+		query := `INSERT INTO leads (user_id, platform, source_mode, tested_modes, contact, comment, status, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`
+		res, err := s.db.ExecContext(ctx, query, lead.UserID, lead.Platform, lead.SourceMode, string(lead.TestedModes), lead.Contact, lead.Comment, lead.Status, lead.CreatedAt)
+		if err != nil {
+			return 0, fmt.Errorf("failed to save lead in sqlite: %w", err)
+		}
+		lead.ID, err = res.LastInsertId()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get lead last insert id: %w", err)
+		}
+	}
+	return lead.ID, nil
+}
+
+// GetLeads retrieves leads optionally filtered by status, ordered by created_at descending.
+func (s *SQLStore) GetLeads(ctx context.Context, status string) ([]Lead, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var rows *sql.Rows
+	var err error
+	if status != "" {
+		query := `SELECT id, user_id, platform, source_mode, tested_modes, contact, comment, status, created_at FROM leads WHERE status = $1 ORDER BY created_at DESC;`
+		rows, err = s.db.QueryContext(ctx, query, status)
+	} else {
+		query := `SELECT id, user_id, platform, source_mode, tested_modes, contact, comment, status, created_at FROM leads ORDER BY created_at DESC;`
+		rows, err = s.db.QueryContext(ctx, query)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query leads: %w", err)
+	}
+	defer rows.Close()
+
+	var leads []Lead
+	for rows.Next() {
+		var l Lead
+		var modesStr string
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Platform, &l.SourceMode, &modesStr, &l.Contact, &l.Comment, &l.Status, &l.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan lead: %w", err)
+		}
+		l.TestedModes = json.RawMessage(modesStr)
+		leads = append(leads, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error in leads: %w", err)
+	}
+	return leads, nil
+}
+
+// GetMascotPhrases retrieves active mascot phrases ordered by priority ascending.
+func (s *SQLStore) GetMascotPhrases(ctx context.Context) ([]MascotPhrase, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var query string
+	if s.dialect == "postgres" {
+		query = `SELECT id, priority, trigger_type, text, is_active FROM mascot_phrases WHERE is_active = TRUE ORDER BY priority ASC, id ASC;`
+	} else {
+		query = `SELECT id, priority, trigger_type, text, is_active FROM mascot_phrases WHERE is_active = 1 ORDER BY priority ASC, id ASC;`
+	}
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query mascot phrases: %w", err)
+	}
+	defer rows.Close()
+
+	var phrases []MascotPhrase
+	for rows.Next() {
+		var p MascotPhrase
+		if err := rows.Scan(&p.ID, &p.Priority, &p.TriggerType, &p.Text, &p.IsActive); err != nil {
+			return nil, fmt.Errorf("failed to scan mascot phrase: %w", err)
+		}
+		phrases = append(phrases, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error in mascot phrases: %w", err)
+	}
+	return phrases, nil
 }
 
 func (s *SQLStore) Close() error {

@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Channel represents metadata and permission status for a MAX channel or group.
 type Channel struct {
@@ -78,3 +81,67 @@ type MediaArtifact struct {
 	Metadata     map[string]any `json:"metadata,omitempty"`
 	CreatedAt    time.Time      `json:"created_at"`
 }
+
+// User represents a Bot Hub user profile across platforms.
+type User struct {
+	ID           int64     `json:"id"`
+	ActiveModeID string    `json:"active_mode_id"`
+	Role         string    `json:"role"`
+	Timezone     string    `json:"timezone"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// UserIdentity represents a platform-specific identifier linked to a User.
+type UserIdentity struct {
+	ID             int64     `json:"id"`
+	UserID         int64     `json:"user_id"`
+	Platform       string    `json:"platform"`
+	PlatformUserID string    `json:"platform_user_id"`
+	Username       string    `json:"username,omitempty"`
+	FirstName      string    `json:"first_name,omitempty"`
+	Phone          string    `json:"phone,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// UserModeState represents the composite FSM state for a user within a specific mode.
+type UserModeState struct {
+	UserID      int64           `json:"user_id"`
+	ModeID      string          `json:"mode_id"`
+	CurrentStep string          `json:"current_step"`
+	Payload     json.RawMessage `json:"payload"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// ModeConfig represents the configuration and dynamic maintenance switch for a Bot Hub mode.
+type ModeConfig struct {
+	ModeID             string    `json:"mode_id"`
+	Title              string    `json:"title"`
+	IsActive           bool      `json:"is_active"`
+	MaintenanceMessage string    `json:"maintenance_message"`
+	DailyQuota         int       `json:"daily_quota"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// Lead represents a potential customer lead captured via the "Want such a bot" button.
+type Lead struct {
+	ID          int64           `json:"id"`
+	UserID      int64           `json:"user_id"`
+	Platform    string          `json:"platform"`
+	SourceMode  string          `json:"source_mode"`
+	TestedModes json.RawMessage `json:"tested_modes"`
+	Contact     string          `json:"contact"`
+	Comment     string          `json:"comment"`
+	Status      string          `json:"status"` // 'new', 'in_progress', 'closed'
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+// MascotPhrase represents an interactive phrase uttered by the central mascot.
+type MascotPhrase struct {
+	ID          int64  `json:"id"`
+	Priority    int    `json:"priority"` // 1: urgent, 2: progress, 3: time, 4: tap
+	TriggerType string `json:"trigger_type"`
+	Text        string `json:"text"`
+	IsActive    bool   `json:"is_active"`
+}
+

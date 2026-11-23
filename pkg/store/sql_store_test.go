@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -209,5 +211,136 @@ func TestStoreFallbackToJSON(t *testing.T) {
 	list, err := s.ListMediaArtifacts(999, "document", 10)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("expected 1 document listed from json store, got %d, err %v", len(list), err)
+	}
+}
+
+func setupTestStore(t *testing.T) *SQLStore {
+	t.Helper()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_bothub.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	s, err := NewSQLStore(db, "sqlite")
+	if err != nil {
+		t.Fatalf("failed to create SQLStore: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+	})
+	return s
+}
+
+func TestBotHubStore_UserAndModeState(t *testing.T) {
+	ctx := context.Background()
+	store := setupTestStore(t)
+
+	// Resolve user identity
+	user, err := store.ResolveUserIdentity(ctx, "max", "user_123", "testuser", "Test", "+79991234567")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity failed: %v", err)
+	}
+	if user.ID == 0 || user.ActiveModeID != "shop" {
+		t.Errorf("Unexpected user: %+v", user)
+	}
+
+	// Verify GetUser
+	gotUser, err := store.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if gotUser.ID != user.ID || gotUser.ActiveModeID != "shop" {
+		t.Errorf("Unexpected GetUser result: %+v", gotUser)
+	}
+
+	// Resolve again should return same user
+	user2, err := store.ResolveUserIdentity(ctx, "max", "user_123", "newuser", "Test2", "+79991234567")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity second call failed: %v", err)
+	}
+	if user2.ID != user.ID {
+		t.Errorf("Expected same user ID %d, got %d", user.ID, user2.ID)
+	}
+
+	// Save and get composite mode state
+	state := &UserModeState{
+		UserID:      user.ID,
+		ModeID:      "reception",
+		CurrentStep: "select_slot",
+		Payload:     []byte(`{"service_id":"srv_1"}`),
+	}
+	if err := store.SaveUserModeState(ctx, state); err != nil {
+		t.Fatalf("SaveUserModeState failed: %v", err)
+	}
+
+	gotState, err := store.GetUserModeState(ctx, user.ID, "reception")
+	if err != nil {
+		t.Fatalf("GetUserModeState failed: %v", err)
+	}
+	if gotState.CurrentStep != "select_slot" {
+		t.Errorf("Expected current_step select_slot, got %s", gotState.CurrentStep)
+	}
+
+	// Mode configs (maintenance switches)
+	configs, err := store.GetModeConfigs(ctx)
+	if err != nil {
+		t.Fatalf("GetModeConfigs failed: %v", err)
+	}
+	if len(configs) < 8 {
+		t.Errorf("Expected at least 8 default mode configs, got %d", len(configs))
+	}
+
+	// Toggle mode active
+	if err := store.SetModeActive(ctx, "reminders", true, ""); err != nil {
+		t.Fatalf("SetModeActive failed: %v", err)
+	}
+	configsAfter, err := store.GetModeConfigs(ctx)
+	if err != nil {
+		t.Fatalf("GetModeConfigs after update failed: %v", err)
+	}
+	var remindersActive bool
+	for _, cfg := range configsAfter {
+		if cfg.ModeID == "reminders" {
+			remindersActive = cfg.IsActive
+			break
+		}
+	}
+	if !remindersActive {
+		t.Errorf("Expected reminders mode to be active after SetModeActive")
+	}
+
+	// Leads operations
+	leadID, err := store.SaveLead(ctx, &Lead{
+		UserID:      user.ID,
+		Platform:    "max",
+		SourceMode:  "shop",
+		TestedModes: []byte(`["shop", "reception"]`),
+		Contact:     "+79991234567",
+		Comment:     "Хочу бота для магазина",
+		Status:      "new",
+	})
+	if err != nil {
+		t.Fatalf("SaveLead failed: %v", err)
+	}
+	if leadID == 0 {
+		t.Errorf("Expected non-zero lead ID, got %d", leadID)
+	}
+
+	leads, err := store.GetLeads(ctx, "new")
+	if err != nil {
+		t.Fatalf("GetLeads failed: %v", err)
+	}
+	if len(leads) == 0 {
+		t.Errorf("Expected at least 1 lead, got 0")
+	}
+
+	// Mascot phrases
+	phrases, err := store.GetMascotPhrases(ctx)
+	if err != nil {
+		t.Fatalf("GetMascotPhrases failed: %v", err)
+	}
+	if len(phrases) == 0 {
+		t.Errorf("Expected seeded mascot phrases, got 0")
 	}
 }
