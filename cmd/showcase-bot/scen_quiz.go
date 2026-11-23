@@ -73,6 +73,7 @@ func RegisterQuizScenario(b *bot.Bot, hood *HoodEngine) {
 
 		fsmCtx := fsm.FromContext(c)
 		if fsmCtx != nil {
+			_ = fsmCtx.SetState("QUIZ_STEP_ACTIVE")
 			_ = fsmCtx.Set("quiz_score", float64(0))
 			_ = fsmCtx.Set("quiz_idx", float64(0))
 			_ = fsmCtx.Set("quiz_start_time", float64(time.Now().UnixMilli()))
@@ -88,6 +89,11 @@ func RegisterQuizScenario(b *bot.Bot, hood *HoodEngine) {
 			return nil
 		}
 
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx == nil || fsmCtx.State() != "QUIZ_STEP_ACTIVE" {
+			return c.AnswerCallbackAlert("Квиз уже завершен или не активен. Начните заново из меню.")
+		}
+
 		parts := strings.Split(cb.Payload, ":")
 		if len(parts) < 4 {
 			return c.AnswerNotification("Ошибка формата вопроса")
@@ -96,6 +102,19 @@ func RegisterQuizScenario(b *bot.Bot, hood *HoodEngine) {
 		qIdx, _ := strconv.Atoi(parts[2])
 		optIdx, _ := strconv.Atoi(parts[3])
 
+		// Ghost Button Protection: validate question index against current active question index in FSM
+		curIdx := 0
+		if rawIdx, ok := fsmCtx.Get("quiz_idx"); ok {
+			if fIdx, isFloat := rawIdx.(float64); isFloat {
+				curIdx = int(fIdx)
+			} else if iIdx, isInt := rawIdx.(int); isInt {
+				curIdx = iIdx
+			}
+		}
+		if qIdx != curIdx {
+			return c.AnswerCallbackAlert("Вы уже ответили на этот вопрос!")
+		}
+
 		if qIdx < 0 || qIdx >= len(demoQuizQuestions) {
 			return c.AnswerNotification("Вопрос не найден")
 		}
@@ -103,17 +122,14 @@ func RegisterQuizScenario(b *bot.Bot, hood *HoodEngine) {
 		q := demoQuizQuestions[qIdx]
 		isCorrect := optIdx == q.CorrectIdx
 
-		fsmCtx := fsm.FromContext(c)
 		score := float64(0)
-		if fsmCtx != nil {
-			data, _ := fsmCtx.GetData()
-			if sc, ok := data["quiz_score"].(float64); ok {
-				score = sc
-			}
-			if isCorrect {
-				score++
-				_ = fsmCtx.Set("quiz_score", score)
-			}
+		data, _ := fsmCtx.GetData()
+		if sc, ok := data["quiz_score"].(float64); ok {
+			score = sc
+		}
+		if isCorrect {
+			score++
+			_ = fsmCtx.Set("quiz_score", score)
 		}
 
 		if isCorrect {
@@ -128,19 +144,20 @@ func RegisterQuizScenario(b *bot.Bot, hood *HoodEngine) {
 
 		// Next question or Final Results
 		nextIdx := qIdx + 1
+		_ = fsmCtx.Set("quiz_idx", float64(nextIdx))
+
 		if nextIdx < len(demoQuizQuestions) {
 			return sendQuizQuestion(c, hood, nextIdx)
 		}
 
-		// Final Results
+		// Final Results: clear previous question keyboard
+		_, _ = c.ClearKeyboard()
+
 		startTime := float64(time.Now().UnixMilli())
-		if fsmCtx != nil {
-			data, _ := fsmCtx.GetData()
-			if st, ok := data["quiz_start_time"].(float64); ok {
-				startTime = st
-			}
-			_ = fsmCtx.Reset()
+		if st, ok := data["quiz_start_time"].(float64); ok {
+			startTime = st
 		}
+		_ = fsmCtx.Reset()
 
 		totalDurationSec := float64(time.Now().UnixMilli()-int64(startTime)) / 1000.0
 		if totalDurationSec <= 0 {

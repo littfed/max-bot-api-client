@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -50,8 +51,11 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 		maxbot.NewCallbackButton("📊 Метрики", "nav:stats"),
 	).
 		Row(
-			maxbot.NewCallbackButton("🔄 Сбросить сессию", "nav:reset").WithIntent(maxbot.IntentNegative),
+			maxbot.NewCallbackButton("👨‍💼 Позвать человека", "nav:operator"),
 			maxbot.NewCallbackButton("ℹ️ О витрине", "nav:info"),
+		).
+		Row(
+			maxbot.NewCallbackButton("🔄 Сбросить сессию", "nav:reset").WithIntent(maxbot.IntentNegative),
 		)
 
 	return kb
@@ -59,6 +63,15 @@ func BuildMainMenuKeyboard(hood *HoodEngine, userID int64) *maxbot.InlineKeyboar
 
 // RegisterMenuRoutes installs main menu command and callback handlers.
 func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
+	hood.Register("operator_hitl", TechCard{
+		Title:       "Human-in-the-Loop (HITL) Эскалация на оператора",
+		Endpoint:    "/messages",
+		Method:      "POST",
+		FSMState:    "OPERATOR_PAUSED",
+		Description: "Бот переводит сессию в состояние OPERATOR_PAUSED, замораживая автоматические AI-ответы. Формируется Lead Dossier и запускается 30-минутный watchdog таймер неактивности.",
+		DocsLink:    "https://dev.max.ru/docs",
+	})
+
 	var aiCli *ai.Client
 	if len(aiClient) > 0 {
 		aiCli = aiClient[0]
@@ -243,6 +256,114 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 		return err
 	})
 
+	handleOperatorEscalation := func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
+		userID := int64(0)
+		userName := "Гость"
+		if sender := c.Sender(); sender != nil {
+			userID = sender.UserID
+			if sender.FirstName != "" {
+				userName = sender.FirstName
+				if sender.LastName != "" {
+					userName += " " + sender.LastName
+				}
+			}
+		}
+
+		fsmCtx := fsm.FromContext(c)
+		dossier := BuildLeadDossier(c)
+
+		// Log structured Lead Dossier
+		slog.Info("📋 [LEAD DOSSIER] Запрос связи с оператором",
+			slog.Int64("user_id", userID),
+			slog.String("user_name", userName),
+			slog.String("dossier", dossier),
+		)
+
+		if fsmCtx != nil {
+			_ = fsmCtx.SetState("OPERATOR_PAUSED")
+			_ = fsmCtx.Set("operator_paused_at", float64(time.Now().Unix()))
+		}
+
+		text := fmt.Sprintf("👨‍💼 **Переключение на оператора (Human-in-the-Loop)**\n\n"+
+			"Бот переведен в режим ожидания. Ваше обращение и контекст диалога переданы менеджеру поддержки.\n"+
+			"Специалист подключится к чату в ближайшее время.\n\n"+
+			"📋 **Сформированное досье обращения:**\n%s\n\n"+
+			"💡 *Пока оператор на связи, автоматические ответы бота отключены.*\n"+
+			"Для возврата к боту нажмите кнопку ниже или введите команду `/resume`:", dossier)
+
+		kb := maxbot.NewInlineKeyboard().
+			Row(maxbot.NewCallbackButton("🤖 Вернуться к боту", "nav:resume").WithIntent(maxbot.IntentPositive)).
+			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+
+		formatted := hood.Format(userID, text, "operator_hitl")
+		_, err := c.ReplyKeyboard(formatted, kb)
+		return err
+	}
+
+	handleOperatorResume := func(c *bot.Context) error {
+		_ = c.AnswerCallback(nil)
+		userID := int64(0)
+		if sender := c.Sender(); sender != nil {
+			userID = sender.UserID
+		}
+
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx != nil {
+			_ = fsmCtx.Reset()
+		}
+
+		text := "🤖 **Автоматический режим возобновлен!**\n\n" +
+			"Бот снова на связи и готов отвечать на ваши вопросы. Задайте любой вопрос текстом или выберите раздел витрины из меню ниже:"
+
+		kb := BuildMainMenuKeyboard(hood, userID)
+		formatted := hood.Format(userID, text, "main_menu")
+		_, err := c.ReplyKeyboard(formatted, kb)
+		return err
+	}
+
+	b.OnCommand("operator", handleOperatorEscalation)
+	b.OnCallbackPayload("nav:operator", handleOperatorEscalation)
+	b.OnCallbackPayload("ai:operator", handleOperatorEscalation)
+
+	b.OnCommand("resume", handleOperatorResume)
+	b.OnCallbackPayload("nav:resume", handleOperatorResume)
+
+	b.OnState("OPERATOR_PAUSED", func(c *bot.Context) error {
+		fsmCtx := fsm.FromContext(c)
+		var pausedAt int64
+		if fsmCtx != nil {
+			if val, ok := fsmCtx.Get("operator_paused_at"); ok {
+				if fVal, isFloat := val.(float64); isFloat {
+					pausedAt = int64(fVal)
+				} else if iVal, isInt64 := val.(int64); isInt64 {
+					pausedAt = iVal
+				} else if iVal, isInt := val.(int); isInt {
+					pausedAt = int64(iVal)
+				}
+			}
+		}
+
+		// 30-minute inactivity watchdog check (1800 seconds)
+		if pausedAt > 0 && time.Now().Unix()-pausedAt > 1800 {
+			if fsmCtx != nil {
+				_ = fsmCtx.Reset()
+			}
+			userID := int64(0)
+			if sender := c.Sender(); sender != nil {
+				userID = sender.UserID
+			}
+			timeoutMsg := "⌛ **Время ожидания оператора истекло (30 минут).**\n\n" +
+				"Сессия автоматически переведена обратно в стандартный режим. Бот снова готов отвечать на ваши вопросы!"
+			kb := BuildMainMenuKeyboard(hood, userID)
+			_, err := c.ReplyKeyboard(timeoutMsg, kb)
+			return err
+		}
+
+		// Automated bot responses are muted while in pause mode
+		return nil
+	})
+
 	// Fallback for user messages sent when not inside a command or active FSM wizard state
 	b.OnIdleMessage(func(c *bot.Context) error {
 		userText := strings.TrimSpace(c.Text())
@@ -390,6 +511,10 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 					Row(
 						maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
 						maxbot.NewCallbackButton("🔊 Озвучить", "ai:tts:speak_last"),
+					).
+					Row(
+						maxbot.NewCallbackButton("👨‍💼 Позвать человека", "nav:operator"),
+						maxbot.NewCallbackButton("◀️ В меню", "nav:menu"),
 					)
 				formatted := hood.Format(userID, chatResp.Content, "ai_chat")
 				_, rErr := c.ReplyKeyboard(formatted, kb)
@@ -400,4 +525,95 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 		// Otherwise show main menu
 		return sendMenu(c)
 	})
+}
+
+// BuildLeadDossier compiles customer context, selected items, and recent dialogue for the operator.
+func BuildLeadDossier(c *bot.Context) string {
+	var sb strings.Builder
+	userID := int64(0)
+	userName := "Гость"
+	userHandle := ""
+	if sender := c.Sender(); sender != nil {
+		userID = sender.UserID
+		if sender.FirstName != "" {
+			userName = sender.FirstName
+			if sender.LastName != "" {
+				userName += " " + sender.LastName
+			}
+		}
+		userHandle = sender.Username
+	}
+
+	sb.WriteString(fmt.Sprintf("• **Клиент:** %s (`ID: %d`)", userName, userID))
+	if userHandle != "" {
+		sb.WriteString(fmt.Sprintf(" (@%s)", userHandle))
+	}
+	sb.WriteString("\n")
+
+	fsmCtx := fsm.FromContext(c)
+	if fsmCtx != nil {
+		data, _ := fsmCtx.GetData()
+		state := fsmCtx.State()
+		if state != "" && state != "OPERATOR_PAUSED" {
+			sb.WriteString(fmt.Sprintf("• **Текущий шаг:** `%s`\n", state))
+		}
+
+		// E-Commerce context
+		if prodID, ok := data["prod_id"].(string); ok && prodID != "" {
+			prodName := prodID
+			if p := findProduct(prodID); p != nil {
+				prodName = fmt.Sprintf("%s %s (%.0f ₽)", p.Icon, p.Name, p.Price)
+			}
+			sb.WriteString(fmt.Sprintf("• **Товар в корзине:** %s\n", prodName))
+		}
+		if orderID, ok := data["order_id"].(string); ok && orderID != "" {
+			sb.WriteString(fmt.Sprintf("• **Номер заказа:** `#%s`\n", orderID))
+		}
+		if delivery, ok := data["delivery"].(string); ok && delivery != "" {
+			sb.WriteString(fmt.Sprintf("• **Адрес доставки:** %s\n", delivery))
+		}
+
+		// Booking context
+		if srvID, ok := data["service_id"].(string); ok && srvID != "" {
+			srvName := srvID
+			if s := findService(srvID); s != nil {
+				srvName = fmt.Sprintf("%s %s", s.Icon, s.Name)
+			}
+			sb.WriteString(fmt.Sprintf("• **Выбранная услуга:** %s\n", srvName))
+		}
+		if slot, ok := data["slot"].(string); ok && slot != "" {
+			sb.WriteString(fmt.Sprintf("• **Слот записи:** %s\n", slot))
+		}
+		if phone, ok := data["phone"].(string); ok && phone != "" {
+			sb.WriteString(fmt.Sprintf("• **Телефон клиента:** `%s`\n", phone))
+		}
+
+		// Quiz context
+		if score, ok := data["quiz_score"].(float64); ok {
+			sb.WriteString(fmt.Sprintf("• **Баллы в квизе:** %.0f/3\n", score))
+		}
+
+		// Recent AI conversation context
+		history := loadChatHistory(fsmCtx)
+		if len(history) > 0 {
+			lastMsg := history[len(history)-1]
+			contentStr := ""
+			switch v := lastMsg.Content.(type) {
+			case string:
+				contentStr = v
+			default:
+				contentStr = fmt.Sprintf("%v", v)
+			}
+			snippet := strings.TrimSpace(contentStr)
+			if len(snippet) > 100 {
+				snippet = snippet[:97] + "..."
+			}
+			if snippet != "" {
+				sb.WriteString(fmt.Sprintf("• **Последнее сообщение:** *«%s»*\n", snippet))
+			}
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("• **Время вызова:** %s", time.Now().Format("15:04:05 (02.01.2006)")))
+	return sb.String()
 }

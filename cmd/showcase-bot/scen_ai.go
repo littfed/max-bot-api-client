@@ -165,7 +165,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(maxbot.NewCallbackButton("🔊 4. Генерация голоса (TTS)", "ai:tts:start")).
 			Row(maxbot.NewCallbackButton("👁️ 5. Компьютерное зрение (Vision)", "ai:vision:start")).
 			Row(maxbot.NewCallbackButton("⚙️ Выбор модели LLM", "ai:models")).
-			Row(maxbot.NewCallbackButton("🔄 Очистить контекст диалога", "ai:clear_context")).
+			Row(
+				maxbot.NewCallbackButton("🔄 Очистить контекст", "ai:clear_context"),
+				maxbot.NewCallbackButton("👨‍💼 Позвать человека", "nav:operator"),
+			).
 			Row(maxbot.NewCallbackButton("◀️ Главное меню", "nav:menu"))
 
 		formatted := hood.Format(userID, text, "ai_chat")
@@ -1338,6 +1341,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Row(
 				maxbot.NewCallbackButton("🔄 Новый диалог", "ai:clear_context"),
 				maxbot.NewCallbackButton("🔊 Озвучить", "ai:tts:speak_last"),
+			).
+			Row(
+				maxbot.NewCallbackButton("👨‍💼 Позвать человека", "nav:operator"),
+				maxbot.NewCallbackButton("◀️ В меню", "nav:menu"),
 			)
 
 		_, sendErr := c.ReplyKeyboard(formatted, kb)
@@ -1348,6 +1355,25 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 	dispatchAIMessage = func(c *bot.Context) error {
 		if c == nil {
 			return nil
+		}
+		// Human-in-the-Loop check: silence automated AI processing when in operator pause mode
+		if fsmCtx := fsm.FromContext(c); fsmCtx != nil && fsmCtx.State() == "OPERATOR_PAUSED" {
+			var pausedAt int64
+			if val, ok := fsmCtx.Get("operator_paused_at"); ok {
+				if fVal, isFloat := val.(float64); isFloat {
+					pausedAt = int64(fVal)
+				} else if iVal, isInt64 := val.(int64); isInt64 {
+					pausedAt = iVal
+				} else if iVal, isInt := val.(int); isInt {
+					pausedAt = int64(iVal)
+				}
+			}
+			if pausedAt > 0 && time.Now().Unix()-pausedAt > 1800 {
+				_ = fsmCtx.Reset()
+				_, _ = c.Reply("⌛ **Время ожидания оператора истекло (30 минут).**\n\nСессия переведена обратно в автоматический режим.")
+			} else {
+				return nil
+			}
 		}
 		// 1. Priority: Image attachment -> Multimodal Vision
 		if _, hasImg := c.ImageAttachment(); hasImg {
@@ -1599,6 +1625,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 	// 8. Global Voice / Audio handler for speech recognition anywhere in the bot!
 	b.OnAudio(func(c *bot.Context) error {
+		if fsmCtx := fsm.FromContext(c); fsmCtx != nil && fsmCtx.State() == "OPERATOR_PAUSED" {
+			return nil
+		}
 		audioBytes, filename, found := extractAudioAttachmentBytes(c)
 		if found && len(audioBytes) > 0 {
 			return processVoiceAudio(c, audioBytes, filename)
@@ -1612,6 +1641,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 	// 9. Informative handler for mobile client microphone voice notes
 	b.OnVoiceNoteAttempt(func(c *bot.Context) error {
+		if fsmCtx := fsm.FromContext(c); fsmCtx != nil && fsmCtx.State() == "OPERATOR_PAUSED" {
+			return nil
+		}
 		text := "🎙️ **Голосовое сообщение с микрофона получено!**\n\n" +
 			"Платформа MAX Messenger на данный момент отправляет события голосовых заметок с микрофона без вложенного аудиофайла (ограничение текущей версии Bot API платформы).\n\n" +
 			"💡 **Как протестировать работу нейросети с голосом прямо сейчас:**\n" +
@@ -1701,6 +1733,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 	// 11. Global Image / Vision handler for multimodal recognition anywhere in the bot!
 	b.OnImage(func(c *bot.Context) error {
+		if fsmCtx := fsm.FromContext(c); fsmCtx != nil && fsmCtx.State() == "OPERATOR_PAUSED" {
+			return nil
+		}
 		prompt := strings.TrimSpace(c.Text())
 		return processVisionImage(c, prompt)
 	})

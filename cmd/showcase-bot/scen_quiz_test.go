@@ -67,3 +67,68 @@ func TestQuizScenarioWorkflow(t *testing.T) {
 		t.Fatalf("expected state empty after quiz completion, got %s", st)
 	}
 }
+
+func TestQuizGhostButtonRejection(t *testing.T) {
+	hood := NewHoodEngine()
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+	hood.RegisterRoutes(botInstance.Router())
+	RegisterQuizScenario(botInstance, hood)
+
+	userID := int64(333)
+	chatID := int64(444)
+	key := fsm.SessionKey{UserID: userID, ChatID: chatID}
+
+	makeCtx := func(payload string) *bot.Context {
+		u := &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Sender:    &maxbot.User{UserID: userID},
+				Recipient: &maxbot.MessageRecipient{ChatID: chatID},
+				Body:      maxbot.MessageBody{Text: ""},
+			},
+			Callback: &maxbot.Callback{
+				CallbackID: "cb_quiz",
+				Payload:    payload,
+				User:       &maxbot.User{UserID: userID},
+			},
+		}
+		return bot.NewContext(context.Background(), nil, u)
+	}
+
+	// 1. Answering before starting quiz should be rejected
+	if err := botInstance.Router().Handle(makeCtx("quiz:ans:0:1")); err != nil {
+		t.Fatalf("unstarted quiz ans handle error: %v", err)
+	}
+	st, _ := storage.GetState(context.Background(), key)
+	if st != fsm.StateEmpty {
+		t.Fatalf("expected state empty, got %s", st)
+	}
+
+	// 2. Start quiz
+	if err := botInstance.Router().Handle(makeCtx("scen:quiz")); err != nil {
+		t.Fatalf("start quiz error: %v", err)
+	}
+
+	// Answer question 0
+	if err := botInstance.Router().Handle(makeCtx("quiz:ans:0:1")); err != nil {
+		t.Fatalf("answer q0 error: %v", err)
+	}
+
+	// 3. Duplicate click on question 0 (Ghost button) when currently on question 1
+	data, _ := storage.GetData(context.Background(), key)
+	initialScore := data["quiz_score"].(float64)
+
+	if err := botInstance.Router().Handle(makeCtx("quiz:ans:0:1")); err != nil {
+		t.Fatalf("duplicate click error: %v", err)
+	}
+
+	// Verify score did NOT increase
+	data, _ = storage.GetData(context.Background(), key)
+	if data["quiz_score"].(float64) != initialScore {
+		t.Fatalf("expected score %.0f to remain unchanged on ghost click, got %.0f", initialScore, data["quiz_score"].(float64))
+	}
+}

@@ -39,6 +39,18 @@ func (f *FSMContext) GetState() (string, error) {
 	return string(st), err
 }
 
+// State returns the current state as a string, returning an empty string if unset or on error.
+func (f *FSMContext) State() string {
+	if f == nil {
+		return ""
+	}
+	st, err := f.storage.GetState(f.ctx, f.key)
+	if err != nil {
+		return ""
+	}
+	return string(st)
+}
+
 // Set stores a single key-value pair in the session's data payload.
 func (f *FSMContext) Set(key string, val any) error {
 	return f.storage.UpdateData(f.ctx, f.key, func(data map[string]any) error {

@@ -233,6 +233,8 @@ func main() {
 	if client != nil {
 		_ = client.SetCommands(ctx, []maxbot.BotCommand{
 			{Name: "start", Description: "Приветствие и возможности бота"},
+			{Name: "operator", Description: "Позвать человека / менеджера (HITL)"},
+			{Name: "resume", Description: "Вернуться к боту (возобновить AI)"},
 			{Name: "reset", Description: "Новый диалог (очистить контекст ИИ)"},
 			{Name: "new", Description: "Новый диалог с чистого листа"},
 			{Name: "model", Description: "Выбор активной модели AI (LLM)"},

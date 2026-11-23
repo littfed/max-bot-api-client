@@ -104,3 +104,57 @@ func TestFindProduct(t *testing.T) {
 		t.Fatalf("expected nil for non-existent product")
 	}
 }
+
+func TestEcomGhostButtonRejection(t *testing.T) {
+	hood := NewHoodEngine()
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+	hood.RegisterRoutes(botInstance.Router())
+	RegisterEcomScenario(botInstance, hood, payments.NewRouter())
+
+	userID := int64(555)
+	chatID := int64(666)
+	key := fsm.SessionKey{UserID: userID, ChatID: chatID}
+
+	makeCtx := func(text string, payload ...string) *bot.Context {
+		u := &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Sender:    &maxbot.User{UserID: userID},
+				Recipient: &maxbot.MessageRecipient{ChatID: chatID},
+				Body:      maxbot.MessageBody{Text: text},
+			},
+		}
+		if len(payload) > 0 {
+			u.Callback = &maxbot.Callback{
+				CallbackID: "cb_test",
+				Payload:    payload[0],
+				User:       &maxbot.User{UserID: userID},
+			}
+		}
+		return bot.NewContext(context.Background(), nil, u)
+	}
+
+	// 1. Tapping pickup when state is empty should be rejected without error
+	cPickup := makeCtx("", "ecom:pickup")
+	if err := botInstance.Router().Handle(cPickup); err != nil {
+		t.Fatalf("pickup handle error: %v", err)
+	}
+	st, _ := storage.GetState(context.Background(), key)
+	if st != fsm.StateEmpty {
+		t.Fatalf("expected state empty, got %s", st)
+	}
+
+	// 2. Tapping sandbox payment when state is empty should be rejected without error
+	cPay := makeCtx("", "ecom:sandbox:ORD-777:4990:666:555")
+	if err := botInstance.Router().Handle(cPay); err != nil {
+		t.Fatalf("sandbox handle error: %v", err)
+	}
+	st, _ = storage.GetState(context.Background(), key)
+	if st != fsm.StateEmpty {
+		t.Fatalf("expected state empty, got %s", st)
+	}
+}

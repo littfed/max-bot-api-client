@@ -797,6 +797,11 @@ func (c *Context) AnswerNotification(notification string) error {
 	})
 }
 
+// AnswerCallbackAlert shows an ephemeral alert or notification in response to an obsolete or rejected callback.
+func (c *Context) AnswerCallbackAlert(alert string) error {
+	return c.AnswerNotification(alert)
+}
+
 // SendChatAction sends a presence indicator (e.g. typing_on) to the active chat.
 func (c *Context) SendChatAction(action string) error {
 	if c.client == nil {

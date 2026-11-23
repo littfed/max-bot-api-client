@@ -105,6 +105,11 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 
 		bookingID := fmt.Sprintf("BOOK-%d", time.Now().Unix()%100000)
 
+		// Anti-Ghost-Click: clear previous inline keyboard if triggered via callback
+		if c.Callback() != nil {
+			_, _ = c.ClearKeyboard()
+		}
+
 		// Reset state upon completion
 		_ = fsmCtx.Reset()
 
@@ -210,6 +215,10 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 		if cb == nil {
 			return nil
 		}
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx != nil && fsmCtx.State() == "BOOKING_STEP_CONFIRMED" {
+			return c.AnswerCallbackAlert("Запись уже подтверждена! Начните новую из меню.")
+		}
 		parts := strings.Split(cb.Payload, ":")
 		if len(parts) < 4 {
 			return c.AnswerNotification("Ошибка слота")
@@ -219,7 +228,6 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 		slot := parts[3]
 
 		_ = wizard.Start(c)
-		fsmCtx := fsm.FromContext(c)
 		if fsmCtx != nil {
 			_ = fsmCtx.Set("service_id", srvID)
 			_ = fsmCtx.Set("slot", slot)
@@ -248,6 +256,11 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 
 	// Quick demo phone shortcut
 	b.OnCallbackPayload("booking:quick_phone", func(c *bot.Context) error {
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx == nil || fsmCtx.State() != "BOOKING_STEP_PHONE" {
+			return c.AnswerCallbackAlert("Это действие уже выполнено или не актуально")
+		}
+		_, _ = c.ClearKeyboard()
 		_ = c.AnswerNotification("Номер принят")
 		c.Update.Message = &maxbot.Message{
 			Body: maxbot.MessageBody{Text: "+7 (999) 123-45-67"},

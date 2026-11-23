@@ -213,6 +213,10 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 
 	// Pickup shortcut
 	b.OnCallbackPayload("ecom:pickup", func(c *bot.Context) error {
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx == nil || fsmCtx.State() != "ECOM_STEP_DELIVERY" {
+			return c.AnswerCallbackAlert("Это действие уже выполнено или не актуально")
+		}
 		_ = c.AnswerNotification("Самовывоз выбран")
 		return handleDelivery(c, "Пункт выдачи MAX Express (Самовывоз)")
 	})
@@ -222,6 +226,10 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		cb := c.Callback()
 		if cb == nil {
 			return nil
+		}
+		fsmCtx := fsm.FromContext(c)
+		if fsmCtx == nil || fsmCtx.State() != "ECOM_STEP_CHECKOUT" {
+			return c.AnswerCallbackAlert("Этот заказ уже оплачен или действие не актуально!")
 		}
 		parts := strings.Split(cb.Payload, ":")
 		if len(parts) < 6 {

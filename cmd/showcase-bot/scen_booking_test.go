@@ -92,3 +92,60 @@ func TestFindService(t *testing.T) {
 		t.Fatalf("expected nil for unknown service")
 	}
 }
+
+func TestBookingGhostButtonRejection(t *testing.T) {
+	hood := NewHoodEngine()
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	botInstance := bot.NewWithClient(nil)
+	botInstance.Use(fsm.Middleware(storage))
+	hood.RegisterRoutes(botInstance.Router())
+	RegisterBookingScenario(botInstance, hood)
+
+	userID := int64(111)
+	chatID := int64(222)
+	key := fsm.SessionKey{UserID: userID, ChatID: chatID}
+
+	makeCtx := func(text string, payload ...string) *bot.Context {
+		u := &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Sender:    &maxbot.User{UserID: userID},
+				Recipient: &maxbot.MessageRecipient{ChatID: chatID},
+				Body:      maxbot.MessageBody{Text: text},
+			},
+		}
+		if len(payload) > 0 {
+			u.Callback = &maxbot.Callback{
+				CallbackID: "cb_booking_test",
+				Payload:    payload[0],
+				User:       &maxbot.User{UserID: userID},
+			}
+		}
+		return bot.NewContext(context.Background(), nil, u)
+	}
+
+	// 1. Tapping quick_phone when not in BOOKING_STEP_PHONE state should not panic or start wizard
+	cQuickPhone := makeCtx("", "booking:quick_phone")
+	err := botInstance.Router().Handle(cQuickPhone)
+	if err != nil {
+		t.Fatalf("unexpected error on stale quick_phone callback: %v", err)
+	}
+	st, _ := storage.GetState(context.Background(), key)
+	if st != fsm.StateEmpty {
+		t.Fatalf("expected state to remain empty, got %s", st)
+	}
+
+	// 2. Set state to BOOKING_STEP_CONFIRMED and verify booking:slot is rejected
+	_ = storage.SetState(context.Background(), key, "BOOKING_STEP_CONFIRMED")
+	cSlot := makeCtx("", "booking:slot:srv_spa:Завтра, 14:30")
+	err = botInstance.Router().Handle(cSlot)
+	if err != nil {
+		t.Fatalf("unexpected error on stale slot callback: %v", err)
+	}
+	st, _ = storage.GetState(context.Background(), key)
+	if st != "BOOKING_STEP_CONFIRMED" {
+		t.Fatalf("expected state to remain BOOKING_STEP_CONFIRMED, got %s", st)
+	}
+}
