@@ -113,6 +113,11 @@ func RegisterWebappScenario(
 			"go_patterns_book":   "Книга «Паттерны микросервисов в Go»",
 		}
 
+		if targetUserID == 0 {
+			targetUserID = atomic.LoadInt64(&lastActiveUserID)
+			slog.Info("submit_cart fallback to lastActiveUserID", slog.Int64("user_id", targetUserID))
+		}
+
 		// Store order in persistence layer
 		if appStore != nil {
 			var orderItems []store.OrderItem
@@ -143,10 +148,6 @@ func RegisterWebappScenario(
 		}
 
 		sentToChat := false
-		if targetUserID == 0 {
-			targetUserID = atomic.LoadInt64(&lastActiveUserID)
-			slog.Info("submit_cart fallback to lastActiveUserID", slog.Int64("user_id", targetUserID))
-		}
 
 		if targetUserID != 0 && b.Client() != nil {
 			itemLines := make([]string, 0)
@@ -252,6 +253,11 @@ func RegisterWebappScenario(
 			userName = "Федор В"
 		}
 
+		if targetUserID == 0 {
+			targetUserID = atomic.LoadInt64(&lastActiveUserID)
+			slog.Info("book_service fallback to lastActiveUserID", slog.Int64("user_id", targetUserID))
+		}
+
 		// Store booking in persistence layer
 		if appStore != nil {
 			_ = appStore.CreateOrder(store.Order{
@@ -276,10 +282,6 @@ func RegisterWebappScenario(
 		}
 
 		sentToChat := false
-		if targetUserID == 0 {
-			targetUserID = atomic.LoadInt64(&lastActiveUserID)
-			slog.Info("book_service fallback to lastActiveUserID", slog.Int64("user_id", targetUserID))
-		}
 
 		if targetUserID != 0 && b.Client() != nil {
 			priceStr := "Бесплатно"
@@ -327,19 +329,28 @@ func RegisterWebappScenario(
 
 	// Endpoint: GET /api/webapp/orders
 	httpMux.HandleFunc("/api/webapp/orders", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		uidStr := r.URL.Query().Get("user_id")
 		uid, _ := strconv.ParseInt(uidStr, 10, 64)
+		if uid == 0 {
+			uid = atomic.LoadInt64(&lastActiveUserID)
+		}
 
-		var orders []store.Order
+		orders := make([]store.Order, 0)
 		if appStore != nil {
 			if uid == ownerUserID {
 				orders = appStore.ListAllOrders()
 			} else if uid != 0 {
 				orders = appStore.ListOrdersByUser(uid)
+				if len(orders) == 0 {
+					orders = appStore.ListAllOrders()
+				}
 			} else {
 				orders = appStore.ListAllOrders()
 			}
+		}
+		if orders == nil {
+			orders = make([]store.Order, 0)
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -847,11 +858,23 @@ func RegisterWebappScenario(
 
 		orderID := fmt.Sprintf("WEB-%d", time.Now().Unix()%100000)
 
+		userID := int64(0)
+		userName := "Федор В"
+		if cb := c.Callback(); cb != nil && cb.User != nil {
+			userID = cb.User.UserID
+			if cb.User.FirstName != "" {
+				userName = cb.User.FirstName
+			}
+		}
+		if userID == 0 {
+			userID = ownerUserID
+		}
+
 		if appStore != nil {
 			_ = appStore.CreateOrder(store.Order{
 				ID:       orderID,
-				UserID:   ownerUserID,
-				UserName: "Федор В",
+				UserID:   userID,
+				UserName: userName,
 				Items: []store.OrderItem{
 					{ID: "barista_coffee", Title: "Кофемашина Barista", Quantity: 1},
 					{ID: "pro_anc_headphones", Title: "Наушники Pro ANC", Quantity: 1},
@@ -875,11 +898,6 @@ func RegisterWebappScenario(
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
-
-		userID := int64(0)
-		if cb := c.Callback(); cb != nil && cb.User != nil {
-			userID = cb.User.UserID
-		}
 
 		formatted := hood.Format(userID, receipt, "webapp_security")
 		_, err := c.ReplyKeyboard(formatted, kb)

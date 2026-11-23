@@ -169,11 +169,43 @@ func main() {
 	}
 	defer appStore.Close()
 
+	if appStore != nil && len(appStore.ListAllOrders()) == 0 {
+		_ = appStore.CreateOrder(store.Order{
+			ID:           "WEB-48201",
+			UserID:       396393759,
+			UserName:     "Федор В",
+			Items: []store.OrderItem{
+				{ID: "barista_coffee", Title: "Премиум Кофемашина Barista 15bar", Quantity: 1, Price: 4990},
+				{ID: "gopher_hoodie", Title: "Худи Go Gopher Edition", Quantity: 1, Price: 3490},
+			},
+			Total:        8480,
+			DeliveryType: "delivery",
+			Address:      "г. Москва, ул. Тверская, д. 7",
+			Status:       "paid",
+			Verified:     true,
+			CreatedAt:    time.Now().Add(-2 * time.Hour),
+		})
+		_ = appStore.CreateOrder(store.Order{
+			ID:           "BOK-10942",
+			UserID:       396393759,
+			UserName:     "Федор В",
+			Items: []store.OrderItem{
+				{ID: "srv_audit", Title: "Архитектурный аудит Go / MAX", Quantity: 1, Price: 0},
+			},
+			Total:        0,
+			DeliveryType: "booking",
+			Address:      "Специалист: Lead Go Архитектор | Время: Завтра, 11:00",
+			Status:       "accepted",
+			Verified:     true,
+			CreatedAt:    time.Now().Add(-4 * time.Hour),
+		})
+	}
+
 	// 8. Register Core Routes, Menu & Scenarios
 	hood.RegisterRoutes(b.Router())
 	RegisterMenuRoutes(b, hood, aiClient)
-	RegisterEcomScenario(b, hood, paymentRouter)
-	RegisterBookingScenario(b, hood)
+	RegisterEcomScenario(b, hood, paymentRouter, appStore)
+	RegisterBookingScenario(b, hood, appStore)
 	RegisterQuizScenario(b, hood)
 	RegisterWebappScenario(b, hood, httpMux, token, *portFlag, appStore, client, aiClient, chatModel)
 	RegisterGuardScenario(b, hood, client)

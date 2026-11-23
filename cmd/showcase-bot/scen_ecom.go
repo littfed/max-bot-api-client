@@ -10,6 +10,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 	"github.com/littfed/max-bot-api-client/pkg/payments"
+	"github.com/littfed/max-bot-api-client/pkg/store"
 )
 
 // Product represents a demo catalog item.
@@ -37,7 +38,12 @@ func findProduct(id string) *Product {
 }
 
 // RegisterEcomScenario registers the complete E-Commerce & SBP checkout wizard and technical cards.
-func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.Router) {
+func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.Router, appStore ...*store.Store) {
+	var st *store.Store
+	if len(appStore) > 0 {
+		st = appStore[0]
+	}
+
 	// 1. Register Under-The-Hood technical cards
 	hood.Register("ecom_catalog", TechCard{
 		Title:       "Каталог товаров и FSM Сессии",
@@ -238,6 +244,46 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		orderID := parts[2]
 		amount, _ := strconv.ParseFloat(parts[3], 64)
 		userID, _ := strconv.ParseInt(parts[5], 10, 64)
+
+		userName := "Клиент"
+		if cb := c.Callback(); cb != nil && cb.User != nil {
+			if cb.User.FirstName != "" {
+				userName = cb.User.FirstName
+			}
+		}
+
+		// Store order in persistence layer if store is configured
+		if st != nil {
+			deliveryAddr := "г. Москва (по умолчанию)"
+			if fsmCtx := fsm.FromContext(c); fsmCtx != nil {
+				if d, _ := fsmCtx.GetData(); d != nil {
+					if addr, ok := d["delivery"].(string); ok && addr != "" {
+						deliveryAddr = addr
+					}
+				}
+			}
+			prodName := "Товар MAX Shop"
+			prodID := ""
+			for _, p := range demoCatalog {
+				if p.Price == amount {
+					prodName = p.Name
+					prodID = p.ID
+					break
+				}
+			}
+			_ = st.CreateOrder(store.Order{
+				ID:           orderID,
+				UserID:       userID,
+				UserName:     userName,
+				Items:        []store.OrderItem{{ID: prodID, Title: prodName, Quantity: 1, Price: int(amount)}},
+				Total:        int(amount),
+				DeliveryType: "delivery",
+				Address:      deliveryAddr,
+				Status:       "paid",
+				Verified:     true,
+				CreatedAt:    time.Now(),
+			})
+		}
 
 		// Anti-Ghost-Click: clear the payment keyboard on the previous message
 		_, _ = c.ClearKeyboard()

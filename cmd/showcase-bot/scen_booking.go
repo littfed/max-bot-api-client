@@ -8,6 +8,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
+	"github.com/littfed/max-bot-api-client/pkg/store"
 )
 
 // Service represents an appointment service option.
@@ -43,7 +44,12 @@ func findService(id string) *Service {
 }
 
 // RegisterBookingScenario registers the service booking flow, contact request handling, and technical cards.
-func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
+func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine, appStore ...*store.Store) {
+	var st *store.Store
+	if len(appStore) > 0 {
+		st = appStore[0]
+	}
+
 	// 1. Technical cards
 	hood.Register("booking_slots", TechCard{
 		Title:       "Сетка слотов и выбор времени",
@@ -114,8 +120,28 @@ func RegisterBookingScenario(b *bot.Bot, hood *HoodEngine) {
 		_ = fsmCtx.Reset()
 
 		userID := int64(0)
+		userName := "Клиент"
 		if sender := c.Sender(); sender != nil {
 			userID = sender.UserID
+			if sender.FirstName != "" {
+				userName = sender.FirstName
+			}
+		}
+
+		// Store booking in persistence layer if store is configured
+		if st != nil {
+			_ = st.CreateOrder(store.Order{
+				ID:           bookingID,
+				UserID:       userID,
+				UserName:     userName,
+				Items:        []store.OrderItem{{ID: srv.ID, Title: srv.Name, Quantity: 1, Price: int(srv.Price)}},
+				Total:        int(srv.Price),
+				DeliveryType: "booking",
+				Address:      fmt.Sprintf("Специалист: Консультант | Слот: %s | Телефон: %s | Длительность: %s", slot, phone, srv.Duration),
+				Status:       "accepted",
+				Verified:     true,
+				CreatedAt:    time.Now(),
+			})
 		}
 
 		priceStr := fmt.Sprintf("%.0f ₽", srv.Price)
