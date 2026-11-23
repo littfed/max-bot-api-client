@@ -6,6 +6,9 @@ const miniAppHTML = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>MAX Mini App Suite</title>
+  <!-- Telegram & MAX Messenger WebApp Bridges -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://st.max.ru/js/max-web-app.js"></script>
   <style>
     :root {
       --bg: #0c1017;
@@ -738,6 +741,7 @@ const miniAppHTML = `<!DOCTYPE html>
   <script>
     const OWNER_ID = 396393759;
     let currentUser = { id: 0, first_name: 'Пользователь', username: '' };
+    let rawInitData = '';
     let discountPercent = 0;
     let activeModalItem = null;
     let selectedStyle = 'Cyberpunk';
@@ -827,37 +831,72 @@ const miniAppHTML = `<!DOCTYPE html>
 
     function parseInitData() {
       try {
-        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.expand) {
-          window.Telegram.WebApp.expand();
-        }
-        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.disableVerticalSwipes) {
-          window.Telegram.WebApp.disableVerticalSwipes();
+        const tg = (window.Telegram && window.Telegram.WebApp) || window.WebApp || (window.Max && window.Max.WebApp) || window.MAX;
+        if (tg) {
+          if (tg.ready) tg.ready();
+          if (tg.expand) tg.expand();
+          if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+          if (tg.initData) rawInitData = tg.initData;
+          if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+            currentUser = Object.assign({}, currentUser, tg.initDataUnsafe.user);
+          }
         }
 
         let raw = window.location.search.substring(1);
         if (!raw && window.location.hash) {
-          raw = window.location.hash.substring(1).replace('tgWebAppData=', '');
+          raw = window.location.hash.substring(1).replace(/^#/, '').replace(/^tgWebAppData=/, '');
         }
-        if (!raw && window.Max && window.Max.WebApp && window.Max.WebApp.initData) {
-          raw = window.Max.WebApp.initData;
+        if (!raw && rawInitData) {
+          raw = rawInitData;
+        } else if (raw && !rawInitData) {
+          rawInitData = raw;
         }
+
         if (raw) {
           const params = new URLSearchParams(raw);
           const userStr = params.get('user');
           if (userStr) {
-            currentUser = JSON.parse(decodeURIComponent(userStr));
+            try {
+              currentUser = Object.assign({}, currentUser, JSON.parse(decodeURIComponent(userStr)));
+            } catch (_) {
+              try {
+                currentUser = Object.assign({}, currentUser, JSON.parse(userStr));
+              } catch (_) {}
+            }
           } else if (params.get('user_id')) {
-            currentUser.id = parseInt(params.get('user_id'), 10);
-            currentUser.first_name = params.get('first_name') || 'Пользователь';
+            currentUser.id = parseInt(params.get('user_id'), 10) || currentUser.id;
+            currentUser.first_name = params.get('first_name') || currentUser.first_name;
+            if (params.get('username')) currentUser.username = params.get('username');
           }
           if (params.get('promo')) {
-            document.getElementById('promo-code').value = params.get('promo');
-            applyPromo();
+            const promoEl = document.getElementById('promo-code');
+            if (promoEl) {
+              promoEl.value = params.get('promo');
+              applyPromo();
+            }
           }
           if (params.get('tab')) {
             const targetBtn = document.querySelector('[onclick*="' + params.get('tab') + '"]');
             if (targetBtn) switchTab(params.get('tab'), targetBtn);
           }
+        }
+
+        // LocalStorage cache persistence
+        if (currentUser.id && currentUser.id !== 0) {
+          try {
+            localStorage.setItem('max_user', JSON.stringify(currentUser));
+            if (rawInitData) localStorage.setItem('max_init_data', rawInitData);
+          } catch (_) {}
+        } else {
+          try {
+            const cachedUser = localStorage.getItem('max_user');
+            if (cachedUser) {
+              const u = JSON.parse(cachedUser);
+              if (u && u.id) currentUser = Object.assign({}, currentUser, u);
+            }
+            const cachedInit = localStorage.getItem('max_init_data');
+            if (cachedInit && !rawInitData) rawInitData = cachedInit;
+          } catch (_) {}
         }
       } catch (e) {
         console.error('InitData parse error:', e);
@@ -881,7 +920,7 @@ const miniAppHTML = `<!DOCTYPE html>
         const profName = document.getElementById('profile-name');
         if (profName) profName.innerText = currentUser.first_name + (currentUser.last_name ? ' ' + currentUser.last_name : '');
         const profID = document.getElementById('profile-id');
-        if (profID && currentUser.id) profID.innerText = 'MAX ID: ' + currentUser.id;
+        if (profID) profID.innerText = currentUser.id ? 'MAX ID: ' + currentUser.id : 'MAX ID: Демо (откройте из бота)';
         const profStatus = document.getElementById('profile-status');
         if (profStatus) profStatus.innerText = isOwner ? 'Владелец ⭐' : 'Клиент MAX';
 
@@ -1041,9 +1080,10 @@ const miniAppHTML = `<!DOCTYPE html>
         return;
       }
 
+      const currentInit = rawInitData || window.location.search.substring(1) || (localStorage.getItem('max_init_data') || '');
       const payload = {
         action: 'submit_cart',
-        init_data: window.location.search.substring(1),
+        init_data: currentInit,
         payload: {
           items: cart,
           discount_percent: discountPercent,
@@ -1059,7 +1099,13 @@ const miniAppHTML = `<!DOCTYPE html>
         });
         const data = await res.json();
         if (data.success) {
-          showToast('✅ Заказ оформлен! Номер: ' + (data.data.order_id || 'WEB') + '. Чек отправлен в чат.', 'success');
+          const sent = data.data && data.data.sent_to_chat;
+          const orderNum = (data.data && data.data.order_id) || 'WEB';
+          if (sent) {
+            showToast('✅ Заказ оформлен! Номер: ' + orderNum + '. Чек отправлен в чат.', 'success');
+          } else {
+            showToast('✅ Заказ оформлен! Номер: ' + orderNum + '. Сохранен в истории витрины.', 'info');
+          }
           triggerHaptic('success');
           // Clear cart on successful order
           for (const k in cart) cart[k] = 0;
@@ -1179,9 +1225,10 @@ const miniAppHTML = `<!DOCTYPE html>
       const spec = document.getElementById('booking-specialist').value;
       const comment = document.getElementById('booking-comment').value.trim();
 
+      const currentInit = rawInitData || window.location.search.substring(1) || (localStorage.getItem('max_init_data') || '');
       const payload = {
         action: 'book_service',
-        init_data: window.location.search.substring(1),
+        init_data: currentInit,
         payload: {
           service_id: selectedBookingService.id,
           service_name: selectedBookingService.name,
@@ -1202,7 +1249,13 @@ const miniAppHTML = `<!DOCTYPE html>
         });
         const data = await res.json();
         if (data.success) {
-          showToast('📅 Запись успешно подтверждена! Номер: ' + (data.data.booking_id || 'BOK') + ' на ' + selectedBookingSlot, 'success');
+          const sent = data.data && data.data.sent_to_chat;
+          const bookingNum = (data.data && data.data.booking_id) || 'BOK';
+          if (sent) {
+            showToast('📅 Запись успешно подтверждена! Номер: ' + bookingNum + ' на ' + selectedBookingSlot + '. Чек отправлен в чат.', 'success');
+          } else {
+            showToast('📅 Запись успешно подтверждена! Номер: ' + bookingNum + ' на ' + selectedBookingSlot, 'success');
+          }
           triggerHaptic('success');
           loadOrders();
         } else {
@@ -1265,8 +1318,13 @@ const miniAppHTML = `<!DOCTYPE html>
           placeholder.style.display = 'none';
           btnSend.style.display = 'block';
           if (sendToChat) {
-            showToast('🎨 Арт успешно отправлен в ваш чат мессенджера MAX!', 'success');
-            triggerHaptic('success');
+            if (data.sent_to_chat) {
+              showToast('🎨 Арт успешно отправлен в ваш чат мессенджера MAX!', 'success');
+              triggerHaptic('success');
+            } else {
+              showToast(data.message ? '⚠️ ' + data.message : '⚠️ Арт создан, но не удалось отправить в чат (откройте по ссылке из бота)', 'warning');
+              triggerHaptic('warning');
+            }
           } else {
             triggerHaptic('light');
           }

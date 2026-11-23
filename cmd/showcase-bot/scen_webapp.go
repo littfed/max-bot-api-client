@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/ai"
@@ -33,6 +35,17 @@ func RegisterWebappScenario(
 	chatModel string,
 ) {
 	const ownerUserID int64 = 396393759
+	var lastActiveUserID int64 = ownerUserID
+
+	// Track last active user so that unparameterized or demo Mini App actions can still route notifications to chat
+	b.Use(func(next bot.HandlerFunc) bot.HandlerFunc {
+		return func(c *bot.Context) error {
+			if c.Sender() != nil && c.Sender().UserID != 0 {
+				atomic.StoreInt64(&lastActiveUserID, c.Sender().UserID)
+			}
+			return next(c)
+		}
+	})
 
 	// 1. Technical cards
 	hood.Register("webapp_open_app", TechCard{
@@ -122,6 +135,12 @@ func RegisterWebappScenario(
 			})
 		}
 
+		sentToChat := false
+		if targetUserID == 0 {
+			targetUserID = atomic.LoadInt64(&lastActiveUserID)
+			slog.Info("submit_cart fallback to lastActiveUserID", slog.Int64("user_id", targetUserID))
+		}
+
 		if targetUserID != 0 && b.Client() != nil {
 			statusLine := "Подпись initData: `HMAC-SHA256 Verified ✅`"
 			if !isVerified {
@@ -158,15 +177,23 @@ func RegisterWebappScenario(
 
 			msgReq := &maxbot.SendMessageRequest{
 				Text:        text,
+				Format:      "markdown",
 				Attachments: []maxbot.Attachment{kb.ToAttachment()},
 			}
-			_, _ = b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUserID), msgReq)
+			_, sendErr := b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUserID), msgReq)
+			if sendErr != nil {
+				slog.Error("failed to send order confirmation to chat", slog.Int64("user_id", targetUserID), slog.Any("err", sendErr))
+			} else {
+				sentToChat = true
+				slog.Info("order confirmation sent to user chat", slog.Int64("user_id", targetUserID), slog.String("order_id", orderID))
+			}
 		}
 
 		return map[string]any{
-			"status":    "accepted",
-			"order_id":  orderID,
-			"timestamp": time.Now().Unix(),
+			"status":       "accepted",
+			"order_id":     orderID,
+			"sent_to_chat": sentToChat,
+			"timestamp":    time.Now().Unix(),
 		}, nil
 	})
 
@@ -247,6 +274,12 @@ func RegisterWebappScenario(
 			})
 		}
 
+		sentToChat := false
+		if targetUserID == 0 {
+			targetUserID = atomic.LoadInt64(&lastActiveUserID)
+			slog.Info("book_service fallback to lastActiveUserID", slog.Int64("user_id", targetUserID))
+		}
+
 		if targetUserID != 0 && b.Client() != nil {
 			statusLine := "Подпись initData: `HMAC-SHA256 Verified ✅`"
 			if !isVerified {
@@ -275,15 +308,23 @@ func RegisterWebappScenario(
 
 			msgReq := &maxbot.SendMessageRequest{
 				Text:        text,
+				Format:      "markdown",
 				Attachments: []maxbot.Attachment{kb.ToAttachment()},
 			}
-			_, _ = b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUserID), msgReq)
+			_, sendErr := b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUserID), msgReq)
+			if sendErr != nil {
+				slog.Error("failed to send booking confirmation to chat", slog.Int64("user_id", targetUserID), slog.Any("err", sendErr))
+			} else {
+				sentToChat = true
+				slog.Info("booking confirmation sent to user chat", slog.Int64("user_id", targetUserID), slog.String("booking_id", bookingID))
+			}
 		}
 
 		return map[string]any{
-			"status":     "accepted",
-			"booking_id": bookingID,
-			"timestamp":  time.Now().Unix(),
+			"status":       "accepted",
+			"booking_id":   bookingID,
+			"sent_to_chat": sentToChat,
+			"timestamp":    time.Now().Unix(),
 		}, nil
 	})
 
@@ -408,7 +449,6 @@ func RegisterWebappScenario(
 		}
 
 		var imgBytes []byte
-		var err error
 
 		if aiClient != nil {
 			aiCtx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
@@ -441,25 +481,47 @@ func RegisterWebappScenario(
 		dataURL := "data:image/png;base64," + b64Data
 
 		sentToChat := false
-		if req.SendToChat && req.UserID != 0 && b.Client() != nil && len(imgBytes) > 0 {
-			uploadResp, uploadErr := b.Client().UploadMedia(context.Background(), maxbot.UploadTypeImage, "ai_artwork.png", bytes.NewReader(imgBytes))
-			if uploadErr == nil && uploadResp != nil && uploadResp.Token != "" {
-				att := maxbot.Attachment{
-					Type: maxbot.UploadTypeImage,
-					Payload: map[string]any{
-						"token": uploadResp.Token,
-					},
+		var sendErrMsg string
+		if req.SendToChat && b.Client() != nil && len(imgBytes) > 0 {
+			targetUID := req.UserID
+			if targetUID == 0 {
+				targetUID = atomic.LoadInt64(&lastActiveUserID)
+				slog.Info("generate_image fallback to lastActiveUserID", slog.Int64("user_id", targetUID))
+			}
+			if targetUID != 0 {
+				uploadResp, uploadErr := b.Client().UploadMedia(context.Background(), maxbot.UploadTypeImage, "ai_artwork.png", bytes.NewReader(imgBytes))
+				if uploadErr == nil && uploadResp != nil && uploadResp.Token != "" {
+					att := maxbot.Attachment{
+						Type: maxbot.UploadTypeImage,
+						Payload: map[string]any{
+							"token": uploadResp.Token,
+						},
+					}
+					caption := fmt.Sprintf("🎨 **Ваш AI-арт из Mini App:**\n\n«%s»\n\n*Сгенерировано в AI Studio через WebBridge*", fullPrompt)
+					kb := maxbot.NewInlineKeyboard().
+						Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+					_, sendErr := b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUID), &maxbot.SendMessageRequest{
+						Text:        caption,
+						Format:      "markdown",
+						Attachments: []maxbot.Attachment{att, kb.ToAttachment()},
+					})
+					if sendErr == nil {
+						sentToChat = true
+						slog.Info("ai image sent to user chat", slog.Int64("user_id", targetUID))
+					} else {
+						sendErrMsg = sendErr.Error()
+						slog.Error("failed to send ai image to chat", slog.Int64("user_id", targetUID), slog.Any("err", sendErr))
+					}
+				} else {
+					if uploadErr != nil {
+						sendErrMsg = uploadErr.Error()
+					} else {
+						sendErrMsg = "empty upload token"
+					}
+					slog.Error("failed to upload ai image media", slog.Any("err", uploadErr))
 				}
-				caption := fmt.Sprintf("🎨 **Ваш AI-арт из Mini App:**\n\n«%s»\n\n*Сгенерировано в AI Studio через WebBridge*", fullPrompt)
-				kb := maxbot.NewInlineKeyboard().
-					Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
-				_, err = b.Client().SendMessage(context.Background(), maxbot.ToUser(req.UserID), &maxbot.SendMessageRequest{
-					Text:        caption,
-					Attachments: []maxbot.Attachment{att, kb.ToAttachment()},
-				})
-				if err == nil {
-					sentToChat = true
-				}
+			} else {
+				sendErrMsg = "неизвестен ID пользователя"
 			}
 		}
 
@@ -468,6 +530,7 @@ func RegisterWebappScenario(
 			"image_url":    dataURL,
 			"prompt":       fullPrompt,
 			"sent_to_chat": sentToChat,
+			"message":      sendErrMsg,
 		})
 	})
 
@@ -639,8 +702,8 @@ func RegisterWebappScenario(
 		http.NotFound(w, r)
 	})
 
-	// 3. Scenario Launch Route (scen:webapp)
-	b.OnCallbackPayload("scen:webapp", func(c *bot.Context) error {
+	// 3. Scenario Launch Route (scen:webapp and /app commands)
+	openMiniAppHandler := func(c *bot.Context) error {
 		_ = c.AnswerCallback(nil)
 
 		botUsername := strings.TrimSpace(os.Getenv("WEBAPP_BOT_USERNAME"))
@@ -662,7 +725,11 @@ func RegisterWebappScenario(
 		userID := int64(0)
 		firstName := ""
 		username := ""
-		if cb := c.Callback(); cb != nil && cb.User != nil {
+		if c.Sender() != nil {
+			userID = c.Sender().UserID
+			firstName = c.Sender().FirstName
+			username = c.Sender().Username
+		} else if cb := c.Callback(); cb != nil && cb.User != nil {
 			userID = cb.User.UserID
 			firstName = cb.User.FirstName
 			username = cb.User.Username
@@ -682,7 +749,7 @@ func RegisterWebappScenario(
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(appBtn).
-			Row(maxbot.NewLinkButton("🌐 Открыть Mini App (combot.littfed.ru/maxapp)", appURLWithAuth)).
+			Row(maxbot.NewLinkButton("🌐 Открыть Mini App (персональная ссылка)", appURLWithAuth)).
 			Row(maxbot.NewIntentCallbackButton("🧪 Симулировать заказ из Mini App", "webapp:simulate_order", maxbot.IntentPositive)).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
@@ -693,12 +760,19 @@ func RegisterWebappScenario(
 			"• ✨ **AI Студия:** генератор артов (Text-to-Image) с отправкой в чат + быстрый LLM-чат с выбором моделей.\n" +
 			"• ✍️ **Студия каналов:** SMM-редактор, автогенерация постов через Gemini, превью и публикация.\n" +
 			"• 🎁 **Бонусы & Заказы:** Колесо фортуны, интерактивный MAX API Квиз и общая история активности.\n\n" +
-			"💡 *Откройте Mini App по веб-ссылке или через нативную кнопку `open_app`:*"
+			"💡 *Откройте Mini App по персональной веб-ссылке или через нативную кнопку `open_app`:*"
 
 		formatted := hood.Format(userID, text, "webapp_open_app")
 		_, err := c.EditOrReplyKeyboard(formatted, kb)
 		return err
-	})
+	}
+
+	b.OnCallbackPayload("scen:webapp", openMiniAppHandler)
+	b.OnCommand("app", openMiniAppHandler)
+	b.OnCommand("webapp", openMiniAppHandler)
+	b.OnCommand("shop", openMiniAppHandler)
+	b.OnCommand("store", openMiniAppHandler)
+	b.OnCommand("miniapp", openMiniAppHandler)
 
 	// Simulate order callback
 	b.OnCallbackPayload("webapp:simulate_order", func(c *bot.Context) error {
