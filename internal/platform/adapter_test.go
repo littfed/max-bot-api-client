@@ -70,6 +70,30 @@ func (m *mockMaxBotClient) GetChatMembers(ctx context.Context, chatID int64, mar
 	return &maxbot.ChatMembersResponse{Members: members}, nil
 }
 
+type mockPaginationStuckClient struct {
+	calls int
+}
+
+func (m *mockPaginationStuckClient) SendMessage(ctx context.Context, recipient maxbot.Recipient, msg *maxbot.SendMessageRequest) (*maxbot.Message, error) {
+	return nil, nil
+}
+func (m *mockPaginationStuckClient) EditMessage(ctx context.Context, messageID string, msg *maxbot.EditMessageRequest) (*maxbot.Message, error) {
+	return nil, nil
+}
+func (m *mockPaginationStuckClient) AnswerCallback(ctx context.Context, callbackID string, answer *maxbot.AnswerCallbackRequest) error {
+	return nil
+}
+func (m *mockPaginationStuckClient) GetChatMembers(ctx context.Context, chatID int64, marker ...int64) (*maxbot.ChatMembersResponse, error) {
+	m.calls++
+	if m.calls > 5 {
+		panic("infinite loop detected in GetChatMembers")
+	}
+	return &maxbot.ChatMembersResponse{
+		Members: []maxbot.ChatMember{{UserID: 1}},
+		Marker:  5,
+	}, nil
+}
+
 func TestMAXAdapter_SendMessage(t *testing.T) {
 	mockClient := &mockMaxBotClient{}
 	adapter := max.NewAdapter(mockClient)
@@ -237,6 +261,14 @@ func TestMAXAdapter_CheckMembership(t *testing.T) {
 	isMember, err = adapter.CheckMembership(context.Background(), "1001", "50")
 	if err != nil || isMember {
 		t.Errorf("Expected user 50 not to be member: isMember=%v, err=%v", isMember, err)
+	}
+
+	// Pagination loop termination guard (resp.Marker == marker)
+	stuckClient := &mockPaginationStuckClient{}
+	stuckAdapter := max.NewAdapter(stuckClient)
+	isMember, err = stuckAdapter.CheckMembership(context.Background(), "1001", "999")
+	if err != nil || isMember {
+		t.Errorf("Expected stuck pagination to terminate with false, got isMember=%v, err=%v", isMember, err)
 	}
 }
 
@@ -427,6 +459,30 @@ func TestTelegramAdapter_CheckMembership(t *testing.T) {
 	if err != nil || !isMember {
 		t.Errorf("Expected isMember=true for administrator, got %v (err: %v)", isMember, err)
 	}
+
+	// Case 4: Non-member Telegram API errors ("user not found", "PARTICIPANT_ID_INVALID", "chat not found")
+	for _, notFoundErr := range []string{
+		"Bad Request: user not found",
+		"Bad Request: PARTICIPANT_ID_INVALID",
+		"Bad Request: chat not found",
+	} {
+		errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"ok":false,"error_code":400,"description":%q}`+"\n", notFoundErr)
+		}))
+		errAdapter := telegram.NewAdapter("test-token",
+			telegram.WithBaseURL(errSrv.URL),
+			telegram.WithHTTPClient(errSrv.Client()),
+		)
+		isMember, err = errAdapter.CheckMembership(context.Background(), "-10012345", "42")
+		errSrv.Close()
+		if err != nil {
+			t.Errorf("[%s] Expected nil error, got %v", notFoundErr, err)
+		}
+		if isMember {
+			t.Errorf("[%s] Expected isMember=false, got true", notFoundErr)
+		}
+	}
 }
 
 func TestButton_EffectiveType_And_CallbackData(t *testing.T) {
@@ -554,6 +610,11 @@ func TestTelegramAdapter_ErrorHandling(t *testing.T) {
 	}
 	if _, err := adapter.CheckMembership(ctx, "123", "non-num"); err == nil {
 		t.Error("Expected error for invalid userID")
+	}
+
+	// 3. EditMessage bare numeric messageID validation error
+	if err := adapter.EditMessage(ctx, "12345", &platform.OutMessage{Text: "hi"}); err == nil || !strings.Contains(err.Error(), "chat message edit requires composite 'chatID:messageID'") {
+		t.Errorf("Expected bare numeric edit error, got %v", err)
 	}
 }
 

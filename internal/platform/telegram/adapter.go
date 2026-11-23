@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -155,8 +156,8 @@ func (a *Adapter) EditMessage(ctx context.Context, messageID string, body *platf
 		} else {
 			payload["message_id"] = parts[1]
 		}
-	} else if mid, err := strconv.ParseInt(messageID, 10, 64); err == nil {
-		payload["message_id"] = mid
+	} else if _, err := strconv.ParseInt(messageID, 10, 64); err == nil {
+		return errors.New("telegram: chat message edit requires composite 'chatID:messageID' format or inline_message_id")
 	} else {
 		payload["inline_message_id"] = messageID
 	}
@@ -200,6 +201,12 @@ func (a *Adapter) CheckMembership(ctx context.Context, chatID string, userID str
 		Status string `json:"status"`
 	}
 	if err := a.call(ctx, "getChatMember", payload, &resp); err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "user not found") ||
+			strings.Contains(errStr, "PARTICIPANT_ID_INVALID") ||
+			strings.Contains(errStr, "chat not found") {
+			return false, nil
+		}
 		return false, err
 	}
 

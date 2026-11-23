@@ -141,7 +141,7 @@ func (a *Adapter) CheckMembership(ctx context.Context, chatID string, userID str
 				return true, nil
 			}
 		}
-		if resp.Marker == 0 || len(resp.Members) == 0 {
+		if resp.Marker == 0 || resp.Marker == marker || len(resp.Members) == 0 {
 			break
 		}
 		marker = resp.Marker
