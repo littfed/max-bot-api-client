@@ -654,8 +654,8 @@ func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUs
 	var identityID, userID int64
 	err := s.db.QueryRowContext(ctx, findQuery, platform, platformUserID).Scan(&identityID, &userID)
 	if err == nil {
-		// Update user identity metadata if changed
-		updateQuery := `UPDATE user_identities SET username = $1, first_name = $2, phone = $3 WHERE id = $4;`
+		// Update user identity metadata if changed, preserving phone if new one is empty
+		updateQuery := `UPDATE user_identities SET username = COALESCE(NULLIF($1, ''), username), first_name = COALESCE(NULLIF($2, ''), first_name), phone = COALESCE(NULLIF($3, ''), phone) WHERE id = $4;`
 		_, _ = s.db.ExecContext(ctx, updateQuery, username, firstName, phone, identityID)
 
 		var u User
@@ -668,7 +668,13 @@ func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUs
 		return nil, fmt.Errorf("failed to lookup user identity: %w", err)
 	}
 
-	// 2. Not found: create new user
+	// 2. Not found: create new user and identity atomically within a transaction
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	now := time.Now()
 	var user User
 	user.ActiveModeID = "shop"
@@ -680,13 +686,13 @@ func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUs
 	if s.dialect == "postgres" {
 		insertUserQuery := `INSERT INTO users (active_mode_id, role, timezone, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5) RETURNING id;`
-		if err := s.db.QueryRowContext(ctx, insertUserQuery, user.ActiveModeID, user.Role, user.Timezone, user.CreatedAt, user.UpdatedAt).Scan(&user.ID); err != nil {
+		if err := tx.QueryRowContext(ctx, insertUserQuery, user.ActiveModeID, user.Role, user.Timezone, user.CreatedAt, user.UpdatedAt).Scan(&user.ID); err != nil {
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
 	} else {
 		insertUserQuery := `INSERT INTO users (active_mode_id, role, timezone, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5);`
-		res, err := s.db.ExecContext(ctx, insertUserQuery, user.ActiveModeID, user.Role, user.Timezone, user.CreatedAt, user.UpdatedAt)
+		res, err := tx.ExecContext(ctx, insertUserQuery, user.ActiveModeID, user.Role, user.Timezone, user.CreatedAt, user.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create user in sqlite: %w", err)
 		}
@@ -699,8 +705,12 @@ VALUES ($1, $2, $3, $4, $5);`
 	// 3. Create identity linked to user
 	insertIdentQuery := `INSERT INTO user_identities (user_id, platform, platform_user_id, username, first_name, phone, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7);`
-	if _, err := s.db.ExecContext(ctx, insertIdentQuery, user.ID, platform, platformUserID, username, firstName, phone, now); err != nil {
+	if _, err := tx.ExecContext(ctx, insertIdentQuery, user.ID, platform, platformUserID, username, firstName, phone, now); err != nil {
 		return nil, fmt.Errorf("failed to create user identity: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit user and identity transaction: %w", err)
 	}
 
 	return &user, nil

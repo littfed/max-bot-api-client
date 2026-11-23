@@ -1,4 +1,6 @@
 -- +goose Up
+DO $$ BEGIN CREATE EXTENSION IF NOT EXISTS vector; EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'pgvector not available; using FTS fallback'; END $$;
+
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     active_mode_id VARCHAR(32) NOT NULL DEFAULT 'shop',

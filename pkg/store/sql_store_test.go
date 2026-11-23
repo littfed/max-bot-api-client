@@ -263,6 +263,23 @@ func TestBotHubStore_UserAndModeState(t *testing.T) {
 		t.Errorf("Expected same user ID %d, got %d", user.ID, user2.ID)
 	}
 
+	// Resolve again with empty phone should preserve existing phone
+	user3, err := store.ResolveUserIdentity(ctx, "max", "user_123", "newuser", "Test2", "")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity with empty phone failed: %v", err)
+	}
+	if user3.ID != user.ID {
+		t.Errorf("Expected same user ID %d, got %d", user.ID, user3.ID)
+	}
+	var savedPhone string
+	err = store.db.QueryRowContext(ctx, "SELECT phone FROM user_identities WHERE platform = 'max' AND platform_user_id = 'user_123'").Scan(&savedPhone)
+	if err != nil {
+		t.Fatalf("failed to query identity phone: %v", err)
+	}
+	if savedPhone != "+79991234567" {
+		t.Errorf("expected preserved phone '+79991234567', got %q", savedPhone)
+	}
+
 	// Save and get composite mode state
 	state := &UserModeState{
 		UserID:      user.ID,
