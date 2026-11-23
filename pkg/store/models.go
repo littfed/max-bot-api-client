@@ -145,3 +145,109 @@ type MascotPhrase struct {
 	IsActive    bool   `json:"is_active"`
 }
 
+// Product represents an item or subscription in the Shop catalog.
+type Product struct {
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	Description    string `json:"description"`
+	Price          int    `json:"price"`
+	Category       string `json:"category"`
+	ItemType       string `json:"item_type"` // "digital", "subscription"
+	ContentPayload string `json:"content_payload"`
+	IsActive       bool   `json:"is_active"`
+}
+
+// Service represents a bookable service in the Reception module.
+type Service struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	DurationMinutes int    `json:"duration_minutes"`
+	Price           int    `json:"price"`
+	Description     string `json:"description"`
+}
+
+// TimeSlot represents a time slot for a service booking.
+type TimeSlot struct {
+	ID             string    `json:"id"`
+	ServiceID      string    `json:"service_id"`
+	SlotTime       time.Time `json:"slot_time"`
+	IsBooked       bool      `json:"is_booked"`
+	BookedByUserID *int64    `json:"booked_by_user_id,omitempty"`
+}
+
+// Booking represents a confirmed service booking.
+type Booking struct {
+	ID        string    `json:"id"`
+	UserID    int64     `json:"user_id"`
+	ServiceID string    `json:"service_id"`
+	SlotTime  time.Time `json:"slot_time"`
+	Status    string    `json:"status"` // "confirmed", "cancelled"
+	Notes     string    `json:"notes,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Event represents an event in the Reception module.
+type Event struct {
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	EventTime   time.Time `json:"event_time"`
+	TotalSeats  int       `json:"total_seats"`
+	BookedSeats int       `json:"booked_seats"`
+}
+
+// EventRegistration represents a user's registration for an event.
+type EventRegistration struct {
+	ID           string    `json:"id"`
+	EventID      string    `json:"event_id"`
+	UserID       int64     `json:"user_id"`
+	TicketQR     string    `json:"ticket_qr"`
+	RegisteredAt time.Time `json:"registered_at"`
+}
+
+// OnboardingSubmission represents a user's completed questionnaire.
+type OnboardingSubmission struct {
+	ID        int64           `json:"id"`
+	UserID    int64           `json:"user_id"`
+	Answers   json.RawMessage `json:"answers"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// KnowledgeChunk represents a chunk in the knowledge base for RAG.
+type KnowledgeChunk struct {
+	ID        int64  `json:"id"`
+	DocID     int64  `json:"doc_id"`
+	ModeScope string `json:"mode_scope"`
+	ChunkText string `json:"chunk_text"`
+}
+
+// SupportTicket represents a customer support ticket.
+type SupportTicket struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Platform  string    `json:"platform"`
+	ModeScope string    `json:"mode_scope"`
+	Subject   string    `json:"subject"`
+	Status    string    `json:"status"` // "open", "answered", "closed"
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SupportMessage represents a message within a support ticket.
+type SupportMessage struct {
+	ID          int64     `json:"id"`
+	TicketID    int64     `json:"ticket_id"`
+	SenderType  string    `json:"sender_type"` // "user", "operator", "bot"
+	MessageText string    `json:"message_text"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ChatSession represents an LLM conversation session with history.
+type ChatSession struct {
+	ID        int64           `json:"id"`
+	UserID    int64           `json:"user_id"`
+	RoleID    int             `json:"role_id"`
+	ToneID    int             `json:"tone_id"`
+	Messages  json.RawMessage `json:"messages"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
