@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -521,5 +522,144 @@ func TestOrchestrator_CallbackHandling(t *testing.T) {
 	}
 	if resp.Text != "Товар добавлен в корзину" {
 		t.Errorf("Unexpected text: %s", resp.Text)
+	}
+}
+
+type mockErrStore struct {
+	err error
+}
+
+func (m *mockErrStore) GetUserModeState(ctx context.Context, userID int64, modeID string) (*store.UserModeState, error) {
+	return nil, m.err
+}
+
+func (m *mockErrStore) SaveUserModeState(ctx context.Context, state *store.UserModeState) error {
+	return m.err
+}
+
+func TestCompositeFSM_DBError(t *testing.T) {
+	ctx := context.Background()
+	expectedErr := errors.New("connection reset by peer")
+	fsm := core.NewCompositeFSM(&mockErrStore{err: expectedErr}, nil)
+
+	st, err := fsm.Get(ctx, 42, "shop")
+	if err == nil {
+		t.Fatalf("Expected error when DB fails, got state: %+v", st)
+	}
+	if !errors.Is(err, expectedErr) && !strings.Contains(err.Error(), "connection reset by peer") {
+		t.Errorf("Expected db error to be wrapped, got %v", err)
+	}
+}
+
+func TestOrchestrator_ResetState(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestStore(t)
+	fsm := core.NewCompositeFSM(s, nil)
+	lockMgr := core.NewLockManager(nil)
+	guard := core.NewMaintenanceGuard(s, nil)
+	orch := core.NewOrchestrator(s, fsm, lockMgr, guard)
+
+	// Pre-populate state
+	_ = fsm.Set(ctx, 1, "shop", "checkout", []byte(`{"order_id":100}`))
+
+	shopMod := &mockModule{
+		id:    "shop",
+		title: "Магазин",
+		replyResult: &core.ModuleResult{
+			Text:       "Заказ оформлен!",
+			ResetState: true,
+			Handled:    true,
+		},
+	}
+	orch.RegisterModule(shopMod)
+
+	event := &core.DomainEvent{
+		Type:           core.EventTypeMessage,
+		Platform:       "max",
+		PlatformUserID: "user_reset",
+		Message: &core.IncomingMessage{
+			ID:             "msg_r",
+			ChatID:         777,
+			Platform:       "max",
+			PlatformUserID: "user_reset",
+			Text:           "Завершить заказ",
+			CreatedAt:      time.Now(),
+		},
+	}
+
+	resp, err := orch.ProcessEvent(ctx, event)
+	if err != nil {
+		t.Fatalf("ProcessEvent failed: %v", err)
+	}
+	if !resp.Handled {
+		t.Errorf("Expected handled true")
+	}
+
+	// Verify state is reset
+	st, err := fsm.Get(ctx, resp.UserID, "shop")
+	if err != nil {
+		t.Fatalf("fsm.Get failed: %v", err)
+	}
+	if st.CurrentStep != "" || string(st.Payload) != "{}" {
+		t.Errorf("Expected reset state with empty step and {}, got step=%q payload=%s", st.CurrentStep, string(st.Payload))
+	}
+}
+
+func TestOrchestrator_QuotaLimit(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestStore(t)
+	fsm := core.NewCompositeFSM(s, nil)
+	lockMgr := core.NewLockManager(nil)
+	guard := core.NewMaintenanceGuard(s, nil)
+	orch := core.NewOrchestrator(s, fsm, lockMgr, guard)
+
+	shopMod := &mockModule{
+		id:    "shop",
+		title: "Магазин",
+		replyResult: &core.ModuleResult{
+			Text:    "OK",
+			Handled: true,
+		},
+	}
+	orch.RegisterModule(shopMod)
+
+	u, err := s.ResolveUserIdentity(ctx, "max", "user_quota", "user", "Quota", "")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity failed: %v", err)
+	}
+	_ = u
+
+	event := &core.DomainEvent{
+		Type:           core.EventTypeMessage,
+		Platform:       "max",
+		PlatformUserID: "user_quota",
+		Message: &core.IncomingMessage{
+			ID:             "msg_q",
+			ChatID:         111,
+			Platform:       "max",
+			PlatformUserID: "user_quota",
+			Text:           "запрос",
+			CreatedAt:      time.Now(),
+		},
+	}
+
+	// Loop 100 times to exhaust quota
+	for i := 0; i < 100; i++ {
+		r, err := orch.ProcessEvent(ctx, event)
+		if err != nil {
+			t.Fatalf("ProcessEvent request %d failed: %v", i, err)
+		}
+		if r.Text == "Суточный лимит операций в этом режиме исчерпан. Оставьте заявку: /lead" {
+			t.Fatalf("Quota should not be reached at iteration %d", i)
+		}
+	}
+
+	// 101st request must hit quota limit
+	resp, err := orch.ProcessEvent(ctx, event)
+	if err != nil {
+		t.Fatalf("ProcessEvent 101 failed: %v", err)
+	}
+	if !strings.Contains(resp.Text, "Суточный лимит операций в этом режиме исчерпан") {
+		t.Errorf("Expected quota message, got: %q", resp.Text)
 	}
 }

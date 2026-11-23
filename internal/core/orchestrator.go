@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,8 @@ type Orchestrator struct {
 	guard       *MaintenanceGuard
 	mu          sync.RWMutex
 	modules     map[string]BotModule
+	quotasMu    sync.Mutex
+	memQuotas   map[string]int
 }
 
 // NewOrchestrator creates a new Core Orchestrator.
@@ -44,6 +47,7 @@ func NewOrchestrator(
 		lockManager: lockManager,
 		guard:       guard,
 		modules:     make(map[string]BotModule),
+		memQuotas:   make(map[string]int),
 	}
 }
 
@@ -156,8 +160,34 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 		}
 	}
 
-	// 5. Quota Check: daily quota protection
-	// (Modes have daily quota configured in mode_configs; Etap 1 enforces safety limit)
+	// 5. Quota Check: daily quota protection per user and mode
+	dailyQuota := 100
+	if o.store != nil {
+		configs, err := o.store.GetModeConfigs(ctx)
+		if err == nil {
+			for _, cfg := range configs {
+				if cfg.ModeID == activeMode {
+					if cfg.DailyQuota > 0 {
+						dailyQuota = cfg.DailyQuota
+					}
+					break
+				}
+			}
+		}
+	}
+	quotaKey := fmt.Sprintf("bothub:quota:%d:%s:%s", user.ID, activeMode, time.Now().Format("20060102"))
+	allowed, err := o.checkAndIncrementQuota(ctx, quotaKey, dailyQuota)
+	if err != nil {
+		return nil, fmt.Errorf("orchestrator: quota check failed: %w", err)
+	}
+	if !allowed {
+		return &DomainResponse{
+			UserID:       user.ID,
+			ActiveModeID: activeMode,
+			Text:         "Суточный лимит операций в этом режиме исчерпан. Оставьте заявку: /lead",
+			Handled:      true,
+		}, nil
+	}
 
 	// 6. Module Dispatch: delegate event to registered virtual bot module
 	o.mu.RLock()
@@ -198,8 +228,12 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 		}, nil
 	}
 
-	// 7. Unlock & Persistence: persist updated FSM step and payload
-	if modResult.NewStep != "" || len(modResult.NewPayload) > 0 {
+	// 7. Unlock & Persistence: persist updated FSM step and payload or reset
+	if modResult.ResetState {
+		if err := o.fsm.Reset(ctx, user.ID, activeMode); err != nil {
+			return nil, fmt.Errorf("orchestrator: failed to reset fsm state: %w", err)
+		}
+	} else if modResult.NewStep != "" || len(modResult.NewPayload) > 0 {
 		newStep := modResult.NewStep
 		if newStep == "" {
 			newStep = state.CurrentStep
@@ -341,4 +375,41 @@ func (o *Orchestrator) activeModeButtons(ctx context.Context) [][]ResponseButton
 			{Text: "💬 Общение", Data: "mode:select:chat"},
 		},
 	}
+}
+
+func (o *Orchestrator) checkAndIncrementQuota(ctx context.Context, key string, limit int) (bool, error) {
+	// 1. If Redis is available, check / increment via Redis
+	if o.lockManager != nil && o.lockManager.redisClient != nil {
+		if rc, ok := o.lockManager.redisClient.(interface {
+			Incr(ctx context.Context, key string) (int64, error)
+		}); ok {
+			count, err := rc.Incr(ctx, key)
+			if err == nil {
+				return count <= int64(limit), nil
+			}
+		}
+		if rc, ok := o.lockManager.redisClient.(RedisClient); ok {
+			val, _ := rc.Get(ctx, key)
+			curr := 0
+			if val != "" {
+				curr, _ = strconv.Atoi(val)
+			}
+			if curr >= limit {
+				return false, nil
+			}
+			_ = rc.Set(ctx, key, strconv.Itoa(curr+1), 24*time.Hour)
+			return true, nil
+		}
+	}
+
+	// 2. Local memory counter
+	o.quotasMu.Lock()
+	defer o.quotasMu.Unlock()
+
+	curr := o.memQuotas[key]
+	if curr >= limit {
+		return false, nil
+	}
+	o.memQuotas[key] = curr + 1
+	return true, nil
 }

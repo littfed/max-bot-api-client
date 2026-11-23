@@ -82,6 +82,7 @@ type ModuleResult struct {
 	Buttons    [][]ResponseButton `json:"buttons,omitempty"`
 	NewStep    string             `json:"new_step,omitempty"`
 	NewPayload json.RawMessage    `json:"new_payload,omitempty"`
+	ResetState bool               `json:"reset_state,omitempty"`
 	Handled    bool               `json:"handled"`
 }
 

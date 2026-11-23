@@ -67,6 +67,20 @@ func NewRedisStorageFromClient(client RedisClient, prefix string, ttl time.Durat
 	}
 }
 
+// Client returns the underlying RedisClient.
+func (r *RedisStorage) Client() RedisClient {
+	return r.client
+}
+
+// NewRedisClient creates a RedisClient using the built-in lightweight RESP client.
+func NewRedisClient(addr string, opts ...RedisOptions) RedisClient {
+	var opt RedisOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	return newRespClient(addr, opt.Password, opt.DB, opt.Timeout)
+}
+
 // ParseRedisURL parses a Redis connection string into host:port and RedisOptions.
 // Supported formats: redis://[:password@]host[:port][/db] or host:port.
 func ParseRedisURL(rawURL string) (string, RedisOptions, error) {
@@ -443,6 +457,37 @@ func (c *respClient) SetNX(ctx context.Context, key string, value string, ttl ti
 		}
 	}
 	return false, nil
+}
+
+func (c *respClient) Incr(ctx context.Context, key string) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	conn, r, err := c.getConn()
+	if err != nil {
+		return 0, err
+	}
+
+	cmd := formatRESPCommand("INCR", key)
+	_ = conn.SetDeadline(time.Now().Add(c.timeout))
+	if _, err := conn.Write([]byte(cmd)); err != nil {
+		c.closeConn()
+		return 0, err
+	}
+
+	res, err := readRESP(r)
+	if err != nil {
+		c.closeConn()
+		return 0, err
+	}
+
+	if n, ok := res.(int64); ok {
+		return n, nil
+	}
+	if str, ok := res.(string); ok && strings.HasPrefix(str, "ERR") {
+		return 0, errors.New(str)
+	}
+	return 0, fmt.Errorf("unexpected incr response: %v", res)
 }
 
 func (c *respClient) Del(ctx context.Context, keys ...string) error {

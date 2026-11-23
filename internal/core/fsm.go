@@ -87,7 +87,7 @@ func (f *CompositeFSM) Get(ctx context.Context, userID int64, modeID string) (*S
 			return st, nil
 		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			// If not a "no rows" error, check memory before failing
+			return nil, fmt.Errorf("fsm: failed to get user mode state: %w", err)
 		}
 	}
 
@@ -158,4 +158,9 @@ func (f *CompositeFSM) Set(ctx context.Context, userID int64, modeID string, ste
 	f.mu.Unlock()
 
 	return nil
+}
+
+// Reset clears the state back to empty initial step and payload.
+func (f *CompositeFSM) Reset(ctx context.Context, userID int64, modeID string) error {
+	return f.Set(ctx, userID, modeID, "", []byte("{}"))
 }
