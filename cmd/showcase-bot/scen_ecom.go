@@ -130,7 +130,7 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			"• **Товар:** %s %s\n"+
 			"• **Стоимость:** %.0f ₽\n"+
 			"• **Адрес доставки:** %s\n\n"+
-			"💡 *Для боевой проверки доступна реальная ссылка СБП, либо нажмите «Симулировать оплату» для мгновенной проверки без списания.*",
+			"Выберите способ оплаты ниже для завершения оформления заказа:",
 			orderID, prod.Icon, prod.Name, prod.Price, deliveryText)
 
 		formatted := hood.Format(userID, summary, "ecom_sbp")
@@ -170,9 +170,8 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 			userID = cb.User.UserID
 		}
 
-		text := "🛍️ **Демонстрационный магазин MAX Shop**\n\n" +
-			"Этот сценарий демонстрирует работу многошагового визарда оформления заказа (FSM) и оплату через СБП.\n\n" +
-			"Выберите товар для оформления заказа:"
+		text := "🛍️ **Каталог товаров MAX Shop**\n\n" +
+			"Выберите интересующий товар для быстрого оформления заказа и доставки:"
 
 		formatted := hood.Format(userID, text, "ecom_catalog")
 		_, err := c.EditOrReplyKeyboard(formatted, kb)
@@ -244,7 +243,7 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		_, _ = c.ClearKeyboard()
 
 		_ = c.AnswerCallback(&maxbot.AnswerCallbackRequest{
-			Notification: "🧪 Sandbox: оплата успешно подтверждена!",
+			Notification: "💳 Оплата успешно подтверждена!",
 		})
 
 		// Reset FSM session upon completion
@@ -255,9 +254,9 @@ func RegisterEcomScenario(b *bot.Bot, hood *HoodEngine, paymentRouter *payments.
 		receiptText := fmt.Sprintf("🎉 **Оплата успешно подтверждена!**\n\n"+
 			"• **Номер заказа:** `%s`\n"+
 			"• **Сумма:** `%.2f ₽`\n"+
-			"• **Статус:** Оплачено (СБП Sandbox)\n"+
+			"• **Статус:** Оплачено ✅\n"+
 			"• **Дата и время:** %s\n\n"+
-			"Товар передан в службу сборки и доставки! Спасибо за покупку в демонстрационном магазине.",
+			"Товар передан в службу сборки и доставки! Спасибо за ваш заказ. Мы свяжемся с вами для уточнения деталей.",
 			orderID, amount, time.Now().Format("02.01.2006 15:04:05"))
 
 		kb := maxbot.NewInlineKeyboard().

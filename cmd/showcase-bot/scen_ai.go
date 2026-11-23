@@ -318,7 +318,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 	processVisionImage = func(c *bot.Context, prompt string) error {
 		userID := getUserID(c)
 		if aiClient == nil {
-			_, err := c.Reply("⚠️ AI-шлюз не настроен или недоступен. Проверьте переменную AI_GATEWAY_URL.")
+			_, err := c.Reply("⚠️ AI-сервис временно недоступен. Попробуйте повторить запрос позже.")
 			return err
 		}
 
@@ -475,7 +475,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 
 		if aiClient == nil {
-			_, err := c.Reply("⚠️ AI-шлюз не настроен или недоступен. Проверьте переменную AI_GATEWAY_URL.")
+			_, err := c.Reply("⚠️ AI-сервис временно недоступен. Попробуйте повторить запрос позже.")
 			return err
 		}
 
@@ -557,11 +557,10 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		close(stopTyping)
 
 		if chatResp == nil || strings.TrimSpace(chatResp.Content) == "" {
-			errDesc := "неизвестная ошибка"
 			if lastErr != nil {
-				errDesc = lastErr.Error()
+				slog.Warn("ai chat failed to produce response", slog.Any("err", lastErr))
 			}
-			errText := fmt.Sprintf("⚠️ **Ошибка AI-шлюза:** %s\n\nМодель временно перегружена. Вы можете переключить модель на `@scout` для быстрого ответа или очистить контекст.", errDesc)
+			errText := "⚠️ **Сервис временно перегружен.**\n\nВы можете переключить модель на `@scout` для быстрого ответа или попробовать повторить запрос через минуту."
 			kb := maxbot.NewInlineKeyboard().
 				Row(maxbot.NewCallbackButton("⚙️ Сменить модель LLM", "ai:models")).
 				Row(maxbot.NewCallbackButton("🔄 Очистить контекст", "ai:clear_context")).
@@ -847,7 +846,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 	processVoiceAudio = func(c *bot.Context, audioBytes []byte, filename string) error {
 		userID := getUserID(c)
 		if aiClient == nil {
-			_, err := c.Reply("⚠️ AI-шлюз не настроен. Проверьте переменную AI_GATEWAY_URL.")
+			_, err := c.Reply("⚠️ AI-сервис временно недоступен. Попробуйте повторить запрос позже.")
 			return err
 		}
 
@@ -1060,7 +1059,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		fsmCtx := fsm.FromContext(c)
 
 		if aiClient == nil {
-			_, err := c.Reply("⚠️ AI-шлюз не настроен или недоступен. Проверьте переменную AI_GATEWAY_URL.")
+			_, err := c.Reply("⚠️ AI-сервис временно недоступен. Попробуйте повторить запрос позже.")
 			return err
 		}
 
@@ -1228,7 +1227,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		fsmCtx := fsm.FromContext(c)
 
 		if aiClient == nil {
-			_, err := c.Reply("⚠️ AI-шлюз не настроен или недоступен. Проверьте переменную AI_GATEWAY_URL.")
+			_, err := c.Reply("⚠️ AI-сервис временно недоступен. Попробуйте повторить запрос позже.")
 			return err
 		}
 
@@ -1769,7 +1768,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			_ = fsmCtx.SetState("AI_STEP_VISION")
 		}
 		if aiClient == nil {
-			_, err := c.Reply("⚠️ AI-шлюз не настроен.")
+			_, err := c.Reply("⚠️ AI-сервис временно недоступен.")
 			return err
 		}
 		_ = c.Typing()

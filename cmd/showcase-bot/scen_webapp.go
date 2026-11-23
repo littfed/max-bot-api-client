@@ -142,11 +142,6 @@ func RegisterWebappScenario(
 		}
 
 		if targetUserID != 0 && b.Client() != nil {
-			statusLine := "Подпись initData: `HMAC-SHA256 Verified ✅`"
-			if !isVerified {
-				statusLine = "Подпись initData: `Демо-режим (WebBridge) 🧪`"
-			}
-
 			itemLines := make([]string, 0)
 			for id, qty := range cartData.Items {
 				if qty > 0 {
@@ -159,24 +154,23 @@ func RegisterWebappScenario(
 			}
 			itemsStr := strings.Join(itemLines, "\n")
 			if itemsStr == "" {
-				itemsStr = "• Корзина из Mini App (1 шт.)"
+				itemsStr = "• Корзина из каталога (1 шт.)"
 			}
 
-			text := fmt.Sprintf("🚀 **Заказ из Mini App успешно оформлен!**\n\n"+
-				"• **Клиент:** %s\n"+
+			text := fmt.Sprintf("🛍️ **Ваш заказ успешно оформлен!**\n\n"+
 				"• **Номер заказа:** `%s`\n"+
-				"• **Сумма:** `%d ₽`\n"+
-				"• **Канал передачи:** WebBridge HTTP POST `/api/webapp/action`\n"+
-				"• %s\n\n"+
+				"• **Сумма к оплате:** `%d ₽`\n\n"+
 				"**Состав заказа:**\n%s\n\n"+
-				"Данные приняты сервером бота и зафиксированы в сессии.",
-				userName, orderID, cartData.TotalPrice, statusLine, itemsStr)
+				"Спасибо за покупку! Наш менеджер уже готовит заказ к отправке. Мы пришлем уведомление, когда статус изменится.",
+				orderID, cartData.TotalPrice, itemsStr)
 
 			kb := maxbot.NewInlineKeyboard().
 				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
+			formatted := hood.Format(targetUserID, text, "webapp_action")
+
 			msgReq := &maxbot.SendMessageRequest{
-				Text:        text,
+				Text:        formatted,
 				Format:      "markdown",
 				Attachments: []maxbot.Attachment{kb.ToAttachment()},
 			}
@@ -281,33 +275,27 @@ func RegisterWebappScenario(
 		}
 
 		if targetUserID != 0 && b.Client() != nil {
-			statusLine := "Подпись initData: `HMAC-SHA256 Verified ✅`"
-			if !isVerified {
-				statusLine = "Подпись initData: `Демо-режим (WebBridge) 🧪`"
-			}
-
 			priceStr := "Бесплатно"
 			if req.Price > 0 {
 				priceStr = fmt.Sprintf("%d ₽", req.Price)
 			}
 
 			text := fmt.Sprintf("📅 **Запись на услугу успешно оформлена!**\n\n"+
-				"• **Клиент:** %s\n"+
 				"• **Номер бронирования:** `%s`\n"+
 				"• **Услуга:** %s\n"+
 				"• **Специалист:** %s\n"+
-				"• **Выбранный слот:** `%s`\n"+
-				"• **Стоимость:** `%s`\n"+
-				"• **Канал передачи:** WebBridge HTTP POST `/api/webapp/action`\n"+
-				"• %s\n\n"+
-				"Бронирование подтверждено и зафиксировано в расписании.",
-				userName, bookingID, req.ServiceName, req.Specialist, req.Slot, priceStr, statusLine)
+				"• **Дата и время:** %s\n"+
+				"• **Стоимость:** %s\n\n"+
+				"Ждем вас! За 2 часа до начала мы пришлем напоминание в этот чат.",
+				bookingID, req.ServiceName, req.Specialist, req.Slot, priceStr)
 
 			kb := maxbot.NewInlineKeyboard().
 				Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
+			formatted := hood.Format(targetUserID, text, "webapp_action")
+
 			msgReq := &maxbot.SendMessageRequest{
-				Text:        text,
+				Text:        formatted,
 				Format:      "markdown",
 				Attachments: []maxbot.Attachment{kb.ToAttachment()},
 			}
@@ -538,7 +526,7 @@ func RegisterWebappScenario(
 							"token": uploadResp.Token,
 						},
 					}
-					caption := fmt.Sprintf("🎨 **Ваш AI-арт из Mini App:**\n\n«%s»\n\n*Сгенерировано в AI Studio через WebBridge*", fullPrompt)
+					caption := fmt.Sprintf("🎨 **Ваше сгенерированное изображение:**\n\n«%s»", fullPrompt)
 					kb := maxbot.NewInlineKeyboard().
 						Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 					_, sendErr := b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUID), &maxbot.SendMessageRequest{
@@ -660,7 +648,7 @@ func RegisterWebappScenario(
 
 		if replyText == "" {
 			latency = 120 * time.Millisecond
-			replyText = fmt.Sprintf("🤖 **Ответ AI в MAX Mini App:**\n\nВы запросили: *«%s»*\n\nMAX Mini Apps поддерживают нативный двусторонний WebBridge, полноэкранный WebView, передачу токенов авторизации через HMAC-SHA256 и бесшовное взаимодействие с чатом бота!", userPrompt)
+			replyText = fmt.Sprintf("🤖 **Ответ ассистента:**\n\nВы спросили: *«%s»*\n\nК сожалению, AI-модуль сейчас временно недоступен. Пожалуйста, попробуйте повторить запрос чуть позже.", userPrompt)
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -817,18 +805,17 @@ func RegisterWebappScenario(
 
 		kb := maxbot.NewInlineKeyboard().
 			Row(appBtn).
-			Row(maxbot.NewLinkButton("🌐 Открыть Mini App (персональная ссылка)", appURLWithAuth)).
-			Row(maxbot.NewIntentCallbackButton("🧪 Симулировать заказ из Mini App", "webapp:simulate_order", maxbot.IntentPositive)).
+			Row(maxbot.NewLinkButton("🌐 Открыть витрину (веб-ссылка)", appURLWithAuth)).
+			Row(maxbot.NewIntentCallbackButton("🛍️ Быстрый тестовый заказ", "webapp:simulate_order", maxbot.IntentPositive)).
 			Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
 
-		text := "📱 **Экосистема MAX Mini Apps (WebApps SuperApp)**\n\n" +
-			"Полноценный 5-вкладочный демонстрационный комплекс прямо в мессенджере:\n\n" +
-			"• 🛍️ **Магазин мерча & электроники:** каталог, фильтры, корзина, промокоды и заказ через WebBridge.\n" +
-			"• 📅 **Онлайн-запись & бронирование:** выбор услуг, специалистов, интерактивная сетка слотов.\n" +
-			"• ✨ **AI Студия:** генератор артов (Text-to-Image) с отправкой в чат + быстрый LLM-чат с выбором моделей.\n" +
-			"• ✍️ **Студия каналов:** SMM-редактор, автогенерация постов через Gemini, превью и публикация.\n" +
-			"• 🎁 **Бонусы & Заказы:** Колесо фортуны, интерактивный MAX API Квиз и общая история активности.\n\n" +
-			"💡 *Откройте Mini App по персональной веб-ссылке или через нативную кнопку `open_app`:*"
+		text := "📱 **Онлайн-витрина и сервисы**\n\n" +
+			"Добро пожаловать в наше интерактивное приложение прямо в мессенджере:\n\n" +
+			"• 🛍️ **Магазин товаров:** каталог, фильтры, удобная корзина и быстрое оформление.\n" +
+			"• 📅 **Онлайн-запись:** выбор услуг, специалистов и удобного времени.\n" +
+			"• ✨ **AI Студия:** создание иллюстраций по описанию и быстрый умный ассистент.\n" +
+			"• 🎁 **Бонусы и история:** колесо скидок, квиз и список ваших заказов.\n\n" +
+			"💡 *Нажмите кнопку ниже, чтобы запустить приложение:*"
 
 		formatted := hood.Format(userID, text, "webapp_open_app")
 		_, err := c.EditOrReplyKeyboard(formatted, kb)
@@ -848,7 +835,7 @@ func RegisterWebappScenario(
 		_, _ = c.ClearKeyboard()
 
 		_ = c.AnswerCallback(&maxbot.AnswerCallbackRequest{
-			Notification: "🧪 WebBridge: заказ из Mini App получен!",
+			Notification: "🛍️ Заказ успешно принят!",
 		})
 
 		orderID := fmt.Sprintf("WEB-%d", time.Now().Unix()%100000)
@@ -870,13 +857,13 @@ func RegisterWebappScenario(
 			})
 		}
 
-		receipt := fmt.Sprintf("🚀 **Заказ из Mini App успешно принят!**\n\n"+
+		receipt := fmt.Sprintf("🛍️ **Ваш заказ успешно оформлен!**\n\n"+
 			"• **Номер заказа:** `%s`\n"+
-			"• **Состав:** Кофемашина Barista (1 шт.) + Наушники Pro ANC (1 шт.)\n"+
-			"• **Сумма:** `7 480 ₽`\n"+
-			"• **Канал передачи:** WebBridge HTTP POST `/api/webapp/action`\n"+
-			"• **Подпись initData:** `HMAC-SHA256 Verified ✅`\n\n"+
-			"Данные были переданы из клиентского WebView на сервер бота с проверкой криптографической подписи токеном бота.",
+			"• **Сумма к оплате:** `7 480 ₽`\n\n"+
+			"**Состав заказа:**\n"+
+			"• Кофемашина Barista: 1 шт.\n"+
+			"• Наушники Pro ANC: 1 шт.\n\n"+
+			"Спасибо за покупку! Наш менеджер уже готовит заказ к отправке.",
 			orderID)
 
 		kb := maxbot.NewInlineKeyboard().

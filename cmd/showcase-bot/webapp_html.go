@@ -611,7 +611,7 @@ const miniAppHTML = `<!DOCTYPE html>
         <label for="booking-comment" class="field-label">Тема вопроса или комментарий:</label>
         <input type="text" class="input-field" id="booking-comment" placeholder="Тема вопроса или комментарий">
 
-        <button type="button" class="btn-checkout" onclick="submitBooking()">Забронировать через WebBridge 📅</button>
+        <button type="button" class="btn-checkout" onclick="submitBooking()">Подтвердить запись 📅</button>
       </div>
     </section>
 
@@ -647,7 +647,7 @@ const miniAppHTML = `<!DOCTYPE html>
             <img id="ai-generated-img" style="display: none;" src="" alt="Сгенерированное нейросетью изображение" width="512" height="512">
           </div>
 
-          <button type="button" class="btn-checkout" id="btn-send-chat-img" style="display: none;" onclick="generateAIImage(true)">📲 Отправить изображение в чат MAX</button>
+          <button type="button" class="btn-checkout" id="btn-send-chat-img" style="display: none;" onclick="generateAIImage(true)">📲 Отправить изображение в чат</button>
         </div>
       </div>
 
@@ -664,9 +664,9 @@ const miniAppHTML = `<!DOCTYPE html>
 
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">Популярные вопросы:</div>
           <div class="chip-cloud">
-            <span class="chip" tabindex="0" onclick="setChatPrompt('Как работает WebBridge в MAX Bot API?')">🌐 Как работает WebBridge?</span>
-            <span class="chip" tabindex="0" onclick="setChatPrompt('Напиши пример HTTP хэндлера на Go')">🐹 Роут на Go</span>
-            <span class="chip" tabindex="0" onclick="setChatPrompt('Как защитить initData с помощью HMAC-SHA256?')">🔐 HMAC-SHA256</span>
+            <span class="chip" tabindex="0" onclick="setChatPrompt('Как оформить заказ и доставку?')">🛍️ Доставка и заказ</span>
+            <span class="chip" tabindex="0" onclick="setChatPrompt('Расскажи о бонусах и скидках')">🎁 Скидки и бонусы</span>
+            <span class="chip" tabindex="0" onclick="setChatPrompt('Как работает онлайн-запись на консультацию?')">📅 Запись на услугу</span>
           </div>
 
           <div style="display: flex; gap: 8px;">
@@ -1218,7 +1218,7 @@ const miniAppHTML = `<!DOCTYPE html>
           triggerHaptic('error');
         }
       } catch (e) {
-        showToast('Ошибка связи с сервером WebBridge', 'error');
+        showToast('Ошибка связи с сервером', 'error');
         triggerHaptic('error');
       }
     }
@@ -1363,7 +1363,7 @@ const miniAppHTML = `<!DOCTYPE html>
           triggerHaptic('error');
         }
       } catch (e) {
-        showToast('Ошибка связи с сервером WebBridge', 'error');
+        showToast('Ошибка связи с сервером', 'error');
         triggerHaptic('error');
       }
     }
