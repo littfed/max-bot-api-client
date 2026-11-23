@@ -4,7 +4,7 @@ const miniAppHTML = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>MAX Mini App Suite</title>
   <style>
     :root {
@@ -31,25 +31,147 @@ const miniAppHTML = `<!DOCTYPE html>
       -webkit-touch-callout: none;
       -webkit-tap-highlight-color: transparent;
     }
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    button, input, select, textarea, .pill, .slot-btn, .service-option, .nav-item, .chip {
+      touch-action: manipulation;
+    }
     input, textarea {
       user-select: text;
       -webkit-user-select: text;
     }
-    html, body {
-      overscroll-behavior: none;
-      -webkit-overflow-scrolling: touch;
+    @media (pointer: fine) {
+      html, body {
+        overscroll-behavior: none;
+      }
     }
     body {
       background: var(--bg);
       color: var(--text);
       padding-top: max(12px, env(safe-area-inset-top, 12px));
-      padding-bottom: max(74px, calc(74px + env(safe-area-inset-bottom, 0px)));
+      padding-bottom: max(84px, calc(84px + env(safe-area-inset-bottom, 0px)));
       min-height: 100vh;
       min-height: var(--tg-viewport-stable-height, 100vh);
       display: flex;
       flex-direction: column;
     }
-    
+
+    /* Accessibility screen-reader only utility */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* Skeleton Loading System */
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .skeleton {
+      background: linear-gradient(90deg, #151d28 25%, #243042 50%, #151d28 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 8px;
+    }
+    .skeleton-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .skeleton-img { width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0; }
+    .skeleton-lines { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+    .skeleton-line { height: 12px; width: 80%; }
+    .skeleton-line.short { width: 45%; }
+
+    /* Empty States */
+    .empty-state {
+      text-align: center;
+      padding: 36px 16px;
+      background: var(--card);
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      margin: 12px 0;
+    }
+    .empty-icon { font-size: 44px; margin-bottom: 8px; }
+    .empty-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+    .empty-desc { font-size: 13px; color: var(--muted); max-width: 280px; margin: 0 auto 16px; line-height: 1.4; }
+    .btn-empty-action {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-empty-action:hover { background: var(--accent-hover); }
+
+    /* Sticky Bottom MainButton (Thumb Zone) */
+    .sticky-main-btn {
+      position: fixed;
+      bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+      left: 50%;
+      transform: translate(-50%, 24px);
+      width: calc(100% - 24px);
+      max-width: 580px;
+      height: 50px;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: white;
+      border: none;
+      border-radius: 14px;
+      padding: 0 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      z-index: 48;
+      box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.5), 0 4px 10px rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .sticky-main-btn.visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(-50%, 0);
+    }
+    .sticky-main-btn:active {
+      transform: translate(-50%, 1px) scale(0.99);
+    }
+    .main-btn-left, .main-btn-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .main-btn-right {
+      font-weight: 700;
+      font-size: 15px;
+    }
+    .main-btn-arrow {
+      font-size: 16px;
+      transition: transform 0.2s;
+    }
+    .sticky-main-btn:hover .main-btn-arrow {
+      transform: translateX(3px);
+    }
+
     /* Top Header */
     header {
       background: #111827;
@@ -91,17 +213,20 @@ const miniAppHTML = `<!DOCTYPE html>
     .item-price { font-size: 14px; font-weight: 700; color: #38bdf8; }
     
     .qty-controls { display: flex; align-items: center; gap: 6px; }
-    .btn-qty { background: var(--border); color: var(--text); border: none; width: 28px; height: 28px; border-radius: 8px; font-size: 15px; cursor: pointer; }
-    .qty-count { font-weight: 600; min-width: 18px; text-align: center; font-size: 14px; }
+    .btn-qty { background: var(--border); color: var(--text); border: none; width: 30px; height: 30px; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .btn-qty:hover { background: var(--card-hover); }
+    .qty-count { font-weight: 600; min-width: 20px; text-align: center; font-size: 14px; font-variant-numeric: tabular-nums; }
 
     /* Cart & Promo */
     .cart-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-top: 14px; }
     .promo-input-row { display: flex; gap: 8px; margin-bottom: 10px; }
     .input-promo { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text); font-size: 13px; }
-    .btn-apply-promo { background: #334155; color: white; border: none; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .btn-apply-promo { background: #334155; color: white; border: none; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; }
+    .btn-apply-promo:hover { background: #475569; }
     .summary-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
     .summary-row.total { font-size: 16px; font-weight: 700; color: var(--text); border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
     .btn-checkout { background: var(--accent); color: white; border: none; width: 100%; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 10px; }
+    .btn-checkout:hover { background: var(--accent-hover); }
 
     /* Booking Tab Styles */
     .booking-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
@@ -125,7 +250,9 @@ const miniAppHTML = `<!DOCTYPE html>
     .image-preview-container { min-height: 200px; background: rgba(0,0,0,0.4); border: 1px dashed var(--border); border-radius: 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 12px; position: relative; }
     .image-preview-container img { width: 100%; height: auto; max-height: 320px; object-fit: cover; display: block; }
     .btn-action-purple { background: linear-gradient(135deg, #8b5cf6, #3b82f6); color: white; border: none; padding: 12px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-bottom: 8px; }
+    .btn-action-purple:hover { opacity: 0.95; }
     .btn-chat-send { background: #3b82f6; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .btn-chat-send:hover { background: #2563eb; }
     .chat-bubble { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; margin-top: 10px; }
 
     /* Studio Tab (Admin/Demo) */
@@ -134,8 +261,10 @@ const miniAppHTML = `<!DOCTYPE html>
     .channel-select { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; }
     .prompt-area { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px; border-radius: 8px; font-size: 14px; height: 80px; margin-bottom: 10px; resize: vertical; }
     .btn-ai-gen { background: linear-gradient(135deg, #8b5cf6, #3b82f6); color: white; border: none; padding: 10px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; width: 100%; margin-bottom: 12px; }
+    .btn-ai-gen:hover { opacity: 0.95; }
     .preview-box { background: rgba(0,0,0,0.3); border: 1px dashed var(--border); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.5; margin-bottom: 12px; white-space: pre-wrap; }
     .btn-publish { background: var(--success); color: white; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 700; width: 100%; cursor: pointer; }
+    .btn-publish:hover { opacity: 0.95; }
     .demo-badge { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px; line-height: 1.4; }
 
     /* Orders, Wheel & Quiz */
@@ -147,6 +276,7 @@ const miniAppHTML = `<!DOCTYPE html>
     .wheel-card { background: linear-gradient(135deg, rgba(37,99,235,0.1), rgba(139,92,246,0.1)); border: 1px solid rgba(139,92,246,0.3); border-radius: 12px; padding: 16px; text-align: center; margin-bottom: 14px; }
     .wheel-visual { font-size: 44px; margin: 8px 0; display: inline-block; transition: transform 2s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
     .btn-spin { background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .btn-spin:hover { background: #7c3aed; }
     
     .quiz-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
     .quiz-q { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
@@ -170,12 +300,25 @@ const miniAppHTML = `<!DOCTYPE html>
       align-items: center;
       z-index: 50;
     }
-    .nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-decoration: none; font-size: 11px; flex: 1; height: 100%; cursor: pointer; }
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      background: none;
+      border: none;
+      font: inherit;
+      font-size: 11px;
+      flex: 1;
+      height: 100%;
+      cursor: pointer;
+    }
     .nav-item.active { color: #60a5fa; font-weight: 600; }
     .nav-icon { font-size: 18px; margin-bottom: 2px; }
 
     /* Modal */
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 60; padding: 16px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 60; padding: 16px; overscroll-behavior: contain; }
     .modal-overlay.open { display: flex; }
     .modal-card { background: #1e293b; border: 1px solid var(--border); border-radius: 16px; max-width: 440px; width: 100%; padding: 20px; }
 
@@ -219,70 +362,87 @@ const miniAppHTML = `<!DOCTYPE html>
       from { opacity: 1; transform: translateY(0); }
       to { opacity: 0; transform: translateY(-8px); }
     }
+
+    /* Accessibility: Reduced Motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, ::before, ::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+      .wheel-visual {
+        transition: none !important;
+      }
+    }
   </style>
 </head>
 <body>
   <header>
     <div class="brand">
-      <span class="brand-icon">⚡</span>
+      <span class="brand-icon" aria-hidden="true">⚡</span>
       <div class="brand-title">MAX SuperApp Suite</div>
     </div>
-    <div class="user-pill" id="user-badge">Гость (Демо)</div>
+    <div class="user-pill" id="user-badge" aria-label="Профиль пользователя">Гость (Демо)</div>
   </header>
 
-  <div class="container">
+  <main class="container">
     <!-- TAB 1: STORE -->
-    <div class="tab-content active" id="tab-store">
-      <input type="text" class="search-box" id="search-input" placeholder="🔍 Поиск мерча и гаджетов..." oninput="filterCatalog()">
+    <section class="tab-content active" id="tab-store" role="tabpanel" aria-labelledby="tab-store-btn">
+      <label for="search-input" class="sr-only">Поиск товаров</label>
+      <input type="text" class="search-box" id="search-input" placeholder="🔍 Поиск мерча и гаджетов…" oninput="filterCatalog()" aria-label="Поиск товаров">
       
-      <div class="category-pills">
-        <button class="pill active" onclick="setCategory('all', this)">Все товары</button>
-        <button class="pill" onclick="setCategory('merch', this)">Мерч</button>
-        <button class="pill" onclick="setCategory('tech', this)">Гаджеты</button>
-        <button class="pill" onclick="setCategory('books', this)">Книги</button>
+      <div class="category-pills" role="tablist" aria-label="Категории товаров">
+        <button type="button" class="pill active" role="tab" aria-selected="true" onclick="setCategory('all', this)">Все товары</button>
+        <button type="button" class="pill" role="tab" aria-selected="false" onclick="setCategory('merch', this)">Мерч</button>
+        <button type="button" class="pill" role="tab" aria-selected="false" onclick="setCategory('tech', this)">Гаджеты</button>
+        <button type="button" class="pill" role="tab" aria-selected="false" onclick="setCategory('books', this)">Книги</button>
       </div>
 
-      <div class="catalog" id="catalog-list"></div>
+      <div class="catalog" id="catalog-list" aria-label="Каталог товаров"></div>
 
-      <div class="cart-box">
+      <div class="cart-box" id="cart-box-container">
         <div class="promo-input-row">
+          <label for="promo-code" class="sr-only">Промокод</label>
           <input type="text" class="input-promo" id="promo-code" placeholder="Промокод (напр. PROMO-25-MAX)">
-          <button class="btn-apply-promo" onclick="applyPromo()">Применить</button>
+          <button type="button" class="btn-apply-promo" onclick="applyPromo()">Применить</button>
         </div>
-        <div class="summary-row"><span>Товаров в корзине:</span><span id="cart-qty">0 шт.</span></div>
-        <div class="summary-row"><span>Скидка:</span><span id="cart-discount">0 ₽</span></div>
-        <div class="summary-row total"><span>Итого к оплате:</span><span id="cart-total">0 ₽</span></div>
-        <button class="btn-checkout" onclick="submitCart()">Оформить заказ в бот 🚀</button>
+        <div id="cart-content-wrapper">
+          <div class="summary-row"><span>Товаров в корзине:</span><span id="cart-qty">0 шт.</span></div>
+          <div class="summary-row"><span>Скидка:</span><span id="cart-discount">0 ₽</span></div>
+          <div class="summary-row total"><span>Итого к оплате:</span><span id="cart-total">0 ₽</span></div>
+          <button type="button" class="btn-checkout" id="btn-cart-checkout" onclick="submitCart()">Оформить заказ в бот 🚀</button>
+        </div>
       </div>
-    </div>
+    </section>
 
     <!-- TAB 2: BOOKING -->
-    <div class="tab-content" id="tab-booking">
+    <section class="tab-content" id="tab-booking" role="tabpanel" aria-labelledby="tab-booking-btn">
       <div class="booking-section">
         <div class="section-title"><span>📋</span> 1. Выберите услугу</div>
-        <div class="service-options" id="booking-services">
-          <div class="service-option selected" onclick="selectService(this, 'srv_audit', 'Архитектурный аудит Go / MAX', 5000)">
+        <div class="service-options" id="booking-services" role="radiogroup" aria-label="Список услуг">
+          <div class="service-option selected" role="radio" aria-checked="true" tabindex="0" onclick="selectService(this, 'srv_audit', 'Архитектурный аудит Go / MAX', 5000)" onkeydown="if(event.key==='Enter'||event.key===' ')selectService(this, 'srv_audit', 'Архитектурный аудит Go / MAX', 5000)">
             <div>
               <div style="font-weight: 600; font-size: 14px;">💻 Архитектурный аудит Go / MAX</div>
               <div style="font-size: 12px; color: var(--muted);">Разбор отказоустойчивости, FSM и очередей (60 мин)</div>
             </div>
             <div style="font-weight: 700; color: #38bdf8;">5 000 ₽</div>
           </div>
-          <div class="service-option" onclick="selectService(this, 'srv_review', 'Code Review & Рефакторинг', 3500)">
+          <div class="service-option" role="radio" aria-checked="false" tabindex="0" onclick="selectService(this, 'srv_review', 'Code Review & Рефакторинг', 3500)" onkeydown="if(event.key==='Enter'||event.key===' ')selectService(this, 'srv_review', 'Code Review & Рефакторинг', 3500)">
             <div>
               <div style="font-weight: 600; font-size: 14px;">🔍 Code Review & Рефакторинг</div>
               <div style="font-size: 12px; color: var(--muted);">Аудит пулл-реквестов, горутин и контекстов (45 мин)</div>
             </div>
             <div style="font-weight: 700; color: #38bdf8;">3 500 ₽</div>
           </div>
-          <div class="service-option" onclick="selectService(this, 'srv_turnkey', 'Разработка MAX-бота под ключ', 15000)">
+          <div class="service-option" role="radio" aria-checked="false" tabindex="0" onclick="selectService(this, 'srv_turnkey', 'Разработка MAX-бота под ключ', 15000)" onkeydown="if(event.key==='Enter'||event.key===' ')selectService(this, 'srv_turnkey', 'Разработка MAX-бота под ключ', 15000)">
             <div>
               <div style="font-weight: 600; font-size: 14px;">🤖 Разработка MAX-бота под ключ</div>
               <div style="font-size: 12px; color: var(--muted);">Проектирование логики, WebApp и деплой на Dokploy (90 мин)</div>
             </div>
             <div style="font-weight: 700; color: #38bdf8;">15 000 ₽</div>
           </div>
-          <div class="service-option" onclick="selectService(this, 'srv_coffee', 'Дегустация specialty кофе', 0)">
+          <div class="service-option" role="radio" aria-checked="false" tabindex="0" onclick="selectService(this, 'srv_coffee', 'Дегустация specialty кофе', 0)" onkeydown="if(event.key==='Enter'||event.key===' ')selectService(this, 'srv_coffee', 'Дегустация specialty кофе', 0)">
             <div>
               <div style="font-weight: 600; font-size: 14px;">☕ Дегустация specialty кофе</div>
               <div style="font-size: 12px; color: var(--muted);">Беседа о высоких нагрузках в уютной кофейне (30 мин)</div>
@@ -291,7 +451,7 @@ const miniAppHTML = `<!DOCTYPE html>
           </div>
         </div>
 
-        <div class="section-title"><span>👨‍💻</span> 2. Выберите специалиста</div>
+        <label for="booking-specialist" class="section-title"><span>👨‍💻</span> 2. Выберите специалиста</label>
         <select class="channel-select" id="booking-specialist">
           <option value="Алексей (Lead Go)">Алексей — Lead Go / Архитектор MAX Bot API</option>
           <option value="Екатерина (Solutions Architect)">Екатерина — Solutions Architect & Security</option>
@@ -299,63 +459,68 @@ const miniAppHTML = `<!DOCTYPE html>
         </select>
 
         <div class="section-title"><span>📅</span> 3. Слот времени</div>
-        <div class="slot-grid" id="booking-slots">
-          <button class="slot-btn selected" onclick="selectSlot(this, 'Завтра, 11:00')">Завтра 11:00</button>
-          <button class="slot-btn" onclick="selectSlot(this, 'Завтра, 14:30')">Завтра 14:30</button>
-          <button class="slot-btn" onclick="selectSlot(this, 'Завтра, 17:00')">Завтра 17:00</button>
-          <button class="slot-btn" onclick="selectSlot(this, 'Четверг, 12:00')">Четв 12:00</button>
-          <button class="slot-btn" onclick="selectSlot(this, 'Четверг, 15:30')">Четв 15:30</button>
-          <button class="slot-btn" onclick="selectSlot(this, 'Пятница, 16:00')">Пятн 16:00</button>
+        <div class="slot-grid" id="booking-slots" role="radiogroup" aria-label="Слоты времени">
+          <button type="button" class="slot-btn selected" role="radio" aria-checked="true" onclick="selectSlot(this, 'Завтра, 11:00')">Завтра 11:00</button>
+          <button type="button" class="slot-btn" role="radio" aria-checked="false" onclick="selectSlot(this, 'Завтра, 14:30')">Завтра 14:30</button>
+          <button type="button" class="slot-btn" role="radio" aria-checked="false" onclick="selectSlot(this, 'Завтра, 17:00')">Завтра 17:00</button>
+          <button type="button" class="slot-btn" role="radio" aria-checked="false" onclick="selectSlot(this, 'Четверг, 12:00')">Четв 12:00</button>
+          <button type="button" class="slot-btn" role="radio" aria-checked="false" onclick="selectSlot(this, 'Четверг, 15:30')">Четв 15:30</button>
+          <button type="button" class="slot-btn" role="radio" aria-checked="false" onclick="selectSlot(this, 'Пятница, 16:00')">Пятн 16:00</button>
         </div>
 
         <div class="section-title"><span>📝</span> 4. Контакты</div>
-        <input type="text" class="input-field" id="booking-name" placeholder="Ваше имя">
-        <input type="tel" class="input-field" id="booking-phone" placeholder="Номер телефона (+7...)">
+        <label for="booking-name" class="field-label">Ваше имя:</label>
+        <input type="text" class="input-field" id="booking-name" placeholder="Ваше имя" autocomplete="name">
+        
+        <label for="booking-phone" class="field-label">Номер телефона:</label>
+        <input type="tel" class="input-field" id="booking-phone" placeholder="Номер телефона (+7…)" autocomplete="tel" inputmode="tel">
+        
+        <label for="booking-comment" class="field-label">Тема вопроса или комментарий:</label>
         <input type="text" class="input-field" id="booking-comment" placeholder="Тема вопроса или комментарий">
 
-        <button class="btn-checkout" onclick="submitBooking()">Забронировать через WebBridge 📅</button>
+        <button type="button" class="btn-checkout" onclick="submitBooking()">Забронировать через WebBridge 📅</button>
       </div>
-    </div>
+    </section>
 
     <!-- TAB 3: AI STUDIO -->
-    <div class="tab-content" id="tab-ai">
-      <div class="subnav">
-        <button class="subnav-btn active" id="btn-sub-image" onclick="switchAISub('image')">🎨 Генератор артов</button>
-        <button class="subnav-btn" id="btn-sub-chat" onclick="switchAISub('chat')">💬 Быстрый AI Чат</button>
+    <section class="tab-content" id="tab-ai" role="tabpanel" aria-labelledby="tab-ai-btn">
+      <div class="subnav" role="tablist">
+        <button type="button" class="subnav-btn active" id="btn-sub-image" role="tab" aria-selected="true" onclick="switchAISub('image')">🎨 Генератор артов</button>
+        <button type="button" class="subnav-btn" id="btn-sub-chat" role="tab" aria-selected="false" onclick="switchAISub('chat')">💬 Быстрый AI Чат</button>
       </div>
 
       <!-- AI Sub: Image Gen -->
       <div id="ai-sub-image">
         <div class="ai-card">
-          <label class="field-label">Опишите желаемое изображение:</label>
-          <textarea class="prompt-area" id="ai-img-prompt" placeholder="Например: Неоновый маскот Go Gopher в шлеме космического инженера..."></textarea>
+          <label for="ai-img-prompt" class="field-label">Опишите желаемое изображение:</label>
+          <textarea class="prompt-area" id="ai-img-prompt" placeholder="Например: Неоновый маскот Go Gopher в шлеме космического инженера…"></textarea>
           
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">Быстрые стили:</div>
-          <div class="chip-cloud">
-            <span class="chip selected" onclick="selectStyle(this, 'Cyberpunk')">⚡ Киберпанк</span>
-            <span class="chip" onclick="selectStyle(this, '3D Render')">🧊 3D Render</span>
-            <span class="chip" onclick="selectStyle(this, 'Anime')">🌸 Аниме</span>
-            <span class="chip" onclick="selectStyle(this, 'Photorealistic')">📷 Фотореализм</span>
-            <span class="chip" onclick="selectStyle(this, 'Pixel Art')">👾 Pixel Art</span>
+          <div class="chip-cloud" role="radiogroup" aria-label="Стили изображения">
+            <span class="chip selected" role="radio" aria-checked="true" tabindex="0" onclick="selectStyle(this, 'Cyberpunk')">⚡ Киберпанк</span>
+            <span class="chip" role="radio" aria-checked="false" tabindex="0" onclick="selectStyle(this, '3D Render')">🧊 3D Render</span>
+            <span class="chip" role="radio" aria-checked="false" tabindex="0" onclick="selectStyle(this, 'Anime')">🌸 Аниме</span>
+            <span class="chip" role="radio" aria-checked="false" tabindex="0" onclick="selectStyle(this, 'Photorealistic')">📷 Фотореализм</span>
+            <span class="chip" role="radio" aria-checked="false" tabindex="0" onclick="selectStyle(this, 'Pixel Art')">👾 Pixel Art</span>
           </div>
 
-          <button class="btn-action-purple" id="btn-gen-img" onclick="generateAIImage(false)">✨ Сгенерировать арт</button>
+          <button type="button" class="btn-action-purple" id="btn-gen-img" onclick="generateAIImage(false)">✨ Сгенерировать арт</button>
 
           <div class="image-preview-container" id="img-preview-box">
             <div id="img-placeholder-text" style="font-size: 13px; color: var(--muted); text-align: center; padding: 20px;">
               Здесь появится сгенерированное изображение
             </div>
-            <img id="ai-generated-img" style="display: none;" src="" alt="AI Art">
+            <img id="ai-generated-img" style="display: none;" src="" alt="Сгенерированное нейросетью изображение" width="512" height="512">
           </div>
 
-          <button class="btn-checkout" id="btn-send-chat-img" style="display: none;" onclick="generateAIImage(true)">📲 Отправить изображение в чат MAX</button>
+          <button type="button" class="btn-checkout" id="btn-send-chat-img" style="display: none;" onclick="generateAIImage(true)">📲 Отправить изображение в чат MAX</button>
         </div>
       </div>
 
       <!-- AI Sub: LLM Chat -->
       <div id="ai-sub-chat" style="display: none;">
         <div class="ai-card">
-          <label class="field-label">Модель нейросети:</label>
+          <label for="ai-chat-model" class="field-label">Модель нейросети:</label>
           <select class="channel-select" id="ai-chat-model">
             <option value="auto">auto — Умная маршрутизация (Smart Gateway)</option>
             <option value="fast">fast — Быстрые ответы (Gemini 2.5 Flash)</option>
@@ -365,41 +530,42 @@ const miniAppHTML = `<!DOCTYPE html>
 
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">Популярные вопросы:</div>
           <div class="chip-cloud">
-            <span class="chip" onclick="setChatPrompt('Как работает WebBridge в MAX Bot API?')">🌐 Как работает WebBridge?</span>
-            <span class="chip" onclick="setChatPrompt('Напиши пример HTTP хэндлера на Go')">🐹 Роут на Go</span>
-            <span class="chip" onclick="setChatPrompt('Как защитить initData с помощью HMAC-SHA256?')">🔐 HMAC-SHA256</span>
+            <span class="chip" tabindex="0" onclick="setChatPrompt('Как работает WebBridge в MAX Bot API?')">🌐 Как работает WebBridge?</span>
+            <span class="chip" tabindex="0" onclick="setChatPrompt('Напиши пример HTTP хэндлера на Go')">🐹 Роут на Go</span>
+            <span class="chip" tabindex="0" onclick="setChatPrompt('Как защитить initData с помощью HMAC-SHA256?')">🔐 HMAC-SHA256</span>
           </div>
 
           <div style="display: flex; gap: 8px;">
-            <input type="text" class="input-field" id="ai-chat-prompt" style="margin-bottom: 0;" placeholder="Задайте вопрос нейросети...">
-            <button class="btn-chat-send" onclick="sendAIChat()">Отправить</button>
+            <label for="ai-chat-prompt" class="sr-only">Вопрос нейросети</label>
+            <input type="text" class="input-field" id="ai-chat-prompt" style="margin-bottom: 0;" placeholder="Задайте вопрос нейросети…">
+            <button type="button" class="btn-chat-send" onclick="sendAIChat()">Отправить</button>
           </div>
 
-          <div class="chat-bubble" id="ai-chat-result" style="display: none;"></div>
+          <div class="chat-bubble" id="ai-chat-result" style="display: none;" aria-live="polite"></div>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- TAB 4: STUDIO -->
-    <div class="tab-content" id="tab-studio">
+    <section class="tab-content" id="tab-studio" role="tabpanel" aria-labelledby="tab-studio-btn">
       <div class="studio-card">
         <div class="demo-badge" id="studio-demo-badge">
           ℹ️ <b>SMM Студия каналов:</b> Генерация и разметка постов доступны всем. Публикация в реальные каналы защищена (доступна владельцу бота).
         </div>
 
-        <label class="field-label">Целевой канал для публикации:</label>
+        <label for="studio-channel" class="field-label">Целевой канал для публикации:</label>
         <select class="channel-select" id="studio-channel">
           <option value="-78368186601503">📢 Канал «Тест» (-78368186601503)</option>
           <option value="-78548596658207">📢 Канал «littfed» (-78548596658207)</option>
           <option value="0">🧪 Демо-канал (песочница)</option>
         </select>
 
-        <label class="field-label">Тема публикации или промпт:</label>
-        <textarea class="prompt-area" id="studio-prompt" placeholder="Например: Анонс новой витрины Mini App и скидок на мерч Go Gopher..."></textarea>
+        <label for="studio-prompt" class="field-label">Тема публикации или промпт:</label>
+        <textarea class="prompt-area" id="studio-prompt" placeholder="Например: Анонс новой витрины Mini App и скидок на мерч Go Gopher…"></textarea>
         
-        <button class="btn-ai-gen" onclick="generateAIPost()">✨ Сгенерировать текст через Gemini</button>
+        <button type="button" class="btn-ai-gen" onclick="generateAIPost()">✨ Сгенерировать текст через Gemini</button>
 
-        <label class="field-label">Текст поста (Markdown):</label>
+        <label for="studio-body" class="field-label">Текст поста (Markdown):</label>
         <textarea class="prompt-area" id="studio-body" style="height: 110px;"></textarea>
 
         <div style="display: flex; gap: 12px; margin-bottom: 12px; font-size: 13px;">
@@ -407,22 +573,22 @@ const miniAppHTML = `<!DOCTYPE html>
           <label><input type="checkbox" id="studio-rx" checked> Добавить реакции 👍🔥</label>
         </div>
 
-        <label class="field-label">Предпросмотр поста в MAX:</label>
-        <div class="preview-box" id="studio-preview">Текст поста появится здесь...</div>
+        <div class="field-label">Предпросмотр поста в MAX:</div>
+        <div class="preview-box" id="studio-preview">Текст поста появится здесь…</div>
 
-        <button class="btn-publish" onclick="publishPostToChannel()">🚀 Опубликовать в канал</button>
+        <button type="button" class="btn-publish" onclick="publishPostToChannel()">🚀 Опубликовать в канал</button>
       </div>
-    </div>
+    </section>
 
     <!-- TAB 5: REWARDS & ORDERS -->
-    <div class="tab-content" id="tab-orders">
+    <section class="tab-content" id="tab-orders" role="tabpanel" aria-labelledby="tab-orders-btn">
       <!-- Wheel of fortune -->
       <div class="wheel-card">
         <div style="font-weight: 700; font-size: 15px;">🎁 Колесо бонусов MAX</div>
         <p style="font-size: 12px; color: var(--muted); margin-top: 2px;">Испытайте удачу и получите промокод со скидкой до 25%!</p>
-        <div><span class="wheel-visual" id="wheel-icon">🎡</span></div>
-        <button class="btn-spin" onclick="spinWheel()">Крутить колесо 🎯</button>
-        <div id="wheel-result" style="font-size: 13px; font-weight: 600; color: #34d399; margin-top: 8px;"></div>
+        <div><span class="wheel-visual" id="wheel-icon" aria-hidden="true">🎡</span></div>
+        <button type="button" class="btn-spin" onclick="spinWheel()">Крутить колесо 🎯</button>
+        <div id="wheel-result" style="font-size: 13px; font-weight: 600; color: #34d399; margin-top: 8px;" aria-live="polite"></div>
       </div>
 
       <!-- Interactive Quiz -->
@@ -431,63 +597,75 @@ const miniAppHTML = `<!DOCTYPE html>
         <p style="font-size: 12px; color: var(--muted); margin-bottom: 12px;">Ответьте правильно и активируйте эксклюзивную скидку 30%!</p>
         
         <div id="quiz-body">
-          <div class="quiz-q" id="quiz-question">Загрузка вопроса...</div>
+          <div class="quiz-q" id="quiz-question">Загрузка вопроса…</div>
           <div class="quiz-opts" id="quiz-options"></div>
         </div>
-        <div id="quiz-result" style="display: none; font-size: 13px; font-weight: 600; color: #34d399; margin-top: 8px;"></div>
+        <div id="quiz-result" style="display: none; font-size: 13px; font-weight: 600; color: #34d399; margin-top: 8px;" aria-live="polite"></div>
       </div>
 
       <!-- History of Orders & Bookings -->
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
         <div style="font-weight: 700; font-size: 15px;">📦 Заказы и Записи</div>
-        <button onclick="loadOrders()" style="background: none; border: none; color: #60a5fa; font-size: 12px; cursor: pointer;">🔄 Обновить</button>
+        <button type="button" onclick="loadOrders()" aria-label="Обновить список заказов" style="background: none; border: none; color: #60a5fa; font-size: 12px; cursor: pointer;">🔄 Обновить</button>
       </div>
-      <div id="orders-list">
-        <div style="font-size: 13px; color: var(--muted); text-align: center; padding: 20px;">Заказы загружаются...</div>
+      <div id="orders-list" aria-label="Список оформленных заказов">
+        <div style="font-size: 13px; color: var(--muted); text-align: center; padding: 20px;">Заказы загружаются…</div>
       </div>
-    </div>
-  </div>
+    </section>
+  </main>
+
+  <!-- Sticky Bottom MainButton (Thumb Zone) -->
+  <button type="button" id="sticky-main-btn" class="sticky-main-btn" onclick="handleMainButtonAction()" aria-label="Оформить заказ">
+    <span class="main-btn-left">
+      <span class="main-btn-icon" aria-hidden="true">🛍️</span>
+      <span>В корзине: <b id="main-btn-qty">0</b> шт.</span>
+    </span>
+    <span class="main-btn-right">
+      <span id="main-btn-total">0 ₽</span>
+      <span class="main-btn-arrow" aria-hidden="true">➔</span>
+    </span>
+  </button>
 
   <!-- Bottom Navigation -->
-  <nav class="bottom-nav">
-    <div class="nav-item active" onclick="switchTab('store', this)">
-      <div class="nav-icon">🛍️</div>
+  <nav class="bottom-nav" role="tablist" aria-label="Главное меню витрины">
+    <button type="button" class="nav-item active" id="tab-store-btn" role="tab" aria-selected="true" aria-controls="tab-store" onclick="switchTab('store', this)">
+      <div class="nav-icon" aria-hidden="true">🛍️</div>
       <div>Магазин</div>
-    </div>
-    <div class="nav-item" onclick="switchTab('booking', this)">
-      <div class="nav-icon">📅</div>
+    </button>
+    <button type="button" class="nav-item" id="tab-booking-btn" role="tab" aria-selected="false" aria-controls="tab-booking" onclick="switchTab('booking', this)">
+      <div class="nav-icon" aria-hidden="true">📅</div>
       <div>Запись</div>
-    </div>
-    <div class="nav-item" onclick="switchTab('ai', this)">
-      <div class="nav-icon">✨</div>
+    </button>
+    <button type="button" class="nav-item" id="tab-ai-btn" role="tab" aria-selected="false" aria-controls="tab-ai" onclick="switchTab('ai', this)">
+      <div class="nav-icon" aria-hidden="true">✨</div>
       <div>AI Студия</div>
-    </div>
-    <div class="nav-item" id="nav-studio-btn" onclick="switchTab('studio', this)">
-      <div class="nav-icon">✍️</div>
+    </button>
+    <button type="button" class="nav-item" id="nav-studio-btn" role="tab" aria-selected="false" aria-controls="tab-studio" onclick="switchTab('studio', this)">
+      <div class="nav-icon" aria-hidden="true">✍️</div>
       <div>Студия</div>
-    </div>
-    <div class="nav-item" onclick="switchTab('orders', this)">
-      <div class="nav-icon">🎁</div>
+    </button>
+    <button type="button" class="nav-item" id="tab-orders-btn" role="tab" aria-selected="false" aria-controls="tab-orders" onclick="switchTab('orders', this)">
+      <div class="nav-icon" aria-hidden="true">🎁</div>
       <div>Бонусы</div>
-    </div>
+    </button>
   </nav>
 
   <!-- Product Modal -->
-  <div class="modal-overlay" id="product-modal" onclick="closeModal(event)">
+  <div class="modal-overlay" id="product-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" onclick="closeModal(event)">
     <div class="modal-card" onclick="event.stopPropagation()">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <h3 id="modal-title" style="font-size: 17px;">Товар</h3>
-        <button onclick="closeModal()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer;">✕</button>
+        <button type="button" onclick="closeModal()" aria-label="Закрыть" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px;">✕</button>
       </div>
       <div id="modal-desc" style="font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 16px;"></div>
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div id="modal-price" style="font-size: 18px; font-weight: 700; color: #38bdf8;">0 ₽</div>
-        <button id="modal-export-btn" style="background: #3b82f6; color: white; border: none; padding: 8px 12px; border-radius: 8px; font-size: 12px; cursor: pointer;" onclick="exportProductToChannel()">📢 Анонсировать в канал</button>
+        <button type="button" id="modal-export-btn" style="background: #3b82f6; color: white; border: none; padding: 8px 12px; border-radius: 8px; font-size: 12px; cursor: pointer;" onclick="exportProductToChannel()">📢 Анонсировать в канал</button>
       </div>
     </div>
   </div>
 
-  <div id="toast-container"></div>
+  <div id="toast-container" aria-live="polite" role="status"></div>
 
   <script>
     const OWNER_ID = 396393759;
@@ -496,6 +674,7 @@ const miniAppHTML = `<!DOCTYPE html>
     let activeModalItem = null;
     let selectedStyle = 'Cyberpunk';
     let currentArtworkBase64 = null;
+    let currentActiveTab = 'store';
 
     // Booking state
     let selectedBookingService = { id: 'srv_audit', name: 'Архитектурный аудит Go / MAX', price: 5000 };
@@ -524,8 +703,10 @@ const miniAppHTML = `<!DOCTYPE html>
           return;
         }
         if (navigator.vibrate) {
-          if (type === 'success') navigator.vibrate([20, 30, 20]);
-          else if (type === 'error') navigator.vibrate([40, 60, 40]);
+          if (type === 'success') navigator.vibrate([20, 50, 20]);
+          else if (type === 'error') navigator.vibrate([50, 50, 50]);
+          else if (type === 'heavy') navigator.vibrate([25, 40, 25]);
+          else if (type === 'selection') navigator.vibrate(10);
           else navigator.vibrate(15);
         }
       } catch (e) {}
@@ -540,7 +721,7 @@ const miniAppHTML = `<!DOCTYPE html>
       let icon = 'ℹ️';
       if (type === 'success') icon = '✅';
       else if (type === 'error') icon = '⚠️';
-      toast.innerHTML = '<span>' + icon + '</span><span>' + text + '</span>';
+      toast.innerHTML = '<span aria-hidden="true">' + icon + '</span><span>' + text + '</span>';
       container.appendChild(toast);
       setTimeout(() => {
         toast.classList.add('fade-out');
@@ -633,23 +814,33 @@ const miniAppHTML = `<!DOCTYPE html>
     function renderCatalog(items) {
       const list = document.getElementById('catalog-list');
       list.innerHTML = '';
+      if (!items || items.length === 0) {
+        list.innerHTML = ` + "`" + `
+          <div class="empty-state">
+            <div class="empty-icon" aria-hidden="true">🔍</div>
+            <div class="empty-title">Ничего не найдено</div>
+            <p class="empty-desc">Попробуйте изменить поисковый запрос или выбрать другую категорию</p>
+          </div>
+        ` + "`" + `;
+        return;
+      }
       items.forEach(p => {
         const qty = cart[p.id] || 0;
         const div = document.createElement('div');
         div.className = 'item-card';
         div.innerHTML = ` + "`" + `
           <div class="item-main" onclick="openModal('${p.id}')">
-            <div class="item-icon">${p.icon}</div>
+            <div class="item-icon" aria-hidden="true">${p.icon}</div>
             <div>
               <div class="item-name">${p.name}</div>
-              <div class="item-desc">${p.desc.substring(0, 42)}...</div>
-              <div class="item-price">${p.price.toLocaleString('ru-RU')} ₽</div>
+              <div class="item-desc">${p.desc.substring(0, 42)}…</div>
+              <div class="item-price">${p.price.toLocaleString('ru-RU')}&nbsp;₽</div>
             </div>
           </div>
           <div class="qty-controls">
-            <button class="btn-qty" onclick="changeQty('${p.id}', -1)">-</button>
-            <span class="qty-count" id="qty-${p.id}">${qty}</span>
-            <button class="btn-qty" onclick="changeQty('${p.id}', 1)">+</button>
+            <button type="button" class="btn-qty" aria-label="Уменьшить количество" onclick="changeQty('${p.id}', -1)">−</button>
+            <span class="qty-count" id="qty-${p.id}" aria-live="polite">${qty}</span>
+            <button type="button" class="btn-qty" aria-label="Увеличить количество" onclick="changeQty('${p.id}', 1)">+</button>
           </div>
         ` + "`" + `;
         list.appendChild(div);
@@ -660,8 +851,12 @@ const miniAppHTML = `<!DOCTYPE html>
     function setCategory(cat, btn) {
       triggerHaptic('selection');
       activeCategory = cat;
-      document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.pill').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      });
       btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
       filterCatalog();
     }
 
@@ -700,8 +895,32 @@ const miniAppHTML = `<!DOCTYPE html>
       const finalTotal = Math.max(0, total - discount);
 
       document.getElementById('cart-qty').innerText = count + ' шт.';
-      document.getElementById('cart-discount').innerText = (discount > 0 ? '-' + discount.toLocaleString('ru-RU') + ' ₽ (' + discountPercent + '%)' : '0 ₽');
+      document.getElementById('cart-discount').innerText = (discount > 0 ? '−' + discount.toLocaleString('ru-RU') + ' ₽ (' + discountPercent + '%)' : '0 ₽');
       document.getElementById('cart-total').innerText = finalTotal.toLocaleString('ru-RU') + ' ₽';
+
+      // Update Sticky MainButton
+      const stickyBtn = document.getElementById('sticky-main-btn');
+      const stickyQty = document.getElementById('main-btn-qty');
+      const stickyTotal = document.getElementById('main-btn-total');
+      if (stickyQty) stickyQty.innerText = count;
+      if (stickyTotal) stickyTotal.innerText = finalTotal.toLocaleString('ru-RU') + ' ₽';
+
+      if (stickyBtn) {
+        if (count > 0 && currentActiveTab === 'store') {
+          stickyBtn.classList.add('visible');
+        } else {
+          stickyBtn.classList.remove('visible');
+        }
+      }
+    }
+
+    function handleMainButtonAction() {
+      triggerHaptic('medium');
+      const cartBox = document.getElementById('cart-box-container');
+      if (cartBox) {
+        cartBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      submitCart();
     }
 
     function applyPromo() {
@@ -725,6 +944,7 @@ const miniAppHTML = `<!DOCTYPE html>
       }
       updateTotals();
     }
+
     async function submitCart() {
       let totalItems = 0;
       for (const q of Object.values(cart)) totalItems += q;
@@ -772,11 +992,31 @@ const miniAppHTML = `<!DOCTYPE html>
 
     function switchTab(tab, btn) {
       triggerHaptic('selection');
+      currentActiveTab = tab;
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      });
       const target = document.getElementById('tab-' + tab);
       if (target) target.classList.add('active');
-      if (btn) btn.classList.add('active');
+      if (btn) {
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+      }
+      
+      // Update sticky button visibility based on active tab
+      const stickyBtn = document.getElementById('sticky-main-btn');
+      if (stickyBtn) {
+        let count = 0;
+        for (const q of Object.values(cart)) count += q;
+        if (count > 0 && currentActiveTab === 'store') {
+          stickyBtn.classList.add('visible');
+        } else {
+          stickyBtn.classList.remove('visible');
+        }
+      }
+
       if (tab === 'orders') loadOrders();
     }
 
@@ -826,15 +1066,23 @@ const miniAppHTML = `<!DOCTYPE html>
     // Booking Handlers
     function selectService(el, id, name, price) {
       triggerHaptic('selection');
-      document.querySelectorAll('.service-option').forEach(o => o.classList.remove('selected'));
+      document.querySelectorAll('.service-option').forEach(o => {
+        o.classList.remove('selected');
+        o.setAttribute('aria-checked', 'false');
+      });
       el.classList.add('selected');
+      el.setAttribute('aria-checked', 'true');
       selectedBookingService = { id, name, price };
     }
 
     function selectSlot(el, slot) {
       triggerHaptic('selection');
-      document.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
+      document.querySelectorAll('.slot-btn').forEach(b => {
+        b.classList.remove('selected');
+        b.setAttribute('aria-checked', 'false');
+      });
       el.classList.add('selected');
+      el.setAttribute('aria-checked', 'true');
       selectedBookingSlot = slot;
     }
 
@@ -886,13 +1134,19 @@ const miniAppHTML = `<!DOCTYPE html>
       document.getElementById('ai-sub-image').style.display = sub === 'image' ? 'block' : 'none';
       document.getElementById('ai-sub-chat').style.display = sub === 'chat' ? 'block' : 'none';
       document.getElementById('btn-sub-image').classList.toggle('active', sub === 'image');
+      document.getElementById('btn-sub-image').setAttribute('aria-selected', sub === 'image');
       document.getElementById('btn-sub-chat').classList.toggle('active', sub === 'chat');
+      document.getElementById('btn-sub-chat').setAttribute('aria-selected', sub === 'chat');
     }
 
     function selectStyle(el, style) {
       triggerHaptic('selection');
-      document.querySelectorAll('.chip-cloud .chip').forEach(c => c.classList.remove('selected'));
+      document.querySelectorAll('.chip-cloud .chip').forEach(c => {
+        c.classList.remove('selected');
+        c.setAttribute('aria-checked', 'false');
+      });
       el.classList.add('selected');
+      el.setAttribute('aria-checked', 'true');
       selectedStyle = style;
     }
 
@@ -903,7 +1157,7 @@ const miniAppHTML = `<!DOCTYPE html>
       const imgEl = document.getElementById('ai-generated-img');
       const btnSend = document.getElementById('btn-send-chat-img');
 
-      btnGen.innerText = sendToChat ? '⏳ Отправляем в чат...' : '⏳ Нейросеть генерирует арт...';
+      btnGen.innerText = sendToChat ? '⏳ Отправляем в чат…' : '⏳ Нейросеть генерирует арт…';
       btnGen.disabled = true;
 
       try {
@@ -955,7 +1209,7 @@ const miniAppHTML = `<!DOCTYPE html>
       
       triggerHaptic('light');
       resBubble.style.display = 'block';
-      resBubble.innerText = '⏳ Думаю... (' + model + ')';
+      resBubble.innerText = '⏳ Думаю… (' + model + ')';
 
       try {
         const res = await fetch('/api/webapp/ai_chat', {
@@ -984,7 +1238,7 @@ const miniAppHTML = `<!DOCTYPE html>
     // Studio AI & Publish
     async function generateAIPost() {
       const prompt = document.getElementById('studio-prompt').value.trim() || 'Анонс магазина и новых поступлений мерча MAX';
-      document.getElementById('studio-preview').innerText = '⏳ Gemini генерирует пост...';
+      document.getElementById('studio-preview').innerText = '⏳ Gemini генерирует пост…';
       triggerHaptic('light');
       try {
         const res = await fetch('/api/webapp/generate_post', {
@@ -1009,7 +1263,7 @@ const miniAppHTML = `<!DOCTYPE html>
     }
 
     document.getElementById('studio-body').addEventListener('input', function() {
-      document.getElementById('studio-preview').innerText = this.value || 'Текст поста появится здесь...';
+      document.getElementById('studio-preview').innerText = this.value || 'Текст поста появится здесь…';
     });
 
     async function publishPostToChannel() {
@@ -1098,7 +1352,7 @@ const miniAppHTML = `<!DOCTYPE html>
         document.getElementById('quiz-body').style.display = 'none';
         const res = document.getElementById('quiz-result');
         res.style.display = 'block';
-        res.innerHTML = '🏆 <b>Квиз пройден: ' + quizScore + ' из ' + quizQuestions.length + '!</b><br>Ваш промокод: <code style="background: rgba(16,185,129,0.2); padding: 2px 6px; border-radius: 4px;">QUIZ-PRO-30</code> (скидка 30%)<br><button onclick="applyQuizPromo()" style="margin-top: 8px; background: #10b981; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">Применить к корзине</button>';
+        res.innerHTML = '🏆 <b>Квиз пройден: ' + quizScore + ' из ' + quizQuestions.length + '!</b><br>Ваш промокод: <code style="background: rgba(16,185,129,0.2); padding: 2px 6px; border-radius: 4px;">QUIZ-PRO-30</code> (скидка 30%)<br><button type="button" onclick="applyQuizPromo()" style="margin-top: 8px; background: #10b981; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">Применить к корзине</button>';
         return;
       }
       const item = quizQuestions[currentQuizIndex];
@@ -1107,6 +1361,7 @@ const miniAppHTML = `<!DOCTYPE html>
       optsBox.innerHTML = '';
       item.options.forEach((opt, idx) => {
         const btn = document.createElement('button');
+        btn.type = 'button';
         btn.className = 'quiz-opt';
         btn.innerText = opt;
         btn.onclick = () => answerQuiz(idx, btn);
@@ -1137,9 +1392,17 @@ const miniAppHTML = `<!DOCTYPE html>
       switchTab('store', document.querySelector('.nav-item'));
     }
 
-    // Orders List
+    // Orders List with Shimmer Skeletons and Empty States
     async function loadOrders() {
       const box = document.getElementById('orders-list');
+      
+      // Render Shimmer Skeletons while fetching
+      box.innerHTML = ` + "`" + `
+        <div class="skeleton-card"><div class="skeleton skeleton-img"></div><div class="skeleton-lines"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>
+        <div class="skeleton-card"><div class="skeleton skeleton-img"></div><div class="skeleton-lines"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>
+        <div class="skeleton-card"><div class="skeleton skeleton-img"></div><div class="skeleton-lines"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>
+      ` + "`" + `;
+
       try {
         const res = await fetch('/api/webapp/orders?user_id=' + currentUser.id);
         const data = await res.json();
@@ -1158,16 +1421,29 @@ const miniAppHTML = `<!DOCTYPE html>
                 ${o.items && o.items.length > 0 ? o.items[0].title : 'Товар'}
               </div>
               ${o.address ? '<div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">' + o.address + '</div>' : ''}
-              <div style="font-size: 13px; color: var(--muted); margin-bottom: 4px;">Сумма: <b>${o.total > 0 ? o.total.toLocaleString('ru-RU') + ' ₽' : 'Бесплатно'}</b></div>
+              <div style="font-size: 13px; color: var(--muted); margin-bottom: 4px;">Сумма: <b>${o.total > 0 ? o.total.toLocaleString('ru-RU') + '&nbsp;₽' : 'Бесплатно'}</b></div>
               <div style="font-size: 11px; color: #64748b;">${new Date(o.created_at).toLocaleString('ru-RU')}</div>
             ` + "`" + `;
             box.appendChild(div);
           });
         } else {
-          box.innerHTML = '<div style="font-size: 13px; color: var(--muted); text-align: center; padding: 20px;">Пока нет оформленных заказов или записей.</div>';
+          box.innerHTML = ` + "`" + `
+            <div class="empty-state">
+              <div class="empty-icon" aria-hidden="true">📦</div>
+              <div class="empty-title">У вас пока нет заказов</div>
+              <p class="empty-desc">Здесь будут отображаться ваши покупки мерча и подтвержденные записи на услуги</p>
+              <button type="button" class="btn-empty-action" onclick="switchTab('store', document.getElementById('tab-store-btn'))">Перейти в магазин</button>
+            </div>
+          ` + "`" + `;
         }
       } catch (e) {
-        box.innerHTML = '<div style="font-size: 13px; color: var(--muted); text-align: center; padding: 20px;">Список пуст</div>';
+        box.innerHTML = ` + "`" + `
+          <div class="empty-state">
+            <div class="empty-icon" aria-hidden="true">⚠️</div>
+            <div class="empty-title">Не удалось загрузить историю</div>
+            <p class="empty-desc">Проверьте соединение или обновите список кнопкой выше</p>
+          </div>
+        ` + "`" + `;
       }
     }
 

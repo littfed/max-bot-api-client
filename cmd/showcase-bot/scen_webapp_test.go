@@ -193,3 +193,47 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 		t.Fatalf("expected text in chat response, got %v", chatResp)
 	}
 }
+
+func TestMiniAppAccessibilityAndUXGuidelines(t *testing.T) {
+	// Ticket #47: Accessibility & Web Interface Guidelines
+	if strings.Contains(miniAppHTML, "user-scalable=no") || strings.Contains(miniAppHTML, "maximum-scale=1.0") {
+		t.Errorf("miniAppHTML contains zoom-blocking viewport properties")
+	}
+	if !strings.Contains(miniAppHTML, "viewport-fit=cover") {
+		t.Errorf("miniAppHTML must include viewport-fit=cover")
+	}
+	if !strings.Contains(miniAppHTML, ":focus-visible") {
+		t.Errorf("miniAppHTML must define :focus-visible styling")
+	}
+	if !strings.Contains(miniAppHTML, "role=\"tab\"") {
+		t.Errorf("miniAppHTML bottom nav must use semantic role=tab")
+	}
+	if !strings.Contains(miniAppHTML, "prefers-reduced-motion") {
+		t.Errorf("miniAppHTML must support prefers-reduced-motion")
+	}
+	if !strings.Contains(miniAppHTML, "aria-live=\"polite\"") {
+		t.Errorf("miniAppHTML toast container must include aria-live=polite")
+	}
+	if !strings.Contains(miniAppHTML, "aria-label=\"Закрыть\"") {
+		t.Errorf("miniAppHTML modal close button must have aria-label")
+	}
+
+	// Ticket #48: Sticky Bottom MainButton in Thumb Zone
+	if !strings.Contains(miniAppHTML, "sticky-main-btn") {
+		t.Errorf("miniAppHTML must define sticky-main-btn")
+	}
+	if !strings.Contains(miniAppHTML, "main-btn-qty") || !strings.Contains(miniAppHTML, "main-btn-total") {
+		t.Errorf("miniAppHTML sticky main button must have live qty and total elements")
+	}
+
+	// Ticket #49: Haptic feedback, Skeletons, and Empty States
+	if !strings.Contains(miniAppHTML, "triggerHaptic") {
+		t.Errorf("miniAppHTML must implement triggerHaptic engine")
+	}
+	if !strings.Contains(miniAppHTML, "skeleton-card") || !strings.Contains(miniAppHTML, "shimmer") {
+		t.Errorf("miniAppHTML must support shimmer skeletons")
+	}
+	if !strings.Contains(miniAppHTML, "empty-state") {
+		t.Errorf("miniAppHTML must support empty-state component")
+	}
+}
