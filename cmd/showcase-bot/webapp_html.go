@@ -6,8 +6,7 @@ const miniAppHTML = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>MAX Mini App Suite</title>
-  <!-- Telegram & MAX Messenger WebApp Bridges -->
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Official MAX Messenger WebApp Bridge (Russian CDN) -->
   <script src="https://st.max.ru/js/max-web-app.js"></script>
   <style>
     :root {
