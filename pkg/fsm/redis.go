@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,8 @@ type RedisStorage struct {
 	prefix string
 	ttl    time.Duration
 }
+
+var _ Storage = (*RedisStorage)(nil)
 
 // RedisOptions configures RedisStorage.
 type RedisOptions struct {
@@ -62,6 +65,114 @@ func NewRedisStorageFromClient(client RedisClient, prefix string, ttl time.Durat
 		prefix: prefix,
 		ttl:    ttl,
 	}
+}
+
+// ParseRedisURL parses a Redis connection string into host:port and RedisOptions.
+// Supported formats: redis://[:password@]host[:port][/db] or host:port.
+func ParseRedisURL(rawURL string) (string, RedisOptions, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return "", RedisOptions{}, errors.New("empty redis url")
+	}
+
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "redis://" + trimmed
+	}
+
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return "", RedisOptions{}, fmt.Errorf("invalid redis url: %w", err)
+	}
+
+	var opts RedisOptions
+	if u.User != nil {
+		if pass, ok := u.User.Password(); ok {
+			opts.Password = pass
+		}
+	}
+
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		port = "6379"
+	}
+	addr := net.JoinHostPort(host, port)
+
+	path := strings.TrimPrefix(u.Path, "/")
+	if path != "" {
+		if dbNum, err := strconv.Atoi(path); err == nil {
+			opts.DB = dbNum
+		}
+	}
+
+	return addr, opts, nil
+}
+
+// NewRedisStorageFromURL parses a redis URL and returns a RedisStorage instance.
+func NewRedisStorageFromURL(rawURL string, opts ...RedisOptions) (*RedisStorage, error) {
+	addr, parsedOpts, err := ParseRedisURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(opts) > 0 {
+		userOpts := opts[0]
+		if userOpts.Prefix != "" {
+			parsedOpts.Prefix = userOpts.Prefix
+		}
+		if userOpts.TTL > 0 {
+			parsedOpts.TTL = userOpts.TTL
+		}
+		if userOpts.Timeout > 0 {
+			parsedOpts.Timeout = userOpts.Timeout
+		}
+		if userOpts.Password != "" {
+			parsedOpts.Password = userOpts.Password
+		}
+		if userOpts.DB > 0 {
+			parsedOpts.DB = userOpts.DB
+		}
+	}
+
+	return NewRedisStorage(addr, parsedOpts)
+}
+
+// NewStorageFromEnv initializes RedisStorage if REDIS_URL is provided and reachable,
+// otherwise falls back to MemoryStorage with the given default TTL.
+func NewStorageFromEnv(redisURL string, defaultTTL time.Duration) Storage {
+	trimmed := strings.TrimSpace(redisURL)
+	if trimmed != "" {
+		storage, err := NewRedisStorageFromURL(trimmed, RedisOptions{TTL: 24 * time.Hour})
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := storage.Ping(ctx); err == nil {
+				return storage
+			}
+			_ = storage.Close()
+		}
+	}
+	return NewMemoryStorage(defaultTTL)
+}
+
+// Ping verifies connection to Redis.
+func (r *RedisStorage) Ping(ctx context.Context) error {
+	if pinger, ok := r.client.(interface{ Ping(context.Context) error }); ok {
+		return pinger.Ping(ctx)
+	}
+	_, err := r.client.Get(ctx, "__fsm_ping__")
+	if errors.Is(err, ErrKeyNotFound) {
+		return nil
+	}
+	return err
+}
+
+// Close closes the underlying Redis client connection.
+func (r *RedisStorage) Close() error {
+	if closer, ok := r.client.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func (r *RedisStorage) stateKey(k SessionKey) string {
@@ -317,6 +428,41 @@ func (c *respClient) Del(ctx context.Context, keys ...string) error {
 		c.closeConn()
 		return err
 	}
+	return nil
+}
+
+func (c *respClient) Ping(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	conn, r, err := c.getConn()
+	if err != nil {
+		return err
+	}
+
+	cmd := formatRESPCommand("PING")
+	_ = conn.SetDeadline(time.Now().Add(c.timeout))
+	if _, err := conn.Write([]byte(cmd)); err != nil {
+		c.closeConn()
+		return err
+	}
+
+	res, err := readRESP(r)
+	if err != nil {
+		c.closeConn()
+		return err
+	}
+
+	if str, ok := res.(string); ok && (str == "PONG" || str == "+PONG") {
+		return nil
+	}
+	return fmt.Errorf("unexpected ping response: %v", res)
+}
+
+func (c *respClient) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closeConn()
 	return nil
 }
 

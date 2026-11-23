@@ -353,6 +353,47 @@ func RegisterWebappScenario(
 		})
 	})
 
+	// Endpoint: GET /api/webapp/history
+	httpMux.HandleFunc("/api/webapp/history", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		uidStr := r.URL.Query().Get("user_id")
+		uid, _ := strconv.ParseInt(uidStr, 10, 64)
+		if uid == 0 {
+			uid = atomic.LoadInt64(&lastActiveUserID)
+		}
+
+		artifactType := strings.TrimSpace(r.URL.Query().Get("type"))
+		limitStr := r.URL.Query().Get("limit")
+		limit, _ := strconv.Atoi(limitStr)
+		if limit <= 0 || limit > 100 {
+			limit = 30
+		}
+
+		var items []store.MediaArtifact
+		if appStore != nil {
+			var err error
+			items, err = appStore.ListMediaArtifacts(uid, artifactType, limit)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"success": false,
+					"error":   err.Error(),
+				})
+				return
+			}
+		}
+		if items == nil {
+			items = []store.MediaArtifact{}
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"user_id": uid,
+			"type":    artifactType,
+			"items":   items,
+		})
+	})
+
 	// Endpoint: POST /api/webapp/spin
 	httpMux.HandleFunc("/api/webapp/spin", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -522,6 +563,33 @@ func RegisterWebappScenario(
 				}
 			} else {
 				sendErrMsg = "неизвестен ID пользователя"
+			}
+		}
+
+		// Save generated image to media history
+		if appStore != nil && len(imgBytes) > 0 {
+			targetUID := req.UserID
+			if targetUID == 0 {
+				targetUID = atomic.LoadInt64(&lastActiveUserID)
+			}
+			if targetUID != 0 {
+				title := "Арт: " + fullPrompt
+				if len([]rune(title)) > 40 {
+					title = string([]rune(title)[:40]) + "…"
+				}
+				_, _ = appStore.SaveMediaArtifact(store.MediaArtifact{
+					UserID:       targetUID,
+					ArtifactType: "image",
+					Title:        title,
+					Prompt:       fullPrompt,
+					MediaURL:     dataURL,
+					Metadata: map[string]any{
+						"style":        req.Style,
+						"size":         len(imgBytes),
+						"sent_to_chat": sentToChat,
+					},
+					CreatedAt: time.Now(),
+				})
 			}
 		}
 

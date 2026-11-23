@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
 	"github.com/littfed/max-bot-api-client/pkg/logger"
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
+	"github.com/littfed/max-bot-api-client/pkg/store"
 )
 
 const aiSystemPrompt = "Ты дружелюбный и умный AI-ассистент в мессенджере MAX. Отвечай всегда грамотно, четко, доброжелательно и строго на естественном русском языке. Используй красивую разметку и отвечай по существу."
@@ -60,6 +62,7 @@ type AIConfig struct {
 	ImageModel  string
 	VoiceModel  string
 	VisionModel string
+	Store       *store.Store
 }
 
 // DefaultAIConfig returns production-ready model defaults for go-model-api.
@@ -87,6 +90,9 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 		if cfg[0].VisionModel != "" {
 			config.VisionModel = cfg[0].VisionModel
+		}
+		if cfg[0].Store != nil {
+			config.Store = cfg[0].Store
 		}
 	}
 
@@ -699,6 +705,31 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			DocsLink:    "https://dev.max.ru/docs/uploads",
 		})
 
+		// Save generated image to user's media history
+		if config.Store != nil && len(imgBytes) > 0 {
+			userID := getUserID(c)
+			title := "Арт: " + prompt
+			if len([]rune(title)) > 40 {
+				title = string([]rune(title)[:40]) + "…"
+			}
+			var mediaURL string
+			if len(imgBytes) < 250000 {
+				mediaURL = "data:image/png;base64," + base64.StdEncoding.EncodeToString(imgBytes)
+			}
+			_, _ = config.Store.SaveMediaArtifact(store.MediaArtifact{
+				UserID:       userID,
+				ArtifactType: "image",
+				Title:        title,
+				Prompt:       prompt,
+				MediaURL:     mediaURL,
+				Metadata: map[string]any{
+					"latency_ms": latency.Milliseconds(),
+					"size_bytes": len(imgBytes),
+				},
+				CreatedAt: time.Now(),
+			})
+		}
+
 		// Upload to MAX CDN if client is available and deliver the clean image with zero text clutter
 		if c.Client() != nil && len(imgBytes) > 0 {
 			uploadResp, uploadErr := c.Client().UploadMedia(c.Ctx(), maxbot.UploadTypeImage, "ai_image.jpg", bytes.NewReader(imgBytes))
@@ -985,6 +1016,28 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Description: fmt.Sprintf("STT Whisper: %s (%s) | LLM %s (%s).", config.VoiceModel, sttLatency.Round(time.Millisecond), usedModel, chatLatency.Round(time.Millisecond)),
 			DocsLink:    "https://platform.openai.com/docs/api-reference/audio",
 		})
+
+		// Save voice transcription to user's media history
+		if config.Store != nil && transcribedText != "" && transcribedText != "Речь не распознана." {
+			title := "Голосовое сообщение"
+			if len([]rune(transcribedText)) > 30 {
+				title = "Голос: «" + string([]rune(transcribedText)[:30]) + "…»"
+			} else {
+				title = "Голос: «" + transcribedText + "»"
+			}
+			_, _ = config.Store.SaveMediaArtifact(store.MediaArtifact{
+				UserID:       userID,
+				ArtifactType: "transcription",
+				Title:        title,
+				ContentText:  transcribedText,
+				Metadata: map[string]any{
+					"model":     config.VoiceModel,
+					"stt_ms":    sttLatency.Milliseconds(),
+					"llm_reply": llmReply,
+				},
+				CreatedAt: time.Now(),
+			})
+		}
 
 		responseBody := fmt.Sprintf("🗣 **Вы сказали:**\n*«%s»*\n\n🧠 **Ответ AI-ассистента:**\n%s",
 			transcribedText, llmReply)
@@ -1333,6 +1386,24 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 			Description: fmt.Sprintf("Файл: %s | Модель: %s | Задержка: %s | Токенов: %d.", filename, usedModel, chatResp.Latency.Round(time.Millisecond), chatResp.TotalTokens),
 			DocsLink:    "https://platform.openai.com/docs/api-reference/chat",
 		})
+
+		// Save document analysis to user's media history
+		if config.Store != nil && replyText != "" {
+			_, _ = config.Store.SaveMediaArtifact(store.MediaArtifact{
+				UserID:       userID,
+				ArtifactType: "document",
+				Title:        "Анализ документа: " + filename,
+				Prompt:       userCaption,
+				ContentText:  replyText,
+				Metadata: map[string]any{
+					"filename":   filename,
+					"model":      usedModel,
+					"tokens":     chatResp.TotalTokens,
+					"latency_ms": chatResp.Latency.Milliseconds(),
+				},
+				CreatedAt: time.Now(),
+			})
+		}
 
 		responseBody := fmt.Sprintf("📄 **Анализ документа `%s`:**\n\n%s", filename, replyText)
 		formatted := hood.Format(userID, responseBody, "ai_chat")

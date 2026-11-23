@@ -65,3 +65,16 @@ type Giveaway struct {
 	Active          bool             `json:"active"`
 	CreatedAt       time.Time        `json:"created_at"`
 }
+
+// MediaArtifact represents a persistent multimodal artifact (AI generated image, STT voice transcript, document analysis).
+type MediaArtifact struct {
+	ID           int64          `json:"id"`
+	UserID       int64          `json:"user_id"`
+	ArtifactType string         `json:"artifact_type"` // "image", "stt", "doc"
+	Title        string         `json:"title"`
+	Prompt       string         `json:"prompt,omitempty"`
+	ContentText  string         `json:"content_text,omitempty"`
+	MediaURL     string         `json:"media_url,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+}

@@ -1,8 +1,10 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -13,33 +15,39 @@ import (
 
 // StoreState is the serialized snapshot of all dynamic application data.
 type StoreState struct {
-	Channels  map[int64]Channel    `json:"channels"`
-	Orders    map[string]Order     `json:"orders"`
-	Reactions map[string]*Reaction `json:"reactions"`
-	Polls     map[string]*Poll     `json:"polls"`
-	Giveaways map[string]*Giveaway `json:"giveaways"`
+	Channels       map[int64]Channel    `json:"channels"`
+	Orders         map[string]Order     `json:"orders"`
+	Reactions      map[string]*Reaction `json:"reactions"`
+	Polls          map[string]*Poll     `json:"polls"`
+	Giveaways      map[string]*Giveaway `json:"giveaways"`
+	MediaArtifacts []MediaArtifact      `json:"media_artifacts,omitempty"`
 }
 
-// Store provides thread-safe access and persistence for channels, orders, reactions, and polls.
+// Store provides thread-safe access and persistence for channels, orders, reactions, polls, and media artifacts.
+// It transparently delegates to a SQL backend (PostgreSQL/SQLite) if configured, or falls back to JSON file / memory storage.
 type Store struct {
-	mu        sync.RWMutex
-	filePath  string
-	channels  map[int64]Channel
-	orders    map[string]Order
-	reactions map[string]*Reaction
-	polls     map[string]*Poll
-	giveaways map[string]*Giveaway
+	sql *SQLStore
+
+	mu             sync.RWMutex
+	filePath       string
+	channels       map[int64]Channel
+	orders         map[string]Order
+	reactions      map[string]*Reaction
+	polls          map[string]*Poll
+	giveaways      map[string]*Giveaway
+	mediaArtifacts []MediaArtifact
 }
 
 // New initializes or loads a Store from the specified JSON file path.
 func New(filePath string) (*Store, error) {
 	s := &Store{
-		filePath:  filePath,
-		channels:  make(map[int64]Channel),
-		orders:    make(map[string]Order),
-		reactions: make(map[string]*Reaction),
-		polls:     make(map[string]*Poll),
-		giveaways: make(map[string]*Giveaway),
+		filePath:       filePath,
+		channels:       make(map[int64]Channel),
+		orders:         make(map[string]Order),
+		reactions:      make(map[string]*Reaction),
+		polls:          make(map[string]*Poll),
+		giveaways:      make(map[string]*Giveaway),
+		mediaArtifacts: make([]MediaArtifact, 0),
 	}
 
 	if filePath != "" {
@@ -52,6 +60,77 @@ func New(filePath string) (*Store, error) {
 	s.seedDefaultChannels()
 
 	return s, nil
+}
+
+// NewWithSQL wraps an existing SQLStore in a Store.
+func NewWithSQL(sqlStore *SQLStore) *Store {
+	return &Store{
+		sql: sqlStore,
+	}
+}
+
+// OpenDatabase creates a *sql.DB for the given databaseURL (postgres:// or sqlite/file)
+func OpenDatabase(databaseURL string) (*sql.DB, string, error) {
+	trimmed := strings.TrimSpace(databaseURL)
+	if strings.HasPrefix(trimmed, "postgres://") || strings.HasPrefix(trimmed, "postgresql://") {
+		dbConn, err := sql.Open("pgx", trimmed)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to open postgres database: %w", err)
+		}
+		return dbConn, "postgres", nil
+	}
+
+	dsn := trimmed
+	if strings.HasPrefix(dsn, "sqlite://") {
+		dsn = strings.TrimPrefix(dsn, "sqlite://")
+	} else if strings.HasPrefix(dsn, "sqlite3://") {
+		dsn = strings.TrimPrefix(dsn, "sqlite3://")
+	}
+	dbConn, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to open sqlite database: %w", err)
+	}
+	return dbConn, "sqlite", nil
+}
+
+// NewFromEnv initializes a Store using DATABASE_URL if present, falling back to filePath JSON.
+func NewFromEnv(databaseURL string, fallbackPath string) (*Store, error) {
+	if trimmed := strings.TrimSpace(databaseURL); trimmed != "" {
+		dbConn, dialect, err := OpenDatabase(trimmed)
+		if err != nil {
+			log.Printf("[store] failed to connect to DATABASE_URL: %v, falling back to %s", err, fallbackPath)
+			return New(fallbackPath)
+		}
+
+		dbConn.SetMaxOpenConns(25)
+		dbConn.SetMaxIdleConns(5)
+		dbConn.SetConnMaxLifetime(15 * time.Minute)
+
+		sqlStore, err := NewSQLStore(dbConn, dialect)
+		if err != nil {
+			_ = dbConn.Close()
+			log.Printf("[store] failed to initialize SQLStore (%s): %v, falling back to %s", dialect, err, fallbackPath)
+			return New(fallbackPath)
+		}
+
+		log.Printf("[store] successfully connected to %s database and applied migrations", dialect)
+		return NewWithSQL(sqlStore), nil
+	}
+
+	return New(fallbackPath)
+}
+
+// SQL returns the underlying SQLStore, or nil if using JSON/memory.
+func (s *Store) SQL() *SQLStore {
+	return s.sql
+}
+
+// Close closes the underlying storage backend if applicable.
+func (s *Store) Close() error {
+	if s.sql != nil {
+		return s.sql.Close()
+	}
+	return nil
 }
 
 func (s *Store) seedDefaultChannels() {
@@ -123,6 +202,9 @@ func (s *Store) load() error {
 	if state.Giveaways != nil {
 		s.giveaways = state.Giveaways
 	}
+	if state.MediaArtifacts != nil {
+		s.mediaArtifacts = state.MediaArtifacts
+	}
 
 	return nil
 }
@@ -139,11 +221,12 @@ func (s *Store) saveLocked() error {
 	}
 
 	state := StoreState{
-		Channels:  s.channels,
-		Orders:    s.orders,
-		Reactions: s.reactions,
-		Polls:     s.polls,
-		Giveaways: s.giveaways,
+		Channels:       s.channels,
+		Orders:         s.orders,
+		Reactions:      s.reactions,
+		Polls:          s.polls,
+		Giveaways:      s.giveaways,
+		MediaArtifacts: s.mediaArtifacts,
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -166,6 +249,9 @@ func (s *Store) saveLocked() error {
 // --- Channel Operations ---
 
 func (s *Store) SaveChannel(ch Channel) error {
+	if s.sql != nil {
+		return s.sql.SaveChannel(ch)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -175,6 +261,9 @@ func (s *Store) SaveChannel(ch Channel) error {
 }
 
 func (s *Store) GetChannel(chatID int64) (Channel, bool) {
+	if s.sql != nil {
+		return s.sql.GetChannel(chatID)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -183,6 +272,9 @@ func (s *Store) GetChannel(chatID int64) (Channel, bool) {
 }
 
 func (s *Store) ListChannels() []Channel {
+	if s.sql != nil {
+		return s.sql.ListChannels()
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -196,6 +288,9 @@ func (s *Store) ListChannels() []Channel {
 // --- Order Operations ---
 
 func (s *Store) CreateOrder(order Order) error {
+	if s.sql != nil {
+		return s.sql.CreateOrder(order)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -210,6 +305,9 @@ func (s *Store) CreateOrder(order Order) error {
 }
 
 func (s *Store) GetOrder(id string) (Order, bool) {
+	if s.sql != nil {
+		return s.sql.GetOrder(id)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -218,6 +316,9 @@ func (s *Store) GetOrder(id string) (Order, bool) {
 }
 
 func (s *Store) ListOrdersByUser(userID int64) []Order {
+	if s.sql != nil {
+		return s.sql.ListOrdersByUser(userID)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -231,6 +332,9 @@ func (s *Store) ListOrdersByUser(userID int64) []Order {
 }
 
 func (s *Store) ListAllOrders() []Order {
+	if s.sql != nil {
+		return s.sql.ListAllOrders()
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -242,6 +346,9 @@ func (s *Store) ListAllOrders() []Order {
 }
 
 func (s *Store) UpdateOrderStatus(id string, status string) error {
+	if s.sql != nil {
+		return s.sql.UpdateOrderStatus(id, status)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -263,12 +370,12 @@ func sanitizeOrder(ord *Order) bool {
 		"srv_coffee":  "Дегустация specialty кофе",
 	}
 	productMap := map[string]string{
-		"gopher_hoodie":       "Худи Go Gopher Edition",
-		"tech_tshirt":         "Футболка MAX Ecosystem",
-		"barista_coffee":      "Кофемашина Barista 15bar",
-		"pro_anc_headphones":  "Наушники Pro ANC Wireless",
-		"stickers_pack":       "Стикерпак Bot Masters",
-		"go_patterns_book":    "Книга «Паттерны микросервисов в Go»",
+		"gopher_hoodie":      "Худи Go Gopher Edition",
+		"tech_tshirt":        "Футболка MAX Ecosystem",
+		"barista_coffee":     "Кофемашина Barista 15bar",
+		"pro_anc_headphones": "Наушники Pro ANC Wireless",
+		"stickers_pack":      "Стикерпак Bot Masters",
+		"go_patterns_book":   "Книга «Паттерны микросервисов в Go»",
 	}
 
 	for j := range ord.Items {
@@ -296,11 +403,10 @@ func sanitizeOrder(ord *Order) bool {
 
 // --- Reaction Operations ---
 
-// ToggleReaction handles user click on a post reaction emoji.
-// It switches reactions if the user already clicked a different emoji,
-// or removes it if clicking the same emoji again.
-// Returns the updated count map for that post.
 func (s *Store) ToggleReaction(postMID string, chatID int64, userID int64, emoji string) (map[string]int, error) {
+	if s.sql != nil {
+		return s.sql.ToggleReaction(postMID, chatID, userID, emoji)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -317,22 +423,18 @@ func (s *Store) ToggleReaction(postMID string, chatID int64, userID int64, emoji
 
 	prevEmoji, hasVoted := rx.UserVotes[userID]
 	if hasVoted && prevEmoji == emoji {
-		// User clicks same emoji -> retract vote
 		delete(rx.UserVotes, userID)
 		if rx.Counts[emoji] > 0 {
 			rx.Counts[emoji]--
 		}
 	} else {
-		// If voted something else before, decrement old
 		if hasVoted && rx.Counts[prevEmoji] > 0 {
 			rx.Counts[prevEmoji]--
 		}
-		// Increment new emoji
 		rx.UserVotes[userID] = emoji
 		rx.Counts[emoji]++
 	}
 
-	// Copy counts to return safely
 	countsCopy := make(map[string]int, len(rx.Counts))
 	for k, v := range rx.Counts {
 		countsCopy[k] = v
@@ -345,6 +447,9 @@ func (s *Store) ToggleReaction(postMID string, chatID int64, userID int64, emoji
 }
 
 func (s *Store) GetReactions(postMID string) (map[string]int, bool) {
+	if s.sql != nil {
+		return s.sql.GetReactions(postMID)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -362,6 +467,9 @@ func (s *Store) GetReactions(postMID string) (map[string]int, bool) {
 // --- Poll Operations ---
 
 func (s *Store) CreatePoll(poll Poll) error {
+	if s.sql != nil {
+		return s.sql.CreatePoll(poll)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -376,6 +484,9 @@ func (s *Store) CreatePoll(poll Poll) error {
 }
 
 func (s *Store) GetPoll(id string) (Poll, bool) {
+	if s.sql != nil {
+		return s.sql.GetPoll(id)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -386,8 +497,10 @@ func (s *Store) GetPoll(id string) (Poll, bool) {
 	return *poll, true
 }
 
-// VotePoll records or changes a user's vote and calculates updated option percentages.
 func (s *Store) VotePoll(pollID string, userID int64, optionIdx int) ([]int, []int, error) {
+	if s.sql != nil {
+		return s.sql.VotePoll(pollID, userID, optionIdx)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -401,7 +514,6 @@ func (s *Store) VotePoll(pollID string, userID int64, optionIdx int) ([]int, []i
 
 	p.Votes[userID] = optionIdx
 
-	// Calculate counts and percentages
 	counts := make([]int, len(p.Options))
 	totalVotes := len(p.Votes)
 	for _, opt := range p.Votes {
@@ -427,6 +539,9 @@ func (s *Store) VotePoll(pollID string, userID int64, optionIdx int) ([]int, []i
 // --- Giveaway Operations ---
 
 func (s *Store) CreateGiveaway(gw Giveaway) error {
+	if s.sql != nil {
+		return s.sql.CreateGiveaway(gw)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -442,6 +557,9 @@ func (s *Store) CreateGiveaway(gw Giveaway) error {
 }
 
 func (s *Store) GetGiveaway(id string) (Giveaway, bool) {
+	if s.sql != nil {
+		return s.sql.GetGiveaway(id)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -453,6 +571,9 @@ func (s *Store) GetGiveaway(id string) (Giveaway, bool) {
 }
 
 func (s *Store) AddGiveawayParticipant(id string, userID int64, userName string) error {
+	if s.sql != nil {
+		return s.sql.AddGiveawayParticipant(id, userID, userName)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -468,6 +589,9 @@ func (s *Store) AddGiveawayParticipant(id string, userID int64, userName string)
 }
 
 func (s *Store) DrawGiveawayWinners(id string, count int) ([]int64, error) {
+	if s.sql != nil {
+		return s.sql.DrawGiveawayWinners(id, count)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -485,7 +609,6 @@ func (s *Store) DrawGiveawayWinners(id string, count int) ([]int64, error) {
 		return nil, fmt.Errorf("no participants in giveaway %s", id)
 	}
 
-	// Shuffle
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r.Shuffle(len(uids), func(i, j int) {
 		uids[i], uids[j] = uids[j], uids[i]
@@ -503,4 +626,51 @@ func (s *Store) DrawGiveawayWinners(id string, count int) ([]int64, error) {
 	}
 
 	return winners, nil
+}
+
+// --- Media Artifact Operations ---
+
+func (s *Store) SaveMediaArtifact(artifact MediaArtifact) (*MediaArtifact, error) {
+	if s.sql != nil {
+		return s.sql.SaveMediaArtifact(artifact)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if artifact.CreatedAt.IsZero() {
+		artifact.CreatedAt = time.Now()
+	}
+	if artifact.Metadata == nil {
+		artifact.Metadata = make(map[string]any)
+	}
+	artifact.ID = int64(len(s.mediaArtifacts) + 1)
+	s.mediaArtifacts = append(s.mediaArtifacts, artifact)
+	_ = s.saveLocked()
+	return &artifact, nil
+}
+
+func (s *Store) ListMediaArtifacts(userID int64, artifactType string, limit int) ([]MediaArtifact, error) {
+	if s.sql != nil {
+		return s.sql.ListMediaArtifacts(userID, artifactType, limit)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	var res []MediaArtifact
+	for i := len(s.mediaArtifacts) - 1; i >= 0; i-- {
+		a := s.mediaArtifacts[i]
+		if a.UserID == userID {
+			if artifactType == "" || artifactType == "all" || a.ArtifactType == artifactType {
+				res = append(res, a)
+				if len(res) >= limit {
+					break
+				}
+			}
+		}
+	}
+	return res, nil
 }

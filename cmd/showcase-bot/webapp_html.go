@@ -420,6 +420,79 @@ const miniAppHTML = `<!DOCTYPE html>
       to { opacity: 0; transform: translateY(-8px); }
     }
 
+    /* Gallery & Media Artifacts */
+    .gallery-card {
+      background: #111827;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.15s ease;
+    }
+    .gallery-card:hover {
+      border-color: #4b5563;
+    }
+    .gallery-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .gallery-card-badge {
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-image { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+    .badge-stt { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .badge-doc { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .gallery-card-img {
+      width: 100%;
+      max-height: 220px;
+      object-fit: cover;
+      border-radius: 8px;
+      margin-top: 4px;
+      border: 1px solid var(--border);
+    }
+    .gallery-card-body {
+      font-size: 13px;
+      color: #d1d5db;
+      line-height: 1.45;
+      background: #1e293b;
+      padding: 10px;
+      border-radius: 8px;
+      max-height: 140px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .gallery-card-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+    .btn-card-action {
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s ease;
+    }
+    .btn-card-action:hover {
+      background: #334155;
+    }
+
     /* Accessibility: Reduced Motion */
     @media (prefers-reduced-motion: reduce) {
       *, ::before, ::after {
@@ -547,6 +620,7 @@ const miniAppHTML = `<!DOCTYPE html>
       <div class="subnav" role="tablist">
         <button type="button" class="subnav-btn active" id="btn-sub-image" role="tab" aria-selected="true" onclick="switchAISub('image')">🎨 Генератор артов</button>
         <button type="button" class="subnav-btn" id="btn-sub-chat" role="tab" aria-selected="false" onclick="switchAISub('chat')">💬 Быстрый AI Чат</button>
+        <button type="button" class="subnav-btn" id="btn-sub-gallery" role="tab" aria-selected="false" onclick="switchAISub('gallery')">🖼️ Медиа & История</button>
       </div>
 
       <!-- AI Sub: Image Gen -->
@@ -602,6 +676,33 @@ const miniAppHTML = `<!DOCTYPE html>
           </div>
 
           <div class="chat-bubble" id="ai-chat-result" style="display: none;" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <!-- AI Sub: Gallery & History -->
+      <div id="ai-sub-gallery" style="display: none;">
+        <div class="ai-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="font-weight: 700; font-size: 15px;">📁 Медиатека и история</div>
+            <button type="button" onclick="loadMediaHistory()" aria-label="Обновить историю" style="background: none; border: none; color: #a78bfa; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;">🔄 Обновить</button>
+          </div>
+          <p style="font-size: 12px; color: var(--muted); margin-bottom: 12px;">Сгенерированные изображения, транскрибация голоса и анализ документов из ваших диалогов с ботом.</p>
+          
+          <div class="chip-cloud" role="radiogroup" aria-label="Фильтр артефактов" style="margin-bottom: 12px;">
+            <span class="chip selected" id="filter-chip-all" role="radio" aria-checked="true" tabindex="0" onclick="filterGalleryType('all', this)">Все материалы</span>
+            <span class="chip" id="filter-chip-image" role="radio" aria-checked="false" tabindex="0" onclick="filterGalleryType('image', this)">🎨 Арт</span>
+            <span class="chip" id="filter-chip-transcription" role="radio" aria-checked="false" tabindex="0" onclick="filterGalleryType('transcription', this)">🎙️ Голос (STT)</span>
+            <span class="chip" id="filter-chip-document" role="radio" aria-checked="false" tabindex="0" onclick="filterGalleryType('document', this)">📄 Документы</span>
+          </div>
+
+          <div style="margin-bottom: 14px;">
+            <label for="gallery-search" class="sr-only">Поиск по материалам</label>
+            <input type="text" class="input-field" id="gallery-search" placeholder="🔍 Поиск по тексту или промпту…" oninput="filterGallerySearch(this.value)" style="margin-bottom: 0;">
+          </div>
+
+          <div id="gallery-items-container" aria-label="Список артефактов и истории" style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="font-size: 13px; color: var(--muted); text-align: center; padding: 24px;">Загрузка материалов…</div>
+          </div>
         </div>
       </div>
     </section>
@@ -1268,14 +1369,199 @@ const miniAppHTML = `<!DOCTYPE html>
     }
 
     // AI Studio Handlers
+    let currentGalleryFilter = 'all';
+    let allGalleryItems = [];
+
     function switchAISub(sub) {
       triggerHaptic('selection');
       document.getElementById('ai-sub-image').style.display = sub === 'image' ? 'block' : 'none';
       document.getElementById('ai-sub-chat').style.display = sub === 'chat' ? 'block' : 'none';
+      document.getElementById('ai-sub-gallery').style.display = sub === 'gallery' ? 'block' : 'none';
       document.getElementById('btn-sub-image').classList.toggle('active', sub === 'image');
       document.getElementById('btn-sub-image').setAttribute('aria-selected', sub === 'image');
       document.getElementById('btn-sub-chat').classList.toggle('active', sub === 'chat');
       document.getElementById('btn-sub-chat').setAttribute('aria-selected', sub === 'chat');
+      document.getElementById('btn-sub-gallery').classList.toggle('active', sub === 'gallery');
+      document.getElementById('btn-sub-gallery').setAttribute('aria-selected', sub === 'gallery');
+
+      if (sub === 'gallery') {
+        loadMediaHistory();
+      }
+    }
+
+    function filterGalleryType(type, el) {
+      triggerHaptic('selection');
+      document.querySelectorAll('#ai-sub-gallery .chip-cloud .chip').forEach(c => {
+        c.classList.remove('selected');
+        c.setAttribute('aria-checked', 'false');
+      });
+      if (el) {
+        el.classList.add('selected');
+        el.setAttribute('aria-checked', 'true');
+      }
+      currentGalleryFilter = type;
+      renderGalleryItems();
+    }
+
+    function filterGallerySearch(query) {
+      renderGalleryItems(query);
+    }
+
+    async function loadMediaHistory() {
+      const container = document.getElementById('gallery-items-container');
+      if (!container) return;
+      container.innerHTML = '<div style="font-size: 13px; color: var(--muted); text-align: center; padding: 24px;">Загрузка материалов…</div>';
+
+      try {
+        const uid = (currentUser && currentUser.id) ? currentUser.id : 0;
+        const res = await fetch('/api/webapp/history?user_id=' + uid + '&limit=50');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.items)) {
+          allGalleryItems = data.items;
+          renderGalleryItems();
+        } else {
+          container.innerHTML = '<div style="font-size: 13px; color: var(--muted); text-align: center; padding: 20px;">История пуста</div>';
+        }
+      } catch (err) {
+        container.innerHTML = '<div style="font-size: 13px; color: var(--danger); text-align: center; padding: 20px;">Не удалось загрузить историю</div>';
+      }
+    }
+
+    function renderGalleryItems(searchQuery) {
+      const container = document.getElementById('gallery-items-container');
+      if (!container) return;
+
+      const q = (searchQuery !== undefined ? searchQuery : (document.getElementById('gallery-search')?.value || '')).toLowerCase().trim();
+
+      const filtered = allGalleryItems.filter(item => {
+        if (currentGalleryFilter !== 'all' && item.artifact_type !== currentGalleryFilter) {
+          return false;
+        }
+        if (q) {
+          const matchTitle = (item.title || '').toLowerCase().includes(q);
+          const matchPrompt = (item.prompt || '').toLowerCase().includes(q);
+          const matchContent = (item.content_text || '').toLowerCase().includes(q);
+          return matchTitle || matchPrompt || matchContent;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div style="font-size: 13px; color: var(--muted); text-align: center; padding: 30px; background: #111827; border-radius: 12px; border: 1px dashed var(--border);">' +
+          '<div style="font-size: 28px; margin-bottom: 8px;">📭</div>' +
+          '<b>В этом разделе пока ничего нет</b>' +
+          '<p style="font-size: 12px; margin-top: 4px;">Сгенерируйте арт во вкладке выше или отправьте боту голосовое сообщение в чат MAX!</p>' +
+          '</div>';
+        return;
+      }
+
+      container.innerHTML = filtered.map(function(item) {
+        var badgeHtml = '';
+        var contentHtml = '';
+        var createdDate = item.created_at ? new Date(item.created_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+
+        if (item.artifact_type === 'image') {
+          badgeHtml = '<span class="gallery-card-badge badge-image">🎨 Арт</span>';
+          if (item.media_url) {
+            contentHtml = '<div style="font-size: 13px; color: #e5e7eb; font-weight: 500;">«' + escapeHtml(item.prompt || item.title) + '»</div>' +
+              '<img src="' + item.media_url + '" alt="Арт" class="gallery-card-img" loading="lazy">' +
+              '<div class="gallery-card-actions">' +
+              '<button type="button" class="btn-card-action" onclick="sendGalleryImageToChat(\'' + escapeQuotes(item.prompt || item.title) + '\', this)">📲 Отправить в чат</button>' +
+              '<a href="' + item.media_url + '" download="max_artwork.png" class="btn-card-action" style="text-decoration: none;">💾 Скачать</a>' +
+              '</div>';
+          } else {
+            contentHtml = '<div style="font-size: 13px; color: #e5e7eb;">«' + escapeHtml(item.prompt || item.title) + '»</div>';
+          }
+        } else if (item.artifact_type === 'transcription') {
+          badgeHtml = '<span class="gallery-card-badge badge-stt">🎙️ Голос (STT)</span>';
+          contentHtml = '<div class="gallery-card-body">' + escapeHtml(item.content_text || '') + '</div>' +
+            '<div class="gallery-card-actions">' +
+            '<button type="button" class="btn-card-action" onclick="copyGalleryText(\'' + escapeQuotes(item.content_text || '') + '\', this)">📋 Скопировать текст</button>' +
+            '</div>';
+        } else {
+          badgeHtml = '<span class="gallery-card-badge badge-doc">📄 Документ</span>';
+          contentHtml = '<div style="font-size: 13px; font-weight: 600; color: #f3f4f6; margin-bottom: 4px;">' + escapeHtml(item.title || 'Документ') + '</div>' +
+            '<div class="gallery-card-body">' + escapeHtml(item.content_text || '') + '</div>' +
+            '<div class="gallery-card-actions">' +
+            '<button type="button" class="btn-card-action" onclick="copyGalleryText(\'' + escapeQuotes(item.content_text || '') + '\', this)">📋 Скопировать анализ</button>' +
+            '</div>';
+        }
+
+        return '<div class="gallery-card">' +
+          '<div class="gallery-card-header">' +
+          badgeHtml +
+          '<span>' + createdDate + '</span>' +
+          '</div>' +
+          contentHtml +
+          '</div>';
+      }).join('');
+    }
+
+    function copyGalleryText(text, btn) {
+      triggerHaptic('selection');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast('Текст скопирован в буфер обмена', 'success');
+          if (btn) {
+            const old = btn.innerHTML;
+            btn.innerHTML = '✅ Скопировано!';
+            setTimeout(() => { btn.innerHTML = old; }, 2000);
+          }
+        }).catch(() => {
+          showToast('Не удалось скопировать', 'error');
+        });
+      } else {
+        showToast('Буфер обмена недоступен в этом WebView', 'error');
+      }
+    }
+
+    async function sendGalleryImageToChat(prompt, btn) {
+      triggerHaptic('selection');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = '⏳ Отправка…';
+      }
+      try {
+        const uid = (currentUser && currentUser.id) ? currentUser.id : 0;
+        const res = await fetch('/api/webapp/generate_image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: prompt,
+            user_id: uid,
+            send_to_chat: true
+          })
+        });
+        const d = await res.json();
+        if (d.success) {
+          showToast('Изображение отправлено в чат MAX!', 'success');
+          triggerHaptic('success');
+        } else {
+          showToast('Ошибка отправки: ' + (d.message || 'попробуйте позже'), 'error');
+        }
+      } catch (e) {
+        showToast('Ошибка сети', 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = '📲 Отправить в чат';
+        }
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function escapeQuotes(str) {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n').replace(/\r/g, '');
     }
 
     function selectStyle(el, style) {
@@ -1316,6 +1602,7 @@ const miniAppHTML = `<!DOCTYPE html>
           imgEl.style.display = 'block';
           placeholder.style.display = 'none';
           btnSend.style.display = 'block';
+          loadMediaHistory();
           if (sendToChat) {
             if (data.sent_to_chat) {
               showToast('🎨 Арт успешно отправлен в ваш чат мессенджера MAX!', 'success');

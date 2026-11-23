@@ -244,4 +244,133 @@ func TestMiniAppAccessibilityAndUXGuidelines(t *testing.T) {
 	if strings.Contains(miniAppHTML, "Гость (Демо)") || strings.Contains(miniAppHTML, "(Гость)") {
 		t.Errorf("miniAppHTML must not display discriminatory 'Гость' badges")
 	}
+
+	// Ticket #56: Media & History Gallery
+	if !strings.Contains(miniAppHTML, "btn-sub-gallery") {
+		t.Errorf("miniAppHTML must include btn-sub-gallery subnav button")
+	}
+	if !strings.Contains(miniAppHTML, "ai-sub-gallery") {
+		t.Errorf("miniAppHTML must include ai-sub-gallery container")
+	}
+	if !strings.Contains(miniAppHTML, "loadMediaHistory") {
+		t.Errorf("miniAppHTML must implement loadMediaHistory function")
+	}
+	if !strings.Contains(miniAppHTML, "copyGalleryText") {
+		t.Errorf("miniAppHTML must implement copyGalleryText function")
+	}
+}
+
+func TestWebappMediaHistoryAPI(t *testing.T) {
+	hood := NewHoodEngine()
+	storage := fsm.NewMemoryStorage(10 * time.Minute)
+	defer storage.Close()
+
+	appStore, _ := store.New("")
+	botInstance := bot.NewWithClient(nil)
+	mux := http.NewServeMux()
+	RegisterWebappScenario(botInstance, hood, mux, "test_token_123", "8080", appStore, nil, nil, "gemini-2.5-flash")
+
+	const testUID int64 = 777123
+
+	// 1. Pre-seed media artifacts
+	_, err := appStore.SaveMediaArtifact(store.MediaArtifact{
+		UserID:       testUID,
+		ArtifactType: "image",
+		Title:        "Арт: Neon Gopher",
+		Prompt:       "Cyberpunk Neon Gopher",
+		MediaURL:     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+		CreatedAt:    time.Now().Add(-10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("failed to save image artifact: %v", err)
+	}
+
+	_, err = appStore.SaveMediaArtifact(store.MediaArtifact{
+		UserID:       testUID,
+		ArtifactType: "transcription",
+		Title:        "Голосовое сообщение",
+		ContentText:  "Привет, это тестовая голосовая заметка",
+		CreatedAt:    time.Now().Add(-5 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("failed to save transcription artifact: %v", err)
+	}
+
+	_, err = appStore.SaveMediaArtifact(store.MediaArtifact{
+		UserID:       testUID,
+		ArtifactType: "document",
+		Title:        "Анализ документа: spec.pdf",
+		ContentText:  "Документ содержит описание архитектуры",
+		CreatedAt:    time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("failed to save doc artifact: %v", err)
+	}
+
+	// 2. Query all history for testUID
+	reqAll := httptest.NewRequest(http.MethodGet, "/api/webapp/history?user_id=777123", nil)
+	recAll := httptest.NewRecorder()
+	mux.ServeHTTP(recAll, reqAll)
+
+	if recAll.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", recAll.Code)
+	}
+
+	var respAll struct {
+		Success bool                  `json:"success"`
+		Items   []store.MediaArtifact `json:"items"`
+	}
+	if err := json.Unmarshal(recAll.Body.Bytes(), &respAll); err != nil {
+		t.Fatalf("failed to unmarshal history json: %v", err)
+	}
+	if !respAll.Success || len(respAll.Items) != 3 {
+		t.Fatalf("expected 3 history items, got %d (success=%v)", len(respAll.Items), respAll.Success)
+	}
+
+	// 3. Query filtered by type=image
+	reqImg := httptest.NewRequest(http.MethodGet, "/api/webapp/history?user_id=777123&type=image", nil)
+	recImg := httptest.NewRecorder()
+	mux.ServeHTTP(recImg, reqImg)
+
+	var respImg struct {
+		Success bool                  `json:"success"`
+		Items   []store.MediaArtifact `json:"items"`
+	}
+	_ = json.Unmarshal(recImg.Body.Bytes(), &respImg)
+	if len(respImg.Items) != 1 || respImg.Items[0].ArtifactType != "image" {
+		t.Fatalf("expected 1 image artifact, got %d", len(respImg.Items))
+	}
+
+	// 4. Query filtered by type=transcription
+	reqSTT := httptest.NewRequest(http.MethodGet, "/api/webapp/history?user_id=777123&type=transcription", nil)
+	recSTT := httptest.NewRecorder()
+	mux.ServeHTTP(recSTT, reqSTT)
+
+	var respSTT struct {
+		Success bool                  `json:"success"`
+		Items   []store.MediaArtifact `json:"items"`
+	}
+	_ = json.Unmarshal(recSTT.Body.Bytes(), &respSTT)
+	if len(respSTT.Items) != 1 || respSTT.Items[0].ArtifactType != "transcription" {
+		t.Fatalf("expected 1 transcription artifact, got %d", len(respSTT.Items))
+	}
+
+	// 5. Test POST /api/webapp/generate_image automatically saves artifact
+	genReq := httptest.NewRequest(http.MethodPost, "/api/webapp/generate_image", bytes.NewReader([]byte(`{
+		"prompt": "Gopher in Space",
+		"style": "Cyberpunk",
+		"user_id": 777123
+	}`)))
+	genRec := httptest.NewRecorder()
+	mux.ServeHTTP(genRec, genReq)
+
+	if genRec.Code != http.StatusOK {
+		t.Fatalf("generate_image failed: %d", genRec.Code)
+	}
+
+	// Re-check image count (should now be 2)
+	imgList, _ := appStore.ListMediaArtifacts(testUID, "image", 10)
+	if len(imgList) != 2 {
+		t.Fatalf("expected 2 image artifacts after generate_image, got %d", len(imgList))
+	}
 }

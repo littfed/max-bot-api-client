@@ -44,9 +44,15 @@ func main() {
 	hood := NewHoodEngine()
 	registerBaseTechCards(hood)
 
-	// 2. Initialize FSM Storage (Session persistence)
-	fsmStorage := fsm.NewMemoryStorage(1 * time.Hour)
+	// 2. Initialize FSM Storage (Distributed Redis or In-Memory fallback)
+	redisURL := strings.TrimSpace(os.Getenv("REDIS_URL"))
+	fsmStorage := fsm.NewStorageFromEnv(redisURL, 1*time.Hour)
 	defer fsmStorage.Close()
+	if _, isRedis := fsmStorage.(*fsm.RedisStorage); isRedis {
+		logger.Info("FSM подключен к распределенному Redis хранилищу сессий", slog.String("redis_url", redisURL))
+	} else {
+		logger.Info("FSM запущен в режиме In-Memory хранилища сессий (1h TTL)")
+	}
 
 	// 3. Initialize Telemetry Collector & Prometheus Exporter
 	promExporter := telemetry.NewPrometheusExporter()
@@ -156,11 +162,12 @@ func main() {
 	httpMux.HandleFunc("/webhook/payments/yookassa", paymentRouter.HTTPHandler("yookassa"))
 
 	// 7. Initialize Persistent Store
-	appStore, storeErr := store.New("data/bot_store.json")
+	appStore, storeErr := store.NewFromEnv(os.Getenv("DATABASE_URL"), "data/bot_store.json")
 	if storeErr != nil {
-		logger.Warn("не удалось инициализировать bot_store.json, работаем с in-memory", slog.Any("error", storeErr))
+		logger.Warn("не удалось инициализировать bot_store, работаем с in-memory", slog.Any("error", storeErr))
 		appStore, _ = store.New("")
 	}
+	defer appStore.Close()
 
 	// 8. Register Core Routes, Menu & Scenarios
 	hood.RegisterRoutes(b.Router())
@@ -181,6 +188,7 @@ func main() {
 		ChatModel:  chatModel,
 		ImageModel: imageModel,
 		VoiceModel: voiceModel,
+		Store:      appStore,
 	})
 
 	// Telemetry stats command

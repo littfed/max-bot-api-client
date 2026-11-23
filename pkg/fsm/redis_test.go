@@ -159,3 +159,87 @@ func TestRedisStorageOperations(t *testing.T) {
 		t.Fatalf("expected empty state after reset, got %v", st)
 	}
 }
+
+func TestParseRedisURL(t *testing.T) {
+	cases := []struct {
+		url      string
+		wantAddr string
+		wantPass string
+		wantDB   int
+	}{
+		{
+			url:      "redis://127.0.0.1:6379",
+			wantAddr: "127.0.0.1:6379",
+			wantPass: "",
+			wantDB:   0,
+		},
+		{
+			url:      "redis://:mysecret@dokploy-redis:6380/2",
+			wantAddr: "dokploy-redis:6380",
+			wantPass: "mysecret",
+			wantDB:   2,
+		},
+		{
+			url:      "redis://default:complexpass@10.0.0.5:6379/1",
+			wantAddr: "10.0.0.5:6379",
+			wantPass: "complexpass",
+			wantDB:   1,
+		},
+		{
+			url:      "localhost:6379",
+			wantAddr: "localhost:6379",
+			wantPass: "",
+			wantDB:   0,
+		},
+	}
+
+	for _, c := range cases {
+		addr, opts, err := ParseRedisURL(c.url)
+		if err != nil {
+			t.Fatalf("failed to parse url %s: %v", c.url, err)
+		}
+		if addr != c.wantAddr {
+			t.Errorf("url %s: got addr %s, want %s", c.url, addr, c.wantAddr)
+		}
+		if opts.Password != c.wantPass {
+			t.Errorf("url %s: got pass %s, want %s", c.url, opts.Password, c.wantPass)
+		}
+		if opts.DB != c.wantDB {
+			t.Errorf("url %s: got db %d, want %d", c.url, opts.DB, c.wantDB)
+		}
+	}
+}
+
+func TestRedisStorageFromURLAndPing(t *testing.T) {
+	srv := startMockRedis(t)
+	defer srv.Close()
+
+	redisURL := "redis://" + srv.ln.Addr().String() + "/0"
+	storage, err := NewRedisStorageFromURL(redisURL, RedisOptions{TTL: 1 * time.Hour})
+	if err != nil {
+		t.Fatalf("failed to create redis storage from url: %v", err)
+	}
+	defer storage.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := storage.Ping(ctx); err != nil {
+		t.Fatalf("ping failed: %v", err)
+	}
+
+	// Verify NewStorageFromEnv successfully picks up redis
+	envStorage := NewStorageFromEnv(redisURL, 1*time.Hour)
+	defer envStorage.Close()
+
+	if _, ok := envStorage.(*RedisStorage); !ok {
+		t.Fatalf("expected NewStorageFromEnv to return *RedisStorage, got %T", envStorage)
+	}
+
+	// Verify fallback to MemoryStorage on empty or invalid URL
+	fallbackStorage := NewStorageFromEnv("", 1*time.Hour)
+	defer fallbackStorage.Close()
+	if _, ok := fallbackStorage.(*MemoryStorage); !ok {
+		t.Fatalf("expected NewStorageFromEnv to fallback to *MemoryStorage, got %T", fallbackStorage)
+	}
+}
