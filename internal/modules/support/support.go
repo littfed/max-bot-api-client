@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/pkg/store"
@@ -57,7 +58,7 @@ func tokenize(text string) map[string]struct{} {
 	})
 	tokens := make(map[string]struct{}, len(words))
 	for _, w := range words {
-		if len(w) > 2 { // filter out 1-2 char words
+		if utf8.RuneCountInString(w) > 2 { // filter out 1-2 char words
 			tokens[w] = struct{}{}
 		}
 	}

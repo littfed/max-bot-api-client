@@ -227,9 +227,13 @@ func main() {
 	}
 
 	// 7.2. Initialize Bot Hub Core Components, Adapters & Virtual Modules
-	compositeFSM := core.NewCompositeFSM(sqlStore, nil)
-	lockManager := core.NewLockManager(nil)
-	maintenanceGuard := core.NewMaintenanceGuard(sqlStore, nil)
+	var redisClient core.RedisClient
+	if rStorage, ok := fsmStorage.(*fsm.RedisStorage); ok && rStorage != nil {
+		redisClient = rStorage.Client()
+	}
+	compositeFSM := core.NewCompositeFSM(sqlStore, redisClient)
+	lockManager := core.NewLockManager(redisClient)
+	maintenanceGuard := core.NewMaintenanceGuard(sqlStore, redisClient)
 	orchestrator := core.NewOrchestrator(sqlStore, compositeFSM, lockManager, maintenanceGuard)
 
 	var botClient max.BotClient = client

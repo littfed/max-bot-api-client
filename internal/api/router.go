@@ -220,10 +220,21 @@ func NewRouter(cfg RouterConfig) http.Handler {
 func corsMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
+		allowed := false
+		if len(cfg.AllowedOrigins) > 0 {
+			for _, o := range cfg.AllowedOrigins {
+				if o == origin || o == "*" {
+					allowed = true
+					break
+				}
+			}
+		} else {
+			allowed = true
 		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
+
+		if allowed || origin == "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Init-Data, X-Platform, X-Dev-User-ID, X-Test-User-ID")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
