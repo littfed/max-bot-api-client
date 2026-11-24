@@ -59,6 +59,10 @@ func (m *mockPlatformAdapter) CheckMembership(ctx context.Context, chatID string
 	return true, nil
 }
 
+func (m *mockPlatformAdapter) SendChatAction(ctx context.Context, recipientID string, action string) error {
+	return nil
+}
+
 func setupTestAPIServer(t *testing.T) *httptest.Server {
 	t.Helper()
 

@@ -58,6 +58,10 @@ func (m *mockPlatformAdapter) CheckMembership(ctx context.Context, chatID string
 	return true, nil
 }
 
+func (m *mockPlatformAdapter) SendChatAction(ctx context.Context, recipientID string, action string) error {
+	return nil
+}
+
 type testHarness struct {
 	adminSvc *admin.Service
 	store    *store.SQLStore

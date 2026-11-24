@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -611,6 +613,32 @@ func (h *modulesHandler) handleChatMessage(w http.ResponseWriter, r *http.Reques
 	if req.Message == "" {
 		writeError(w, http.StatusBadRequest, "message is required")
 		return
+	}
+
+	// Trigger typing indicator in messenger (MAX / Telegram) while AI processes the prompt
+	if h.cfg.PlatformAdapter != nil {
+		recipientID := strconv.FormatInt(user.ID, 10)
+		platformName := PlatformFromContext(r.Context())
+		if h.cfg.Store != nil {
+			if ident, err := h.cfg.Store.GetUserIdentity(r.Context(), user.ID, platformName); err == nil && ident != nil && ident.PlatformUserID != "" {
+				recipientID = ident.PlatformUserID
+			}
+		}
+		_ = h.cfg.PlatformAdapter.SendChatAction(r.Context(), recipientID, "typing_on")
+		stopTyping := make(chan struct{})
+		defer close(stopTyping)
+		go func(recID string) {
+			ticker := time.NewTicker(4 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopTyping:
+					return
+				case <-ticker.C:
+					_ = h.cfg.PlatformAdapter.SendChatAction(context.Background(), recID, "typing_on")
+				}
+			}
+		}(recipientID)
 	}
 
 	reply, err := h.cfg.ChatModule.SendMessage(r.Context(), user.ID, req.RoleID, req.ToneID, req.Message)

@@ -219,6 +219,24 @@ func (a *Adapter) CheckMembership(ctx context.Context, chatID string, userID str
 	}
 }
 
+// SendChatAction sends a chat presence action (e.g. typing) to a chat in Telegram.
+func (a *Adapter) SendChatAction(ctx context.Context, recipientID string, action string) error {
+	cID := cleanRecipientID(recipientID)
+	if cID == "" {
+		return fmt.Errorf("recipientID cannot be empty")
+	}
+	tgAction := action
+	if tgAction == "" || tgAction == "typing_on" {
+		tgAction = "typing"
+	}
+	payload := map[string]any{
+		"chat_id": cID,
+		"action":  tgAction,
+	}
+	var resp bool
+	return a.call(ctx, "sendChatAction", payload, &resp)
+}
+
 // cleanRecipientID strips "user_", "chat_", "user:", "chat:" prefixes.
 func cleanRecipientID(raw string) string {
 	trimmed := strings.TrimSpace(raw)

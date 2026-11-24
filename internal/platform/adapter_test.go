@@ -70,6 +70,10 @@ func (m *mockMaxBotClient) GetChatMembers(ctx context.Context, chatID int64, mar
 	return &maxbot.ChatMembersResponse{Members: members}, nil
 }
 
+func (m *mockMaxBotClient) SendChatAction(ctx context.Context, chatID int64, action string) error {
+	return nil
+}
+
 type mockPaginationStuckClient struct {
 	calls int
 }
@@ -81,6 +85,9 @@ func (m *mockPaginationStuckClient) EditMessage(ctx context.Context, messageID s
 	return nil, nil
 }
 func (m *mockPaginationStuckClient) AnswerCallback(ctx context.Context, callbackID string, answer *maxbot.AnswerCallbackRequest) error {
+	return nil
+}
+func (m *mockPaginationStuckClient) SendChatAction(ctx context.Context, chatID int64, action string) error {
 	return nil
 }
 func (m *mockPaginationStuckClient) GetChatMembers(ctx context.Context, chatID int64, marker ...int64) (*maxbot.ChatMembersResponse, error) {

@@ -175,11 +175,13 @@ func (m *Module) GetSession(ctx context.Context, userID int64) (*Session, error)
 	if !exists {
 		roleID := 1
 		toneID := 1
+		var messages []ChatMessage
 		if m.store != nil {
 			if dbState, err := m.store.GetUserModeState(ctx, userID, "chat"); err == nil && dbState != nil && len(dbState.Payload) > 0 {
 				var p struct {
-					RoleID int `json:"role_id"`
-					ToneID int `json:"tone_id"`
+					RoleID   int           `json:"role_id"`
+					ToneID   int           `json:"tone_id"`
+					Messages []ChatMessage `json:"messages"`
 				}
 				if err := json.Unmarshal(dbState.Payload, &p); err == nil {
 					if p.RoleID >= 1 && p.RoleID <= 5 {
@@ -188,15 +190,20 @@ func (m *Module) GetSession(ctx context.Context, userID int64) (*Session, error)
 					if p.ToneID >= 1 && p.ToneID <= 4 {
 						toneID = p.ToneID
 					}
+					messages = p.Messages
 				}
 			}
+		}
+
+		if messages == nil {
+			messages = make([]ChatMessage, 0)
 		}
 
 		s = &Session{
 			UserID:    userID,
 			RoleID:    roleID,
 			ToneID:    toneID,
-			Messages:  make([]ChatMessage, 0),
+			Messages:  messages,
 			UpdatedAt: time.Now(),
 		}
 		m.sessions[userID] = s
@@ -222,12 +229,15 @@ func (m *Module) SetSessionSettings(ctx context.Context, userID int64, roleID in
 	session.RoleID = roleID
 	session.ToneID = toneID
 	session.UpdatedAt = time.Now()
+	msgs := make([]ChatMessage, len(session.Messages))
+	copy(msgs, session.Messages)
 	m.mu.Unlock()
 
 	if m.store != nil {
-		pBytes, _ := json.Marshal(map[string]int{
-			"role_id": roleID,
-			"tone_id": toneID,
+		pBytes, _ := json.Marshal(map[string]any{
+			"role_id":  roleID,
+			"tone_id":  toneID,
+			"messages": msgs,
 		})
 		dbState := &store.UserModeState{
 			UserID:    userID,
@@ -249,6 +259,19 @@ func (m *Module) ResetSession(ctx context.Context, userID int64) error {
 	if s, exists := m.sessions[userID]; exists {
 		s.Messages = make([]ChatMessage, 0)
 		s.UpdatedAt = time.Now()
+		if m.store != nil {
+			pBytes, _ := json.Marshal(map[string]any{
+				"role_id":  s.RoleID,
+				"tone_id":  s.ToneID,
+				"messages": s.Messages,
+			})
+			_ = m.store.SaveUserModeState(ctx, &store.UserModeState{
+				UserID:    userID,
+				ModeID:    "chat",
+				Payload:   pBytes,
+				UpdatedAt: time.Now(),
+			})
+		}
 	}
 	return nil
 }
@@ -348,7 +371,26 @@ func (m *Module) SendMessage(ctx context.Context, userID int64, roleID int, tone
 		session.Messages = session.Messages[len(session.Messages)-10:]
 	}
 	session.UpdatedAt = time.Now()
+	msgs := make([]ChatMessage, len(session.Messages))
+	copy(msgs, session.Messages)
+	rID := session.RoleID
+	tID := session.ToneID
 	m.mu.Unlock()
+
+	if m.store != nil {
+		pBytes, _ := json.Marshal(map[string]any{
+			"role_id":  rID,
+			"tone_id":  tID,
+			"messages": msgs,
+		})
+		dbState := &store.UserModeState{
+			UserID:    userID,
+			ModeID:    "chat",
+			Payload:   pBytes,
+			UpdatedAt: time.Now(),
+		}
+		_ = m.store.SaveUserModeState(ctx, dbState)
+	}
 
 	return reply, nil
 }

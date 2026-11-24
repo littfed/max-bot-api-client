@@ -84,4 +84,5 @@ type PlatformAdapter interface {
 	EditMessage(ctx context.Context, messageID string, body *OutMessage) error
 	AnswerCallback(ctx context.Context, callbackID string, text string) error
 	CheckMembership(ctx context.Context, chatID string, userID string) (bool, error)
+	SendChatAction(ctx context.Context, recipientID string, action string) error
 }

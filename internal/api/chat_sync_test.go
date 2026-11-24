@@ -46,6 +46,9 @@ func (r *recordingPlatformAdapter) AnswerCallback(ctx context.Context, callbackI
 func (r *recordingPlatformAdapter) CheckMembership(ctx context.Context, chatID string, userID string) (bool, error) {
 	return true, nil
 }
+func (r *recordingPlatformAdapter) SendChatAction(ctx context.Context, recipientID string, action string) error {
+	return nil
+}
 
 func setupTestAPIServerWithAdapter(t *testing.T, adapter platform.PlatformAdapter) (*httptest.Server, *chat.Module, *core.CompositeFSM) {
 	t.Helper()

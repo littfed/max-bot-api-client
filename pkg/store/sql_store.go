@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -665,10 +666,28 @@ func (s *SQLStore) SetUserActiveMode(ctx context.Context, userID int64, modeID s
 	return nil
 }
 
+// IsAdminPlatformUser returns true if the platform user ID matches the owner or is listed in ADMIN_USER_IDS.
+func IsAdminPlatformUser(platformUserID string) bool {
+	if platformUserID == "396393759" {
+		return true
+	}
+	adminEnv := os.Getenv("ADMIN_USER_IDS")
+	if adminEnv != "" {
+		for _, id := range strings.Split(adminEnv, ",") {
+			if strings.TrimSpace(id) == platformUserID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ResolveUserIdentity finds or creates a user and identity for a platform and platformUserID.
 func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUserID, username, firstName, phone string) (*User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	isAdmin := IsAdminPlatformUser(platformUserID)
 
 	// 1. Check if identity exists
 	findQuery := `SELECT id, user_id FROM user_identities WHERE platform = $1 AND platform_user_id = $2;`
@@ -683,6 +702,10 @@ func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUs
 		getUserQuery := `SELECT id, active_mode_id, role, timezone, created_at, updated_at FROM users WHERE id = $1;`
 		if err := s.db.QueryRowContext(ctx, getUserQuery, userID).Scan(&u.ID, &u.ActiveModeID, &u.Role, &u.Timezone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to fetch existing user %d: %w", userID, err)
+		}
+		if isAdmin && u.Role != "admin" && u.Role != "superadmin" {
+			_, _ = s.db.ExecContext(ctx, `UPDATE users SET role = 'admin', updated_at = $1 WHERE id = $2;`, time.Now(), u.ID)
+			u.Role = "admin"
 		}
 		return &u, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -700,6 +723,9 @@ func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUs
 	var user User
 	user.ActiveModeID = "chat"
 	user.Role = "user"
+	if isAdmin {
+		user.Role = "admin"
+	}
 	user.Timezone = "UTC+3"
 	user.CreatedAt = now
 	user.UpdatedAt = now
@@ -1007,10 +1033,14 @@ func (s *SQLStore) GetSupportTickets(ctx context.Context, status string) ([]Supp
 	var rows *sql.Rows
 	var err error
 	if status != "" {
-		query := `SELECT id, user_id, platform, mode_scope, subject, status, created_at, updated_at FROM support_tickets WHERE status = $1 ORDER BY created_at DESC;`
+		query := `SELECT t.id, t.user_id, t.platform, t.mode_scope, t.subject, t.status, t.created_at, t.updated_at,
+		                 COALESCE((SELECT m.message_text FROM support_messages m WHERE m.ticket_id = t.id AND m.sender_type = 'user' ORDER BY m.id ASC LIMIT 1), '') as message
+		          FROM support_tickets t WHERE t.status = $1 ORDER BY t.created_at DESC;`
 		rows, err = s.db.QueryContext(ctx, query, status)
 	} else {
-		query := `SELECT id, user_id, platform, mode_scope, subject, status, created_at, updated_at FROM support_tickets ORDER BY created_at DESC;`
+		query := `SELECT t.id, t.user_id, t.platform, t.mode_scope, t.subject, t.status, t.created_at, t.updated_at,
+		                 COALESCE((SELECT m.message_text FROM support_messages m WHERE m.ticket_id = t.id AND m.sender_type = 'user' ORDER BY m.id ASC LIMIT 1), '') as message
+		          FROM support_tickets t ORDER BY t.created_at DESC;`
 		rows, err = s.db.QueryContext(ctx, query)
 	}
 	if err != nil {
@@ -1021,7 +1051,7 @@ func (s *SQLStore) GetSupportTickets(ctx context.Context, status string) ([]Supp
 	var tickets []SupportTicket
 	for rows.Next() {
 		var t SupportTicket
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Platform, &t.ModeScope, &t.Subject, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Platform, &t.ModeScope, &t.Subject, &t.Status, &t.CreatedAt, &t.UpdatedAt, &t.Message); err != nil {
 			return nil, fmt.Errorf("failed to scan support ticket: %w", err)
 		}
 		tickets = append(tickets, t)
@@ -1037,11 +1067,13 @@ func (s *SQLStore) GetSupportTicket(ctx context.Context, ticketID int64) (*Suppo
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT id, user_id, platform, mode_scope, subject, status, created_at, updated_at FROM support_tickets WHERE id = $1;`
+	query := `SELECT t.id, t.user_id, t.platform, t.mode_scope, t.subject, t.status, t.created_at, t.updated_at,
+	                 COALESCE((SELECT m.message_text FROM support_messages m WHERE m.ticket_id = t.id AND m.sender_type = 'user' ORDER BY m.id ASC LIMIT 1), '') as message
+	          FROM support_tickets t WHERE t.id = $1;`
 	row := s.db.QueryRowContext(ctx, query, ticketID)
 
 	var t SupportTicket
-	if err := row.Scan(&t.ID, &t.UserID, &t.Platform, &t.ModeScope, &t.Subject, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.UserID, &t.Platform, &t.ModeScope, &t.Subject, &t.Status, &t.CreatedAt, &t.UpdatedAt, &t.Message); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("support ticket %d not found: %w", ticketID, sql.ErrNoRows)
 		}

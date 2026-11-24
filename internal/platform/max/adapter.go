@@ -17,6 +17,7 @@ type BotClient interface {
 	EditMessage(ctx context.Context, messageID string, msg *maxbot.EditMessageRequest) (*maxbot.Message, error)
 	AnswerCallback(ctx context.Context, callbackID string, answer *maxbot.AnswerCallbackRequest) error
 	GetChatMembers(ctx context.Context, chatID int64, marker ...int64) (*maxbot.ChatMembersResponse, error)
+	SendChatAction(ctx context.Context, chatID int64, action string) error
 }
 
 // Adapter implements platform.PlatformAdapter for MAX messenger.
@@ -148,6 +149,21 @@ func (a *Adapter) CheckMembership(ctx context.Context, chatID string, userID str
 	}
 
 	return false, nil
+}
+
+// SendChatAction sends a presence action (e.g. ActionTypingOn) to a recipient in MAX.
+func (a *Adapter) SendChatAction(ctx context.Context, recipientID string, action string) error {
+	if a.client == nil {
+		return fmt.Errorf("max client is not configured")
+	}
+	rec, err := parseRecipient(recipientID)
+	if err != nil {
+		return fmt.Errorf("failed to parse recipient ID %q: %w", recipientID, err)
+	}
+	if action == "" {
+		action = maxbot.ActionTypingOn
+	}
+	return a.client.SendChatAction(ctx, rec.ID(), action)
 }
 
 // parseRecipient resolves string identifiers like "user_42", "user:42", "chat_100", "chat:100", "-100", "42".

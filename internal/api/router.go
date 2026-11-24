@@ -327,6 +327,12 @@ func authMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
 			return
 		}
 
+		if cfg.Store != nil && authedUser.Role != "admin" && authedUser.Role != "superadmin" {
+			if ident, err := cfg.Store.GetUserIdentity(ctx, authedUser.ID, platformName); err == nil && ident != nil && store.IsAdminPlatformUser(ident.PlatformUserID) {
+				authedUser.Role = "admin"
+			}
+		}
+
 		ctx = context.WithValue(ctx, userContextKey, authedUser)
 		ctx = context.WithValue(ctx, platformContextKey, platformName)
 		next.ServeHTTP(w, r.WithContext(ctx))
