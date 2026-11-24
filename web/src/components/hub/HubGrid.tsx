@@ -77,7 +77,7 @@ export const HubGrid: React.FC<HubGridProps> = ({
         />
 
         {/* Cell 5 (Row 2, Col 2): Center Mascot */}
-        <div className="flex flex-col items-center justify-center p-2 rounded-2xl bg-white border border-slate-200/90 shadow-sm min-h-[92px] sm:min-h-[104px] overflow-hidden">
+        <div className="flex flex-col items-center justify-center p-2 rounded-2xl bg-white border border-slate-200/90 shadow-sm min-h-[96px] sm:min-h-[108px] overflow-hidden">
           <MascotRenderer mascot={mascot} onTap={onTapMascot} />
         </div>
 

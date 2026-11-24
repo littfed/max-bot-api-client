@@ -11,6 +11,17 @@
     --color-card-border: #e2e8f0;
   }
 
+  html {
+    font-size: 16.5px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  @media (min-width: 640px) {
+    html {
+      font-size: 16px;
+    }
+  }
+
   body {
     background-color: var(--color-bg);
     color: #0f172a;
@@ -46,5 +57,5 @@
 }
 
 .safe-top {
-  padding-top: max(0.75rem, env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top, 0px);
 }

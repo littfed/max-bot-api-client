@@ -33,7 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-[#0b1329] text-white px-4 py-3 safe-top shadow-md">
+    <header className="sticky top-0 z-40 bg-[#0b1329] text-white px-3.5 sm:px-4 py-2 sm:py-2.5 shadow-md">
       <div className="max-w-md sm:max-w-lg mx-auto flex items-center justify-between gap-3">
         {/* Left: Brand or Back Navigation */}
         <div className="flex items-center gap-2.5 min-w-0">
@@ -44,7 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
               title="Вернуться в Хаб"
             >
               <ArrowLeft className="w-5 h-5 text-slate-300" />
-              <span className="text-sm font-medium text-slate-300 hover:text-white">
+              <span className="text-sm font-semibold text-slate-300 hover:text-white">
                 {currentView === 'admin' ? 'Хаб' : 'Хаб'}
               </span>
               <span className="text-slate-500 font-light mx-0.5">/</span>

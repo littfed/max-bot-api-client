@@ -52,8 +52,8 @@ export const BottomBar: React.FC<BottomBarProps> = ({
       <div className="max-w-md sm:max-w-lg mx-auto flex items-center justify-between gap-3">
         {/* Left: Active Mode Indicator with Green Dot */}
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-xs sm:text-sm font-semibold text-slate-800">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-sm font-semibold text-slate-800">
             Режим: <span className="text-slate-900">{activeTitle}</span>
           </span>
         </div>
@@ -63,7 +63,7 @@ export const BottomBar: React.FC<BottomBarProps> = ({
           {/* Chat / Messenger button */}
           <button
             onClick={handleChatAction}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-medium border transition-all shadow-sm active:scale-95 ${
+            className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl text-sm font-semibold border transition-all shadow-sm active:scale-95 ${
               isAlreadyInChat
                 ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/80'
                 : 'bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-200/80'
@@ -73,11 +73,11 @@ export const BottomBar: React.FC<BottomBarProps> = ({
             {isAlreadyInChat ? (
               <>
                 <span>В мессенджер</span>
-                <CornerDownLeft className="w-3.5 h-3.5 text-slate-500" />
+                <CornerDownLeft className="w-4 h-4 text-slate-500" />
               </>
             ) : (
               <>
-                <MessageSquare className="w-3.5 h-3.5 text-teal-600" />
+                <MessageSquare className="w-4 h-4 text-teal-600" />
                 <span>В чат</span>
               </>
             )}
@@ -86,14 +86,14 @@ export const BottomBar: React.FC<BottomBarProps> = ({
           {/* Admin panel button - always visible in bottom-right corner */}
           <button
             onClick={onOpenAdmin}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-medium border transition-all shadow-sm active:scale-95 ${
+            className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl text-sm font-semibold border transition-all shadow-sm active:scale-95 ${
               currentView === 'admin'
                 ? 'bg-amber-100 border-amber-300 text-amber-900'
                 : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
             }`}
             title="Панель администратора"
           >
-            <Settings className="w-3.5 h-3.5 text-amber-700" />
+            <Settings className="w-4 h-4 text-amber-700" />
             <span>Админ</span>
           </button>
         </div>
