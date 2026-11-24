@@ -50,7 +50,7 @@ func (r *recordingPlatformAdapter) SendChatAction(ctx context.Context, recipient
 	return nil
 }
 
-func setupTestAPIServerWithAdapter(t *testing.T, adapter platform.PlatformAdapter) (*httptest.Server, *chat.Module, *core.CompositeFSM) {
+func setupTestAPIServerWithAdapter(t *testing.T, adapter platform.PlatformAdapter) (*httptest.Server, *chat.Module, *core.CompositeFSM, *store.SQLStore) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -124,13 +124,13 @@ func setupTestAPIServerWithAdapter(t *testing.T, adapter platform.PlatformAdapte
 	t.Cleanup(func() {
 		ts.Close()
 	})
-	return ts, chatMod, fsm
+	return ts, chatMod, fsm, sqlStore
 }
 
 // 1. Symptom: Duplicate "Режим успешно переключен" notification when mode is already active
 func TestBug_DuplicateModeSwitchNotification(t *testing.T) {
 	recorder := &recordingPlatformAdapter{}
-	ts, _, _ := setupTestAPIServerWithAdapter(t, recorder)
+	ts, _, _, _ := setupTestAPIServerWithAdapter(t, recorder)
 
 	// Set initial user mode to "chat"
 	switchBody := bytes.NewBufferString(`{"mode_id":"chat"}`)
@@ -169,7 +169,7 @@ func TestBug_DuplicateModeSwitchNotification(t *testing.T) {
 // 2. Symptom: Role/tone and chat history out of sync between MiniApp and Bot Chat
 func TestBug_ChatSyncBetweenMiniAppAndBot(t *testing.T) {
 	recorder := &recordingPlatformAdapter{}
-	ts, chatMod, fsm := setupTestAPIServerWithAdapter(t, recorder)
+	ts, chatMod, fsm, _ := setupTestAPIServerWithAdapter(t, recorder)
 
 	// In Mini-App: User sets settings or sends message with Role 3 (Маркетолог) and Tone 4 (Юмористический)
 	settingsBody := bytes.NewBufferString(`{"role_id": 3, "tone_id": 4}`)
@@ -238,3 +238,101 @@ func TestBug_ChatSyncBetweenMiniAppAndBot(t *testing.T) {
 		t.Errorf("BUG REPRODUCED: Bot chat did not receive role from Mini-App! Got text: %s", res.Text)
 	}
 }
+
+// 3. Symptom: Chat message history in Mini App is lost after service rebuild or restart (Issue #74)
+func TestBug_ChatHistoryPersistsAcrossRestart(t *testing.T) {
+	recorder := &recordingPlatformAdapter{}
+	ts, _, _, sqlStore := setupTestAPIServerWithAdapter(t, recorder)
+
+	// Send a chat message via Mini App
+	msgBody := bytes.NewBufferString(`{"role_id": 2, "tone_id": 3, "message": "Какая у нас юнит-экономика?"}`)
+	reqMsg, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/message", msgBody)
+	reqMsg.Header.Set("X-Init-Data", validMAXInitData)
+	reqMsg.Header.Set("Content-Type", "application/json")
+	respMsg, err := http.DefaultClient.Do(reqMsg)
+	if err != nil || respMsg.StatusCode != http.StatusOK {
+		t.Fatalf("POST /chat/message failed: code=%d, err=%v", respMsg.StatusCode, err)
+	}
+	respMsg.Body.Close()
+
+	// Simulate backend service restart / rebuild:
+	// A new instance of chat.Module and router is initialized against the SAME sqlStore (RAM wiped).
+	restartedChatMod := chat.New(sqlStore, nil)
+	sessionAfterRestart, err := restartedChatMod.GetSession(context.Background(), 999)
+	if err != nil {
+		t.Fatalf("GetSession failed after restart: %v", err)
+	}
+
+	if len(sessionAfterRestart.Messages) < 2 {
+		t.Fatalf("BUG REPRODUCED: Chat history was lost after service restart! Expected >= 2 messages, got %d", len(sessionAfterRestart.Messages))
+	}
+
+	if sessionAfterRestart.Messages[0].Content != "Какая у нас юнит-экономика?" {
+		t.Errorf("Expected first message 'Какая у нас юнит-экономика?', got '%s'", sessionAfterRestart.Messages[0].Content)
+	}
+
+	// 3a. Update settings in Mini App
+	settingsBody := bytes.NewBufferString(`{"role_id": 3, "tone_id": 4}`)
+	reqSettings, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/settings", settingsBody)
+	reqSettings.Header.Set("X-Init-Data", validMAXInitData)
+	reqSettings.Header.Set("Content-Type", "application/json")
+	respSettings, err := http.DefaultClient.Do(reqSettings)
+	if err != nil || respSettings.StatusCode != http.StatusOK {
+		t.Fatalf("POST /chat/settings failed: %v", err)
+	}
+	respSettings.Body.Close()
+
+	// Cold restart again: settings changed, messages MUST still persist!
+	restartedChatMod2 := chat.New(sqlStore, nil)
+	session2, err := restartedChatMod2.GetSession(context.Background(), 999)
+	if err != nil {
+		t.Fatalf("GetSession failed after second restart: %v", err)
+	}
+	if session2.RoleID != 3 || session2.ToneID != 4 {
+		t.Errorf("Expected role=3, tone=4 after settings update, got role=%d, tone=%d", session2.RoleID, session2.ToneID)
+	}
+	if len(session2.Messages) < 2 {
+		t.Errorf("Chat history lost after settings update! Expected >= 2 messages, got %d", len(session2.Messages))
+	}
+
+	// 3b. User interacts in Bot Chat via HandleMessage
+	u := &store.User{ID: 999, ActiveModeID: "chat"}
+	st := &core.State{UserID: 999, ModeID: "chat"}
+	res, err := restartedChatMod2.HandleMessage(context.Background(), u, st, &core.IncomingMessage{Text: "Еще совет"})
+	if err != nil {
+		t.Fatalf("HandleMessage failed: %v", err)
+	}
+	if !strings.Contains(res.Text, "Маркетолог") {
+		t.Errorf("Expected response from role Маркетолог, got: %s", res.Text)
+	}
+
+	// Cold restart again: messages MUST be >= 4 now
+	restartedChatMod3 := chat.New(sqlStore, nil)
+	session3, err := restartedChatMod3.GetSession(context.Background(), 999)
+	if err != nil {
+		t.Fatalf("GetSession failed after third restart: %v", err)
+	}
+	if len(session3.Messages) < 4 {
+		t.Errorf("Chat history lost after bot message! Expected >= 4 messages, got %d", len(session3.Messages))
+	}
+
+	// 3c. Clear chat in Mini App
+	reqClear, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/clear", nil)
+	reqClear.Header.Set("X-Init-Data", validMAXInitData)
+	respClear, err := http.DefaultClient.Do(reqClear)
+	if err != nil || respClear.StatusCode != http.StatusOK {
+		t.Fatalf("POST /chat/clear failed: %v", err)
+	}
+	respClear.Body.Close()
+
+	// Cold restart: messages MUST be 0
+	restartedChatMod4 := chat.New(sqlStore, nil)
+	session4, err := restartedChatMod4.GetSession(context.Background(), 999)
+	if err != nil {
+		t.Fatalf("GetSession failed after clear: %v", err)
+	}
+	if len(session4.Messages) != 0 {
+		t.Errorf("Expected 0 messages after clear, got %d", len(session4.Messages))
+	}
+}
+

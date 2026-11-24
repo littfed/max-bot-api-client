@@ -576,11 +576,9 @@ func (h *modulesHandler) handleChatSettings(w http.ResponseWriter, r *http.Reque
 	}
 
 	if h.cfg.FSM != nil {
-		pBytes, _ := json.Marshal(map[string]int{
-			"role_id": req.RoleID,
-			"tone_id": req.ToneID,
-		})
-		_ = h.cfg.FSM.Set(r.Context(), user.ID, "chat", "", pBytes)
+		if payload, err := h.cfg.ChatModule.GetSessionPayload(r.Context(), user.ID); err == nil && len(payload) > 0 {
+			_ = h.cfg.FSM.Set(r.Context(), user.ID, "chat", "", payload)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -648,11 +646,9 @@ func (h *modulesHandler) handleChatMessage(w http.ResponseWriter, r *http.Reques
 	}
 
 	if h.cfg.FSM != nil {
-		pBytes, _ := json.Marshal(map[string]int{
-			"role_id": req.RoleID,
-			"tone_id": req.ToneID,
-		})
-		_ = h.cfg.FSM.Set(r.Context(), user.ID, "chat", "", pBytes)
+		if payload, err := h.cfg.ChatModule.GetSessionPayload(r.Context(), user.ID); err == nil && len(payload) > 0 {
+			_ = h.cfg.FSM.Set(r.Context(), user.ID, "chat", "", payload)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -674,6 +670,12 @@ func (h *modulesHandler) handleChatClear(w http.ResponseWriter, r *http.Request)
 	if err := h.cfg.ChatModule.ResetSession(r.Context(), user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to clear chat session: %v", err))
 		return
+	}
+
+	if h.cfg.FSM != nil {
+		if payload, err := h.cfg.ChatModule.GetSessionPayload(r.Context(), user.ID); err == nil && len(payload) > 0 {
+			_ = h.cfg.FSM.Set(r.Context(), user.ID, "chat", "", payload)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

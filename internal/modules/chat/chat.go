@@ -211,6 +211,31 @@ func (m *Module) GetSession(ctx context.Context, userID int64) (*Session, error)
 	return s, nil
 }
 
+// MarshalPayload serializes the session state (role, tone, and full message history) for FSM persistence.
+func (s *Session) MarshalPayload() []byte {
+	msgs := s.Messages
+	if msgs == nil {
+		msgs = make([]ChatMessage, 0)
+	}
+	pBytes, _ := json.Marshal(map[string]any{
+		"role_id":  s.RoleID,
+		"tone_id":  s.ToneID,
+		"messages": msgs,
+	})
+	return pBytes
+}
+
+// GetSessionPayload returns the serialized JSON payload of the user's active session.
+func (m *Module) GetSessionPayload(ctx context.Context, userID int64) ([]byte, error) {
+	session, err := m.GetSession(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return session.MarshalPayload(), nil
+}
+
 // SetSessionSettings updates role and tone and persists them to the backing store.
 func (m *Module) SetSessionSettings(ctx context.Context, userID int64, roleID int, toneID int) error {
 	if roleID < 1 || roleID > 5 {
@@ -229,16 +254,10 @@ func (m *Module) SetSessionSettings(ctx context.Context, userID int64, roleID in
 	session.RoleID = roleID
 	session.ToneID = toneID
 	session.UpdatedAt = time.Now()
-	msgs := make([]ChatMessage, len(session.Messages))
-	copy(msgs, session.Messages)
+	pBytes := session.MarshalPayload()
 	m.mu.Unlock()
 
 	if m.store != nil {
-		pBytes, _ := json.Marshal(map[string]any{
-			"role_id":  roleID,
-			"tone_id":  toneID,
-			"messages": msgs,
-		})
 		dbState := &store.UserModeState{
 			UserID:    userID,
 			ModeID:    "chat",
@@ -260,11 +279,7 @@ func (m *Module) ResetSession(ctx context.Context, userID int64) error {
 		s.Messages = make([]ChatMessage, 0)
 		s.UpdatedAt = time.Now()
 		if m.store != nil {
-			pBytes, _ := json.Marshal(map[string]any{
-				"role_id":  s.RoleID,
-				"tone_id":  s.ToneID,
-				"messages": s.Messages,
-			})
+			pBytes := s.MarshalPayload()
 			_ = m.store.SaveUserModeState(ctx, &store.UserModeState{
 				UserID:    userID,
 				ModeID:    "chat",
@@ -371,18 +386,10 @@ func (m *Module) SendMessage(ctx context.Context, userID int64, roleID int, tone
 		session.Messages = session.Messages[len(session.Messages)-10:]
 	}
 	session.UpdatedAt = time.Now()
-	msgs := make([]ChatMessage, len(session.Messages))
-	copy(msgs, session.Messages)
-	rID := session.RoleID
-	tID := session.ToneID
+	pBytes := session.MarshalPayload()
 	m.mu.Unlock()
 
 	if m.store != nil {
-		pBytes, _ := json.Marshal(map[string]any{
-			"role_id":  rID,
-			"tone_id":  tID,
-			"messages": msgs,
-		})
 		dbState := &store.UserModeState{
 			UserID:    userID,
 			ModeID:    "chat",
@@ -468,7 +475,9 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 	reply, err := m.SendMessage(ctx, u.ID, payload.RoleID, payload.ToneID, text)
 	if err != nil {
 		slog.Error("chat module: SendMessage failed", slog.Int64("user_id", u.ID), slog.Any("error", err))
-		newP, _ := json.Marshal(payload)
+		m.mu.RLock()
+		newP := session.MarshalPayload()
+		m.mu.RUnlock()
 		return &core.ModuleResult{
 			Text: fmt.Sprintf("⚠️ **Не удалось получить ответ от нейросети**\n\nПричина: %v\nПопробуйте повторить запрос или сменить роль.", err),
 			Buttons: [][]core.ResponseButton{
@@ -493,7 +502,9 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 		},
 	}
 
-	newP, _ := json.Marshal(payload)
+	m.mu.RLock()
+	newP := session.MarshalPayload()
+	m.mu.RUnlock()
 	return &core.ModuleResult{
 		Text:       header + reply,
 		Buttons:    buttons,
@@ -587,9 +598,11 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 			payload.RoleID = newRoleID
 		}
 		_ = m.SetSessionSettings(ctx, u.ID, payload.RoleID, payload.ToneID)
-		newP, _ := json.Marshal(payload)
+		m.mu.RLock()
+		newP := session.MarshalPayload()
 		roleName := m.roles[payload.RoleID].Name
 		toneName := m.tones[payload.ToneID].Name
+		m.mu.RUnlock()
 
 		return &core.ModuleResult{
 			Text: fmt.Sprintf("🎭 Роль успешно переключена на: **%s** (%s).\n🎨 Текущая тональность: **%s**.\n\nНапишите сообщение в чат для продолжения.", roleName, m.roles[payload.RoleID].Description, toneName),
@@ -637,9 +650,11 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 			payload.ToneID = newToneID
 		}
 		_ = m.SetSessionSettings(ctx, u.ID, payload.RoleID, payload.ToneID)
-		newP, _ := json.Marshal(payload)
+		m.mu.RLock()
+		newP := session.MarshalPayload()
 		roleName := m.roles[payload.RoleID].Name
 		toneName := m.tones[payload.ToneID].Name
+		m.mu.RUnlock()
 
 		return &core.ModuleResult{
 			Text: fmt.Sprintf("🎨 Тональность успешно переключена на: **%s** (%s).\n🎭 Текущая роль: **%s**.\n\nНапишите сообщение в чат для продолжения.", toneName, m.tones[payload.ToneID].Description, roleName),
@@ -659,8 +674,8 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		m.mu.RLock()
 		roleName := m.roles[payload.RoleID].Name
 		toneName := m.tones[payload.ToneID].Name
+		newP := session.MarshalPayload()
 		m.mu.RUnlock()
-		newP, _ := json.Marshal(payload)
 		return &core.ModuleResult{
 			Text: fmt.Sprintf("🔄 **Память диалога очищена!**\nТекущая роль: *%s*, тон: *%s*.\n\nВы можете начать новый диалог с чистого листа.", roleName, toneName),
 			Buttons: [][]core.ResponseButton{
@@ -680,8 +695,8 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		m.mu.RLock()
 		roleName := m.roles[payload.RoleID].Name
 		toneName := m.tones[payload.ToneID].Name
+		newP := session.MarshalPayload()
 		m.mu.RUnlock()
-		newP, _ := json.Marshal(payload)
 		return &core.ModuleResult{
 			Text: fmt.Sprintf("💬 **Режим «Общение» (ИИ-собеседник)**\n\n🎭 Текущая роль: *%s*\n🎨 Тональность: *%s*\n\nОтправьте ваше сообщение или вопрос в чат:", roleName, toneName),
 			Buttons: [][]core.ResponseButton{
