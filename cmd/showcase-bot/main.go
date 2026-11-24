@@ -139,7 +139,12 @@ func main() {
 		voiceModel = "scout-audio"
 	}
 
-	aiClient := ai.NewClient(aiGatewayURL, aiGatewayKey, ai.WithTimeout(120*time.Second))
+	aiClient := ai.NewClient(
+		aiGatewayURL,
+		aiGatewayKey,
+		ai.WithDefaultChatModel(chatModel),
+		ai.WithTimeout(120*time.Second),
+	)
 
 	pingCtx, pingCancel := context.WithTimeout(context.Background(), 25*time.Second)
 	if err := aiClient.Ping(pingCtx); err == nil {
@@ -243,7 +248,7 @@ func main() {
 	shopMod := shop.New(sqlStore)
 	receptionMod := reception.New(sqlStore, lockManager)
 	supportMod := support.New(sqlStore)
-	chatMod := chat.New(sqlStore, aiClient)
+	chatMod := chat.New(sqlStore, aiClient, chatModel)
 
 	orchestrator.RegisterModule(shopMod)
 	orchestrator.RegisterModule(receptionMod)

@@ -451,6 +451,9 @@ func (c *Client) AnswerCallback(ctx context.Context, callbackID string, answer *
 	if strings.TrimSpace(callbackID) == "" {
 		return fmt.Errorf("callbackID cannot be empty")
 	}
+	if answer == nil {
+		answer = &AnswerCallbackRequest{}
+	}
 	q := make(url.Values)
 	q.Set("callback_id", callbackID)
 

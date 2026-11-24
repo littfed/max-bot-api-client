@@ -283,6 +283,27 @@ func (o *Orchestrator) handleChangeMode(ctx context.Context, u *store.User, targ
 	}
 	u.ActiveModeID = targetMode
 
+	if targetMode == "chat" {
+		text := "✅ Активный режим переключен на: *Общение* (ИИ-собеседник)\n\n" +
+			"🎭 Роль: *Ассистент (Универсальный)*\n" +
+			"🎨 Тональность: *Деловой*\n\n" +
+			"Задайте любой вопрос в чат или настройте роль и тон кнопками ниже:"
+		buttons := [][]ResponseButton{
+			{
+				{Text: "🎭 Роль", Data: "chat:menu:roles"},
+				{Text: "🎨 Тон", Data: "chat:menu:tones"},
+				{Text: "🔄 Сброс контекста", Data: "chat:reset"},
+			},
+		}
+		return &DomainResponse{
+			UserID:       u.ID,
+			ActiveModeID: targetMode,
+			Text:         text,
+			Buttons:      buttons,
+			Handled:      true,
+		}, nil
+	}
+
 	text := fmt.Sprintf("✅ Активный режим переключен на: *%s*", targetMode)
 	return &DomainResponse{
 		UserID:       u.ID,

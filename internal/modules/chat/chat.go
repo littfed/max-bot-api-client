@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -15,9 +16,9 @@ import (
 
 // Role defines an LLM persona.
 type Role struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
 	SystemPrompt string `json:"system_prompt"`
 }
 
@@ -52,15 +53,16 @@ type LLMClient interface {
 
 // Module implements BotModule for Chat mode.
 type Module struct {
-	aiClient LLMClient
-	mu       sync.RWMutex
-	sessions map[int64]*Session
-	roles    map[int]Role
-	tones    map[int]Tone
+	aiClient  LLMClient
+	chatModel string
+	mu        sync.RWMutex
+	sessions  map[int64]*Session
+	roles     map[int]Role
+	tones     map[int]Tone
 }
 
-// New creates a new Chat module instance.
-func New(st any, aiClient any) *Module {
+// New creates a new Chat module instance with optional custom chat model.
+func New(st any, aiClient any, chatModel ...string) *Module {
 	var lClient LLMClient
 	if cl, ok := aiClient.(LLMClient); ok {
 		lClient = cl
@@ -71,6 +73,9 @@ func New(st any, aiClient any) *Module {
 		sessions: make(map[int64]*Session),
 		roles:    make(map[int]Role),
 		tones:    make(map[int]Tone),
+	}
+	if len(chatModel) > 0 && chatModel[0] != "" {
+		m.chatModel = chatModel[0]
 	}
 	m.initRolesAndTones()
 	return m
@@ -205,7 +210,19 @@ func (m *Module) SendMessage(ctx context.Context, userID int64, roleID int, tone
 
 	if m.aiClient != nil {
 		// Construct AI ChatRequest with system instructions and sliding window messages
-		sysPrompt := fmt.Sprintf("%s\nТональность: %s", role.SystemPrompt, tone.Instruction)
+		sysPrompt := fmt.Sprintf(`Ты — интеллектуальный собеседник платформы Bot Hub.
+Твоя роль: %s (%s).
+Инструкция для роли:
+%s
+
+СТИЛЬ И ТОНАЛЬНОСТЬ ОБЩЕНИЯ (ОБЯЗАТЕЛЬНО К СОБЛЮДЕНИЮ):
+Тональность: %s (%s).
+Инструкция по тональности: %s.
+
+Всегда отвечай строго на русском языке. Безукоризненно выдерживай заданную роль и тональность в каждом ответе.`,
+			role.Name, role.Description, role.SystemPrompt,
+			tone.Name, tone.Description, tone.Instruction,
+		)
 		messages := []ai.ChatMessage{
 			ai.NewTextMessage(ai.RoleSystem, sysPrompt),
 		}
@@ -222,20 +239,33 @@ func (m *Module) SendMessage(ctx context.Context, userID int64, roleID int, tone
 
 		messages = append(messages, ai.NewTextMessage(ai.RoleUser, message))
 
+		modelToUse := m.chatModel
+		if modelToUse == "" {
+			modelToUse = "gemini-2.5-flash"
+		}
+
 		req := &ai.ChatRequest{
+			Model:    modelToUse,
 			Messages: messages,
 		}
 
-		chatResp, err := m.aiClient.Chat(ctx, req)
+		callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel()
+
+		chatResp, err := m.aiClient.Chat(callCtx, req)
 		if err != nil {
+			slog.Error("llm chat completion failed", slog.String("model", modelToUse), slog.Int64("user_id", userID), slog.Any("error", err))
 			return "", fmt.Errorf("llm chat failed: %w", err)
 		}
-		if chatResp != nil && chatResp.Content != "" {
-			reply = chatResp.Content
+		if chatResp != nil && strings.TrimSpace(chatResp.Content) != "" {
+			reply = strings.TrimSpace(chatResp.Content)
 		}
 	}
 
 	if reply == "" {
+		if m.aiClient != nil {
+			return "", fmt.Errorf("ai gateway returned empty reply")
+		}
 		// Simulated intelligent fallback for unit tests and offline environments
 		reply = generateSimulatedReply(roleID, toneID, message)
 	}
@@ -309,22 +339,35 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 		payload.ToneID = 1
 	}
 
-	reply, err := m.SendMessage(ctx, u.ID, payload.RoleID, payload.ToneID, text)
-	if err != nil {
-		return nil, err
-	}
-
 	m.mu.RLock()
 	roleName := m.roles[payload.RoleID].Name
 	toneName := m.tones[payload.ToneID].Name
 	m.mu.RUnlock()
 
+	reply, err := m.SendMessage(ctx, u.ID, payload.RoleID, payload.ToneID, text)
+	if err != nil {
+		slog.Error("chat module: SendMessage failed", slog.Int64("user_id", u.ID), slog.Any("error", err))
+		newP, _ := json.Marshal(payload)
+		return &core.ModuleResult{
+			Text: fmt.Sprintf("⚠️ **Не удалось получить ответ от нейросети**\n\nПричина: %v\nПопробуйте повторить запрос или сменить роль.", err),
+			Buttons: [][]core.ResponseButton{
+				{
+					{Text: "🎭 Роль: " + roleName, Data: "chat:menu:roles"},
+					{Text: "🎨 Тон: " + toneName, Data: "chat:menu:tones"},
+					{Text: "🔄 Сброс контекста", Data: "chat:reset"},
+				},
+			},
+			NewPayload: newP,
+			Handled:    true,
+		}, nil
+	}
+
 	header := fmt.Sprintf("💬 _[%s | %s]_\n\n", roleName, toneName)
 
 	buttons := [][]core.ResponseButton{
 		{
-			{Text: "🎭 Роль", Data: "chat:menu:roles"},
-			{Text: "🎨 Тон", Data: "chat:menu:tones"},
+			{Text: "🎭 Роль: " + roleName, Data: "chat:menu:roles"},
+			{Text: "🎨 Тон: " + toneName, Data: "chat:menu:tones"},
 			{Text: "🔄 Очистить контекст", Data: "chat:reset"},
 		},
 	}
@@ -390,9 +433,10 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		}
 		newP, _ := json.Marshal(payload)
 		roleName := m.roles[payload.RoleID].Name
+		toneName := m.tones[payload.ToneID].Name
 
 		return &core.ModuleResult{
-			Text: fmt.Sprintf("🎭 Роль успешно изменена на: **%s**.\nНапишите сообщение в чат для продолжения.", roleName),
+			Text: fmt.Sprintf("🎭 Роль успешно переключена на: **%s** (%s).\n🎨 Текущая тональность: **%s**.\n\nНапишите сообщение в чат для продолжения.", roleName, m.roles[payload.RoleID].Description, toneName),
 			Buttons: [][]core.ResponseButton{
 				{
 					{Text: "🎨 Настроить тон", Data: "chat:menu:tones"},
@@ -437,10 +481,11 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 			payload.ToneID = newToneID
 		}
 		newP, _ := json.Marshal(payload)
+		roleName := m.roles[payload.RoleID].Name
 		toneName := m.tones[payload.ToneID].Name
 
 		return &core.ModuleResult{
-			Text: fmt.Sprintf("🎨 Тональность успешно изменена на: **%s**.\nНапишите сообщение в чат для продолжения.", toneName),
+			Text: fmt.Sprintf("🎨 Тональность успешно переключена на: **%s** (%s).\n🎭 Текущая роль: **%s**.\n\nНапишите сообщение в чат для продолжения.", toneName, m.tones[payload.ToneID].Description, roleName),
 			Buttons: [][]core.ResponseButton{
 				{
 					{Text: "🎭 Настроить роль", Data: "chat:menu:roles"},
@@ -454,23 +499,43 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 
 	if data == "chat:reset" {
 		_ = m.ResetSession(ctx, u.ID)
+		m.mu.RLock()
+		roleName := m.roles[payload.RoleID].Name
+		toneName := m.tones[payload.ToneID].Name
+		m.mu.RUnlock()
+		newP, _ := json.Marshal(payload)
 		return &core.ModuleResult{
-			Text: "🔄 **Контекст диалога очищен!**\nВы можете начать новый диалог с чистого листа.",
+			Text: fmt.Sprintf("🔄 **Память диалога очищена!**\nТекущая роль: *%s*, тон: *%s*.\n\nВы можете начать новый диалог с чистого листа.", roleName, toneName),
 			Buttons: [][]core.ResponseButton{
 				{
-					{Text: "🎭 Роль", Data: "chat:menu:roles"},
-					{Text: "🎨 Тон", Data: "chat:menu:tones"},
+					{Text: "🎭 Роль: " + roleName, Data: "chat:menu:roles"},
+					{Text: "🎨 Тон: " + toneName, Data: "chat:menu:tones"},
+					{Text: "« Назад к диалогу", Data: "chat:menu:back"},
 				},
 			},
+			NewPayload: newP,
 			ResetState: true,
 			Handled:    true,
 		}, nil
 	}
 
 	if data == "chat:menu:back" {
+		m.mu.RLock()
+		roleName := m.roles[payload.RoleID].Name
+		toneName := m.tones[payload.ToneID].Name
+		m.mu.RUnlock()
+		newP, _ := json.Marshal(payload)
 		return &core.ModuleResult{
-			Text:    "Готов к общению! Отправьте ваше сообщение:",
-			Handled: true,
+			Text: fmt.Sprintf("💬 **Режим «Общение» (ИИ-собеседник)**\n\n🎭 Текущая роль: *%s*\n🎨 Тональность: *%s*\n\nОтправьте ваше сообщение или вопрос в чат:", roleName, toneName),
+			Buttons: [][]core.ResponseButton{
+				{
+					{Text: "🎭 Роль: " + roleName, Data: "chat:menu:roles"},
+					{Text: "🎨 Тон: " + toneName, Data: "chat:menu:tones"},
+					{Text: "🔄 Очистить контекст", Data: "chat:reset"},
+				},
+			},
+			NewPayload: newP,
+			Handled:    true,
 		}, nil
 	}
 

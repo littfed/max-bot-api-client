@@ -62,23 +62,33 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
   const handleSelectRole = (roleId: number) => {
     setSelectedRole(roleId);
-    const roleName = rolesList.find((r) => r.id === roleId)?.name;
-    onSuccessToast(`Роль переключена на: ${roleName}`);
+    const role = rolesList.find((r) => r.id === roleId);
+    onSuccessToast(`Роль переключена на: ${role?.name}`);
+    if (messages.length <= 1) {
+      setMessages([
+        {
+          role: 'assistant',
+          content: `Здравствуйте! Я ваш ${role?.name}. Готов помочь — напишите ваш вопрос или задачу.`,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
   };
 
   const handleSelectTone = (toneId: number) => {
     setSelectedTone(toneId);
-    const toneName = tonesList.find((t) => t.id === toneId)?.name;
-    onSuccessToast(`Тональность: ${toneName}`);
+    const tone = tonesList.find((t) => t.id === toneId);
+    onSuccessToast(`Тональность: ${tone?.name}`);
   };
 
   const handleClearHistory = async () => {
     try {
       await apiClient.clearChatSession();
+      const role = rolesList.find((r) => r.id === selectedRole);
       setMessages([
         {
           role: 'assistant',
-          content: 'История очищена. О чем поговорим?',
+          content: `Память очищена. Здравствуйте! Я ваш ${role?.name}. О чем поговорим?`,
           created_at: new Date().toISOString(),
         },
       ]);
@@ -115,14 +125,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
       setMessages((prev) => [...prev, botMsg]);
       setMemoryCount((prev) => Math.min(prev + 1, maxMemory));
     } catch (err: any) {
-      // Fallback response
+      const errMsg = err?.response?.data?.error || err?.message || 'Не удалось связаться с нейросетью';
+      onErrorToast(`Ошибка ИИ: ${errMsg}`);
       const botMsg: ChatMessage = {
         role: 'assistant',
-        content: 'Это отличная бизнес-идея! Для валидации рекомендую сформулировать ценностное предложение и запустить быстрый тест в Mini App.',
+        content: `⚠️ Не удалось получить ответ от нейросети (${errMsg}). Пожалуйста, проверьте подключение или отправьте запрос повторно.`,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, botMsg]);
-      setMemoryCount((prev) => Math.min(prev + 1, maxMemory));
     } finally {
       setIsSending(false);
     }
@@ -247,12 +257,38 @@ export const ChatView: React.FC<ChatViewProps> = ({
               <span>Очистить память диалога</span>
             </button>
           </div>
+
+          <button
+            onClick={() => setActiveTab('dialog')}
+            className="w-full py-3 rounded-2xl bg-[#0d9488] hover:bg-[#0f766e] text-white font-semibold text-xs sm:text-sm shadow-sm transition-all flex items-center justify-center gap-2"
+          >
+            <span>Перейти к диалогу с ИИ →</span>
+          </button>
         </div>
       )}
 
       {/* --- TAB 2: DIALOGUE --- */}
       {activeTab === 'dialog' && (
         <div className="flex flex-col h-[65vh] bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
+          {/* Active Role and Tone Header Bar */}
+          <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
+              <span className="font-semibold text-teal-800">
+                {rolesList.find((r) => r.id === selectedRole)?.name}
+              </span>
+              <span className="text-slate-400">•</span>
+              <span className="text-slate-600 font-medium">
+                {tonesList.find((t) => t.id === selectedTone)?.name}
+              </span>
+            </div>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="text-[11px] font-semibold text-teal-700 hover:text-teal-900 shrink-0 ml-2 bg-teal-50 hover:bg-teal-100 px-2.5 py-1 rounded-lg transition-colors"
+            >
+              Настройки ⚙
+            </button>
+          </div>
+
           {/* Messages Thread */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
             {messages.map((msg, i) => (
