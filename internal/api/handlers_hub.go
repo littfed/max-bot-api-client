@@ -183,6 +183,18 @@ func (h *hubHandler) handleUserMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check maintenance guard
+	if h.cfg.Guard != nil {
+		active, maintMsg, err := h.cfg.Guard.IsActive(ctx, req.ModeID)
+		if err == nil && !active {
+			if maintMsg == "" {
+				maintMsg = "Режим временно недоступен (техническое обслуживание)"
+			}
+			writeError(w, http.StatusForbidden, maintMsg)
+			return
+		}
+	}
+
 	// Update user active mode in DB
 	if h.cfg.Store != nil {
 		if err := h.cfg.Store.SetUserActiveMode(ctx, user.ID, req.ModeID); err != nil {
@@ -195,6 +207,12 @@ func (h *hubHandler) handleUserMode(w http.ResponseWriter, r *http.Request) {
 	// Optional notification to user chat
 	if h.cfg.PlatformAdapter != nil {
 		recipientID := strconv.FormatInt(user.ID, 10)
+		platformName := PlatformFromContext(ctx)
+		if h.cfg.Store != nil {
+			if ident, err := h.cfg.Store.GetUserIdentity(ctx, user.ID, platformName); err == nil && ident != nil && ident.PlatformUserID != "" {
+				recipientID = ident.PlatformUserID
+			}
+		}
 		_ = h.cfg.PlatformAdapter.SendMessage(ctx, recipientID, &platform.OutMessage{
 			Text: fmt.Sprintf("🔄 **Режим успешно переключен:** _%s_", req.ModeID),
 		})

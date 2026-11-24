@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/littfed/max-bot-api-client/pkg/store"
 )
 
 type modulesHandler struct {
@@ -317,10 +319,42 @@ func (h *modulesHandler) handleSupportCreateTicket(w http.ResponseWriter, r *htt
 	}
 
 	platformName := PlatformFromContext(r.Context())
+
+	// Persist ticket into SQL store if available so AdminService reads the same tickets
+	var ticketID int64
+	if h.cfg.Store != nil {
+		sqlTicket := &store.SupportTicket{
+			UserID:    user.ID,
+			Platform:  platformName,
+			ModeScope: req.ModeScope,
+			Subject:   req.Subject,
+			Status:    "open",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		var err error
+		ticketID, err = h.cfg.Store.CreateSupportTicket(r.Context(), sqlTicket)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save support ticket: %v", err))
+			return
+		}
+		msg := &store.SupportMessage{
+			TicketID:    ticketID,
+			SenderType:  "user",
+			MessageText: req.Message,
+			CreatedAt:   time.Now(),
+		}
+		_ = h.cfg.Store.SaveSupportMessage(r.Context(), msg)
+	}
+
+	// Also register in support module for in-memory tracking
 	ticket, err := h.cfg.SupportModule.CreateTicket(r.Context(), user.ID, platformName, req.ModeScope, req.Subject, req.Message)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create ticket: %v", err))
 		return
+	}
+	if ticketID > 0 {
+		ticket.ID = ticketID
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -334,19 +368,41 @@ func (h *modulesHandler) handleSupportGetTickets(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if h.cfg.SupportModule == nil {
-		writeError(w, http.StatusServiceUnavailable, "support module not available")
-		return
+
+	// 1. Fetch from SQL store if available
+	if h.cfg.Store != nil {
+		storeTickets, err := h.cfg.Store.GetSupportTickets(r.Context(), "")
+		if err == nil {
+			userTickets := make([]store.SupportTicket, 0)
+			for _, t := range storeTickets {
+				if t.UserID == user.ID {
+					userTickets = append(userTickets, t)
+				}
+			}
+			if len(userTickets) > 0 {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"tickets": userTickets,
+				})
+				return
+			}
+		}
 	}
 
-	tickets, err := h.cfg.SupportModule.GetTickets(r.Context(), user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get tickets: %v", err))
+	// 2. Fallback to in-memory support module
+	if h.cfg.SupportModule != nil {
+		tickets, err := h.cfg.SupportModule.GetTickets(r.Context(), user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get tickets: %v", err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"tickets": tickets,
+		})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tickets": tickets,
+		"tickets": []any{},
 	})
 }
 

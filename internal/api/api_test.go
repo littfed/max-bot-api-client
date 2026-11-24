@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,7 @@ func setupTestAPIServer(t *testing.T) *httptest.Server {
 		BotToken:        testBotToken,
 		JWTSecret:       testJWTSecret,
 		PlatformAdapter: adapter,
+		AllowDevHeaders: true,
 	})
 
 	validMAXInitData = webapp.SignInitData(testBotToken, 9999, "TestUser", "testuser")
@@ -236,7 +238,7 @@ func TestAPI_AuthMiddleware(t *testing.T) {
 		t.Errorf("Expected 401 for invalid initData signature, got %d", resp2.StatusCode)
 	}
 
-	// 3. Dev Header Auth (X-Dev-User-ID)
+	// 3. Dev Header Auth (X-Dev-User-ID) when AllowDevHeaders is true
 	req3, _ := http.NewRequest("GET", ts.URL+"/api/v1/bootstrap", nil)
 	req3.Header.Set("X-Dev-User-ID", "999")
 	resp3, err := http.DefaultClient.Do(req3)
@@ -246,6 +248,45 @@ func TestAPI_AuthMiddleware(t *testing.T) {
 	defer resp3.Body.Close()
 	if resp3.StatusCode != http.StatusOK {
 		t.Errorf("Expected 200 OK for X-Dev-User-ID, got %d", resp3.StatusCode)
+	}
+
+	// 4. JWT Bearer Auth with platform propagation
+	jwtToken, err := api.GenerateJWT(api.JWTClaims{
+		UserID:    999,
+		Role:      "user",
+		Platform:  "telegram",
+		ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
+		IssuedAt:  time.Now().Unix(),
+	}, testJWTSecret)
+	if err != nil {
+		t.Fatalf("GenerateJWT failed: %v", err)
+	}
+	req4, _ := http.NewRequest("GET", ts.URL+"/api/v1/bootstrap", nil)
+	req4.Header.Set("Authorization", "Bearer "+jwtToken)
+	resp4, err := http.DefaultClient.Do(req4)
+	if err != nil || resp4.StatusCode != http.StatusOK {
+		t.Fatalf("Bearer auth failed: err=%v, code=%d", err, resp4.StatusCode)
+	}
+	defer resp4.Body.Close()
+
+	// 5. Default router without AllowDevHeaders rejects X-Dev-User-ID
+	prodRouter := api.NewRouter(api.RouterConfig{
+		BotToken:  testBotToken,
+		JWTSecret: testJWTSecret,
+		// AllowDevHeaders defaults to false
+	})
+	tsProd := httptest.NewServer(prodRouter)
+	defer tsProd.Close()
+
+	reqProd, _ := http.NewRequest("GET", tsProd.URL+"/api/v1/bootstrap", nil)
+	reqProd.Header.Set("X-Dev-User-ID", "999")
+	respProd, err := http.DefaultClient.Do(reqProd)
+	if err != nil {
+		t.Fatalf("prod request failed: %v", err)
+	}
+	defer respProd.Body.Close()
+	if respProd.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected 401 Unauthorized when AllowDevHeaders=false, got %d", respProd.StatusCode)
 	}
 }
 
@@ -594,3 +635,141 @@ func TestAPI_CORS(t *testing.T) {
 		t.Errorf("Expected Access-Control-Allow-Origin header")
 	}
 }
+
+func TestAPI_UserMode_MaintenanceGuard(t *testing.T) {
+	ts := setupTestAPIServer(t)
+
+	// Attempting to switch to "reminders" (seeded as inactive in DB)
+	switchBody := bytes.NewBufferString(`{"mode_id":"reminders"}`)
+	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/user/mode", switchBody)
+	req.Header.Set("X-Init-Data", validMAXInitData)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("Expected 403 Forbidden when switching to inactive mode, got %d", resp.StatusCode)
+	}
+
+	var errResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&errResp)
+	if !strings.Contains(errResp.Message, "разработке") && !strings.Contains(errResp.Message, "обслуживании") {
+		t.Errorf("Expected maintenance message in error response, got %s", errResp.Message)
+	}
+}
+
+func TestAPI_Admin_LeadStatusAndTicketReply(t *testing.T) {
+	ts := setupTestAPIServer(t)
+
+	// 1. User creates a lead
+	leadBody := bytes.NewBufferString(`{
+		"contact": "+79990001122",
+		"comment": "Тест лида для админки",
+		"source_mode": "shop",
+		"tested_modes": ["shop"]
+	}`)
+	reqLead, _ := http.NewRequest("POST", ts.URL+"/api/v1/lead", leadBody)
+	reqLead.Header.Set("X-Init-Data", validMAXInitData)
+	reqLead.Header.Set("Content-Type", "application/json")
+	respLead, err := http.DefaultClient.Do(reqLead)
+	if err != nil || respLead.StatusCode != http.StatusOK {
+		t.Fatalf("Create lead failed: code=%d, err=%v", respLead.StatusCode, err)
+	}
+	defer respLead.Body.Close()
+
+	var leadResp struct {
+		Success bool  `json:"success"`
+		LeadID  int64 `json:"lead_id"`
+	}
+	_ = json.NewDecoder(respLead.Body).Decode(&leadResp)
+	if leadResp.LeadID == 0 {
+		t.Fatalf("Expected non-zero lead_id")
+	}
+
+	// Admin updates lead status
+	statusBody := bytes.NewBufferString(`{"status": "in_progress"}`)
+	reqStatus, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/admin/leads/%d/status", ts.URL, leadResp.LeadID), statusBody)
+	reqStatus.Header.Set("X-Init-Data", validAdminInitData)
+	reqStatus.Header.Set("Content-Type", "application/json")
+	respStatus, err := http.DefaultClient.Do(reqStatus)
+	if err != nil || respStatus.StatusCode != http.StatusOK {
+		t.Fatalf("Update lead status failed: code=%d, err=%v", respStatus.StatusCode, err)
+	}
+	defer respStatus.Body.Close()
+
+	// 2. User creates a support ticket
+	ticketBody := bytes.NewBufferString(`{
+		"subject": "Срочный вопрос по оплате",
+		"message": "Деньги списались, а доступ не открылся",
+		"mode_scope": "shop"
+	}`)
+	reqTicket, _ := http.NewRequest("POST", ts.URL+"/api/v1/support/tickets", ticketBody)
+	reqTicket.Header.Set("X-Init-Data", validMAXInitData)
+	reqTicket.Header.Set("Content-Type", "application/json")
+	respTicket, err := http.DefaultClient.Do(reqTicket)
+	if err != nil || respTicket.StatusCode != http.StatusOK {
+		t.Fatalf("Create ticket failed: code=%d, err=%v", respTicket.StatusCode, err)
+	}
+	defer respTicket.Body.Close()
+
+	var tResp struct {
+		Ticket struct {
+			ID int64 `json:"id"`
+		} `json:"ticket"`
+	}
+	_ = json.NewDecoder(respTicket.Body).Decode(&tResp)
+	if tResp.Ticket.ID == 0 {
+		t.Fatalf("Expected non-zero ticket ID")
+	}
+
+	// Admin lists tickets and finds it
+	reqList, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/tickets?status=open", nil)
+	reqList.Header.Set("X-Init-Data", validAdminInitData)
+	respList, err := http.DefaultClient.Do(reqList)
+	if err != nil || respList.StatusCode != http.StatusOK {
+		t.Fatalf("List tickets failed: code=%d, err=%v", respList.StatusCode, err)
+	}
+	defer respList.Body.Close()
+
+	// Admin replies to ticket
+	replyBody := bytes.NewBufferString(`{"message": "Доступ активирован вручную. Приятного пользования!"}`)
+	reqReply, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/admin/tickets/%d/reply", ts.URL, tResp.Ticket.ID), replyBody)
+	reqReply.Header.Set("X-Init-Data", validAdminInitData)
+	reqReply.Header.Set("Content-Type", "application/json")
+	respReply, err := http.DefaultClient.Do(reqReply)
+	if err != nil || respReply.StatusCode != http.StatusOK {
+		t.Fatalf("Reply ticket failed: code=%d, err=%v", respReply.StatusCode, err)
+	}
+	defer respReply.Body.Close()
+
+	// Verify ticket status became answered
+	reqAnswered, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/tickets?status=answered", nil)
+	reqAnswered.Header.Set("X-Init-Data", validAdminInitData)
+	respAnswered, err := http.DefaultClient.Do(reqAnswered)
+	if err != nil || respAnswered.StatusCode != http.StatusOK {
+		t.Fatalf("List answered tickets failed: code=%d, err=%v", respAnswered.StatusCode, err)
+	}
+	defer respAnswered.Body.Close()
+
+	var answeredResp struct {
+		Tickets []store.SupportTicket `json:"tickets"`
+	}
+	_ = json.NewDecoder(respAnswered.Body).Decode(&answeredResp)
+	found := false
+	for _, tk := range answeredResp.Tickets {
+		if tk.ID == tResp.Ticket.ID && tk.Status == "answered" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected ticket %d to have status 'answered', got: %+v", tResp.Ticket.ID, answeredResp.Tickets)
+	}
+}
+

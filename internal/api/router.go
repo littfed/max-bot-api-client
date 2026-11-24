@@ -48,6 +48,7 @@ type RouterConfig struct {
 	JWTSecret       string
 	PlatformAdapter platform.PlatformAdapter
 	AllowedOrigins  []string
+	AllowDevHeaders bool
 }
 
 // UserFromContext retrieves the authenticated store.User from the request context.
@@ -248,15 +249,17 @@ func authMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
 
 		var authedUser *store.User
 
-		// 1. Try Dev / Test header (X-Dev-User-ID or X-Test-User-ID)
-		devUserIDStr := r.Header.Get("X-Dev-User-ID")
-		if devUserIDStr == "" {
-			devUserIDStr = r.Header.Get("X-Test-User-ID")
-		}
-		if devUserIDStr != "" {
-			if id, err := strconv.ParseInt(devUserIDStr, 10, 64); err == nil && cfg.Store != nil {
-				if u, err := cfg.Store.GetUser(ctx, id); err == nil && u != nil {
-					authedUser = u
+		// 1. Try Dev / Test header (X-Dev-User-ID or X-Test-User-ID) only if AllowDevHeaders is explicitly enabled
+		if cfg.AllowDevHeaders {
+			devUserIDStr := r.Header.Get("X-Dev-User-ID")
+			if devUserIDStr == "" {
+				devUserIDStr = r.Header.Get("X-Test-User-ID")
+			}
+			if devUserIDStr != "" {
+				if id, err := strconv.ParseInt(devUserIDStr, 10, 64); err == nil && cfg.Store != nil {
+					if u, err := cfg.Store.GetUser(ctx, id); err == nil && u != nil {
+						authedUser = u
+					}
 				}
 			}
 		}
@@ -294,6 +297,9 @@ func authMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
 				if err == nil && claims != nil && cfg.Store != nil {
 					if u, err := cfg.Store.GetUser(ctx, claims.UserID); err == nil && u != nil {
 						authedUser = u
+						if r.Header.Get("X-Platform") == "" && claims.Platform != "" {
+							platformName = claims.Platform
+						}
 					}
 				}
 			}
