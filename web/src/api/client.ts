@@ -37,11 +37,16 @@ declare global {
 // Detect client platform
 export function getClientPlatform(): 'max' | 'telegram' | 'web' {
   if (typeof window !== 'undefined') {
-    if (window.MaxWebApp?.initData) return 'max';
-    if (window.Telegram?.WebApp?.initData) return 'telegram';
+    const win = window as any;
+    if (win.max || win.MaxWebApp) return 'max';
+    if (win.Telegram?.WebApp?.initData) return 'telegram';
+
     const params = new URLSearchParams(window.location.search);
-    if (params.get('platform') === 'max') return 'max';
-    if (params.get('platform') === 'telegram') return 'telegram';
+    const p = params.get('platform');
+    if (p === 'max' || p === 'telegram') return p;
+    if (params.get('query_id')?.startsWith('MAX_')) return 'max';
+
+    if (/telegram/i.test(navigator.userAgent)) return 'telegram';
   }
   return 'max';
 }
@@ -49,10 +54,44 @@ export function getClientPlatform(): 'max' | 'telegram' | 'web' {
 // Extract initData from webapp environment or URL query
 export function getInitData(): string {
   if (typeof window === 'undefined') return '';
-  if (window.MaxWebApp?.initData) return window.MaxWebApp.initData;
-  if (window.Telegram?.WebApp?.initData) return window.Telegram.WebApp.initData;
-  const params = new URLSearchParams(window.location.search);
-  return params.get('init_data') || params.get('tgWebAppData') || '';
+
+  const win = window as any;
+  if (win.MaxWebApp?.initData) return win.MaxWebApp.initData;
+  if (win.max?.initData) return win.max.initData;
+  if (win.Telegram?.WebApp?.initData) return win.Telegram.WebApp.initData;
+  if (win.WebApp?.initData) return win.WebApp.initData;
+
+  // Check URL query parameters
+  if (window.location.search) {
+    const search = window.location.search.startsWith('?')
+      ? window.location.search.slice(1)
+      : window.location.search;
+    const params = new URLSearchParams(search);
+
+    if (params.get('init_data')) return params.get('init_data')!;
+    if (params.get('tgWebAppData')) return params.get('tgWebAppData')!;
+
+    // If query contains 'hash' and ('user' or 'auth_date'), the search query string itself IS the signed initData
+    if (params.has('hash') && (params.has('user') || params.has('auth_date'))) {
+      return search;
+    }
+  }
+
+  // Check URL hash fragment (Telegram/MAX may place data in hash fragment)
+  if (window.location.hash) {
+    const hashStr = window.location.hash.startsWith('#')
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const hashParams = new URLSearchParams(hashStr);
+
+    if (hashParams.get('tgWebAppData')) return hashParams.get('tgWebAppData')!;
+    if (hashParams.get('init_data')) return hashParams.get('init_data')!;
+    if (hashParams.has('hash') && (hashParams.has('user') || hashParams.has('auth_date'))) {
+      return hashStr;
+    }
+  }
+
+  return '';
 }
 
 // Base Axios instance

@@ -25,7 +25,7 @@ func RegisterWebSPA(mux *http.ServeMux) error {
 
 	fileServer := http.FileServer(http.FS(distFS))
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	serveSPA := func(w http.ResponseWriter, r *http.Request) {
 		// Do not intercept API, webhook, or metrics routes
 		if strings.HasPrefix(r.URL.Path, "/api/") ||
 			strings.HasPrefix(r.URL.Path, "/webhook") ||
@@ -35,8 +35,14 @@ func RegisterWebSPA(mux *http.ServeMux) error {
 		}
 
 		cleanPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-		if cleanPath == "." || cleanPath == "" || cleanPath == "index.html" {
+		if cleanPath == "." || cleanPath == "" || cleanPath == "index.html" ||
+			cleanPath == "maxapp" || cleanPath == "webapp" ||
+			cleanPath == "hub" || cleanPath == "shop" || cleanPath == "reception" ||
+			cleanPath == "support" || cleanPath == "chat" || cleanPath == "admin" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(indexHTML)
 			return
@@ -70,9 +76,18 @@ func RegisterWebSPA(mux *http.ServeMux) error {
 
 		// Fallback to index.html for SPA client-side routes (e.g. /shop, /reception, /admin, etc.)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(indexHTML)
-	})
+	}
+
+	mux.HandleFunc("/", serveSPA)
+	mux.HandleFunc("/maxapp", serveSPA)
+	mux.HandleFunc("/maxapp/", serveSPA)
+	mux.HandleFunc("/webapp", serveSPA)
+	mux.HandleFunc("/webapp/", serveSPA)
 
 	return nil
 }

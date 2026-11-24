@@ -761,15 +761,15 @@ func RegisterWebappScenario(
 		})
 	})
 
-	serveMiniApp := func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(miniAppHTML))
-	}
-	httpMux.HandleFunc("/webapp", serveMiniApp)
-	httpMux.HandleFunc("/webapp/", serveMiniApp)
-	httpMux.HandleFunc("/maxapp", serveMiniApp)
-	httpMux.HandleFunc("/maxapp/", serveMiniApp)
 	if len(skipRoot) == 0 || !skipRoot[0] {
+		serveMiniApp := func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(miniAppHTML))
+		}
+		httpMux.HandleFunc("/webapp", serveMiniApp)
+		httpMux.HandleFunc("/webapp/", serveMiniApp)
+		httpMux.HandleFunc("/maxapp", serveMiniApp)
+		httpMux.HandleFunc("/maxapp/", serveMiniApp)
 		httpMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				serveMiniApp(w, r)
