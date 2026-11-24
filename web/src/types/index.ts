@@ -149,6 +149,18 @@ export interface ChatMessageResponse {
   reply: string;
 }
 
+export interface ChatSessionResponse {
+  role_id: number;
+  tone_id: number;
+  messages: ChatMessage[];
+}
+
+export interface ChatSettingsResponse {
+  success: boolean;
+  role_id: number;
+  tone_id: number;
+}
+
 // Admin
 export interface Lead {
   id: number;

@@ -11,6 +11,8 @@ import {
   SupportTicket,
   ChatConfigResponse,
   ChatMessageResponse,
+  ChatSessionResponse,
+  ChatSettingsResponse,
   Lead,
   AdminAuditLog,
   ModeItem,
@@ -260,6 +262,19 @@ export const apiClient = {
   // Chat Module
   async getChatConfig(): Promise<ChatConfigResponse> {
     const res = await api.get<ChatConfigResponse>('/chat/config');
+    return res.data;
+  },
+
+  async getChatSession(): Promise<ChatSessionResponse> {
+    const res = await api.get<ChatSessionResponse>('/chat/session');
+    return res.data;
+  },
+
+  async setChatSettings(roleId: number, toneId: number): Promise<ChatSettingsResponse> {
+    const res = await api.post<ChatSettingsResponse>('/chat/settings', {
+      role_id: roleId,
+      tone_id: toneId,
+    });
     return res.data;
   },
 

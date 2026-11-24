@@ -130,11 +130,13 @@ export const App: React.FC = () => {
   const handleSelectMode = async (mode: ModeItem) => {
     setTestedModes((prev) => Array.from(new Set([...prev, mode.id])));
 
-    try {
-      await apiClient.setUserMode(mode.id);
-      setActiveModeId(mode.id);
-    } catch (_) {
-      setActiveModeId(mode.id);
+    if (activeModeId !== mode.id) {
+      try {
+        await apiClient.setUserMode(mode.id);
+        setActiveModeId(mode.id);
+      } catch (_) {
+        setActiveModeId(mode.id);
+      }
     }
 
     setCurrentView(mode.id);

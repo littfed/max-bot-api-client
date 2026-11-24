@@ -46,6 +46,12 @@ type Session struct {
 	UpdatedAt time.Time     `json:"updated_at"`
 }
 
+// StateStore abstracts persistence of user mode states.
+type StateStore interface {
+	GetUserModeState(ctx context.Context, userID int64, modeID string) (*store.UserModeState, error)
+	SaveUserModeState(ctx context.Context, state *store.UserModeState) error
+}
+
 // LLMClient abstracts the chat completion client.
 type LLMClient interface {
 	Chat(ctx context.Context, req *ai.ChatRequest) (*ai.ChatResponse, error)
@@ -53,6 +59,7 @@ type LLMClient interface {
 
 // Module implements BotModule for Chat mode.
 type Module struct {
+	store     StateStore
 	aiClient  LLMClient
 	chatModel string
 	mu        sync.RWMutex
@@ -63,12 +70,18 @@ type Module struct {
 
 // New creates a new Chat module instance with optional custom chat model.
 func New(st any, aiClient any, chatModel ...string) *Module {
+	var sStore StateStore
+	if s, ok := st.(StateStore); ok {
+		sStore = s
+	}
+
 	var lClient LLMClient
 	if cl, ok := aiClient.(LLMClient); ok {
 		lClient = cl
 	}
 
 	m := &Module{
+		store:    sStore,
 		aiClient: lClient,
 		sessions: make(map[int64]*Session),
 		roles:    make(map[int]Role),
@@ -160,16 +173,72 @@ func (m *Module) GetSession(ctx context.Context, userID int64) (*Session, error)
 
 	s, exists := m.sessions[userID]
 	if !exists {
+		roleID := 1
+		toneID := 1
+		if m.store != nil {
+			if dbState, err := m.store.GetUserModeState(ctx, userID, "chat"); err == nil && dbState != nil && len(dbState.Payload) > 0 {
+				var p struct {
+					RoleID int `json:"role_id"`
+					ToneID int `json:"tone_id"`
+				}
+				if err := json.Unmarshal(dbState.Payload, &p); err == nil {
+					if p.RoleID >= 1 && p.RoleID <= 5 {
+						roleID = p.RoleID
+					}
+					if p.ToneID >= 1 && p.ToneID <= 4 {
+						toneID = p.ToneID
+					}
+				}
+			}
+		}
+
 		s = &Session{
 			UserID:    userID,
-			RoleID:    1,
-			ToneID:    1,
+			RoleID:    roleID,
+			ToneID:    toneID,
 			Messages:  make([]ChatMessage, 0),
 			UpdatedAt: time.Now(),
 		}
 		m.sessions[userID] = s
 	}
 	return s, nil
+}
+
+// SetSessionSettings updates role and tone and persists them to the backing store.
+func (m *Module) SetSessionSettings(ctx context.Context, userID int64, roleID int, toneID int) error {
+	if roleID < 1 || roleID > 5 {
+		roleID = 1
+	}
+	if toneID < 1 || toneID > 4 {
+		toneID = 1
+	}
+
+	session, err := m.GetSession(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	session.RoleID = roleID
+	session.ToneID = toneID
+	session.UpdatedAt = time.Now()
+	m.mu.Unlock()
+
+	if m.store != nil {
+		pBytes, _ := json.Marshal(map[string]int{
+			"role_id": roleID,
+			"tone_id": toneID,
+		})
+		dbState := &store.UserModeState{
+			UserID:    userID,
+			ModeID:    "chat",
+			Payload:   pBytes,
+			UpdatedAt: time.Now(),
+		}
+		_ = m.store.SaveUserModeState(ctx, dbState)
+	}
+
+	return nil
 }
 
 // ResetSession clears the conversation sliding window history.
@@ -193,15 +262,14 @@ func (m *Module) SendMessage(ctx context.Context, userID int64, roleID int, tone
 		toneID = 1
 	}
 
+	if err := m.SetSessionSettings(ctx, userID, roleID, toneID); err != nil {
+		return "", err
+	}
+
 	session, err := m.GetSession(ctx, userID)
 	if err != nil {
 		return "", err
 	}
-
-	m.mu.Lock()
-	session.RoleID = roleID
-	session.ToneID = toneID
-	m.mu.Unlock()
 
 	role := m.roles[roleID]
 	tone := m.tones[toneID]
@@ -332,11 +400,22 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 	if len(state.Payload) > 0 {
 		_ = json.Unmarshal(state.Payload, &payload)
 	}
+
+	// If payload is empty, fallback to active session
+	session, _ := m.GetSession(ctx, u.ID)
 	if payload.RoleID == 0 {
-		payload.RoleID = 1
+		if session != nil && session.RoleID > 0 {
+			payload.RoleID = session.RoleID
+		} else {
+			payload.RoleID = 1
+		}
 	}
 	if payload.ToneID == 0 {
-		payload.ToneID = 1
+		if session != nil && session.ToneID > 0 {
+			payload.ToneID = session.ToneID
+		} else {
+			payload.ToneID = 1
+		}
 	}
 
 	m.mu.RLock()
@@ -392,6 +471,16 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 	if len(state.Payload) > 0 {
 		_ = json.Unmarshal(state.Payload, &payload)
 	}
+
+	session, _ := m.GetSession(ctx, u.ID)
+	if session != nil {
+		if payload.RoleID == 0 || (session.RoleID > 0 && session.RoleID != payload.RoleID) {
+			payload.RoleID = session.RoleID
+		}
+		if payload.ToneID == 0 || (session.ToneID > 0 && session.ToneID != payload.ToneID) {
+			payload.ToneID = session.ToneID
+		}
+	}
 	if payload.RoleID == 0 {
 		payload.RoleID = 1
 	}
@@ -431,6 +520,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		if newRoleID >= 1 && newRoleID <= 5 {
 			payload.RoleID = newRoleID
 		}
+		_ = m.SetSessionSettings(ctx, u.ID, payload.RoleID, payload.ToneID)
 		newP, _ := json.Marshal(payload)
 		roleName := m.roles[payload.RoleID].Name
 		toneName := m.tones[payload.ToneID].Name
@@ -480,6 +570,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		if newToneID >= 1 && newToneID <= 4 {
 			payload.ToneID = newToneID
 		}
+		_ = m.SetSessionSettings(ctx, u.ID, payload.RoleID, payload.ToneID)
 		newP, _ := json.Marshal(payload)
 		roleName := m.roles[payload.RoleID].Name
 		toneName := m.tones[payload.ToneID].Name

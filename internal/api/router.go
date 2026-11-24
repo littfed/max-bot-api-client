@@ -200,6 +200,8 @@ func NewRouter(cfg RouterConfig) http.Handler {
 
 	// Chat Module Endpoints
 	mux.HandleFunc("GET /api/v1/chat/config", modH.handleChatConfig)
+	mux.HandleFunc("GET /api/v1/chat/session", modH.handleChatSession)
+	mux.HandleFunc("POST /api/v1/chat/settings", modH.handleChatSettings)
 	mux.HandleFunc("POST /api/v1/chat/message", modH.handleChatMessage)
 	mux.HandleFunc("POST /api/v1/chat/clear", modH.handleChatClear)
 

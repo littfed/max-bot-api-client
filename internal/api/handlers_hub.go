@@ -195,27 +195,32 @@ func (h *hubHandler) handleUserMode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update user active mode in DB
-	if h.cfg.Store != nil {
-		if err := h.cfg.Store.SetUserActiveMode(ctx, user.ID, req.ModeID); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update user mode: %v", err))
-			return
-		}
-	}
-	user.ActiveModeID = req.ModeID
+	// Check if mode is actually changing
+	modeChanged := user.ActiveModeID != req.ModeID
 
-	// Optional notification to user chat
-	if h.cfg.PlatformAdapter != nil {
-		recipientID := strconv.FormatInt(user.ID, 10)
-		platformName := PlatformFromContext(ctx)
+	// Update user active mode in DB if changed
+	if modeChanged {
 		if h.cfg.Store != nil {
-			if ident, err := h.cfg.Store.GetUserIdentity(ctx, user.ID, platformName); err == nil && ident != nil && ident.PlatformUserID != "" {
-				recipientID = ident.PlatformUserID
+			if err := h.cfg.Store.SetUserActiveMode(ctx, user.ID, req.ModeID); err != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update user mode: %v", err))
+				return
 			}
 		}
-		_ = h.cfg.PlatformAdapter.SendMessage(ctx, recipientID, &platform.OutMessage{
-			Text: fmt.Sprintf("🔄 **Режим успешно переключен:** _%s_", req.ModeID),
-		})
+		user.ActiveModeID = req.ModeID
+
+		// Notification to user chat only on actual switch
+		if h.cfg.PlatformAdapter != nil {
+			recipientID := strconv.FormatInt(user.ID, 10)
+			platformName := PlatformFromContext(ctx)
+			if h.cfg.Store != nil {
+				if ident, err := h.cfg.Store.GetUserIdentity(ctx, user.ID, platformName); err == nil && ident != nil && ident.PlatformUserID != "" {
+					recipientID = ident.PlatformUserID
+				}
+			}
+			_ = h.cfg.PlatformAdapter.SendMessage(ctx, recipientID, &platform.OutMessage{
+				Text: fmt.Sprintf("🔄 **Режим успешно переключен:** _%s_", req.ModeID),
+			})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

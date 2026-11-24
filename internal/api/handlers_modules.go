@@ -426,6 +426,70 @@ func (h *modulesHandler) handleChatConfig(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (h *modulesHandler) handleChatSession(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.cfg.ChatModule == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat module not available")
+		return
+	}
+
+	session, err := h.cfg.ChatModule.GetSession(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get chat session: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"role_id":  session.RoleID,
+		"tone_id":  session.ToneID,
+		"messages": session.Messages,
+	})
+}
+
+func (h *modulesHandler) handleChatSettings(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.cfg.ChatModule == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat module not available")
+		return
+	}
+
+	var req struct {
+		RoleID int `json:"role_id"`
+		ToneID int `json:"tone_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.cfg.ChatModule.SetSessionSettings(r.Context(), user.ID, req.RoleID, req.ToneID); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update chat settings: %v", err))
+		return
+	}
+
+	if h.cfg.FSM != nil {
+		pBytes, _ := json.Marshal(map[string]int{
+			"role_id": req.RoleID,
+			"tone_id": req.ToneID,
+		})
+		_ = h.cfg.FSM.Set(r.Context(), user.ID, "chat", "", pBytes)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"role_id": req.RoleID,
+		"tone_id": req.ToneID,
+	})
+}
+
 func (h *modulesHandler) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 	user := UserFromContext(r.Context())
 	if user == nil {
@@ -455,6 +519,14 @@ func (h *modulesHandler) handleChatMessage(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to send chat message: %v", err))
 		return
+	}
+
+	if h.cfg.FSM != nil {
+		pBytes, _ := json.Marshal(map[string]int{
+			"role_id": req.RoleID,
+			"tone_id": req.ToneID,
+		})
+		_ = h.cfg.FSM.Set(r.Context(), user.ID, "chat", "", pBytes)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

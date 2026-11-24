@@ -38,16 +38,17 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onErrorToast,
 }) => {
   const [activeTab, setActiveTab] = useState<'dialog' | 'settings'>('settings');
-  const [selectedRole, setSelectedRole] = useState<number>(2); // Default Бизнес-аналитик
+  const [selectedRole, setSelectedRole] = useState<number>(1); // Default Универсальный ассистент
   const [selectedTone, setSelectedTone] = useState<number>(1); // Default Официально-деловой
+  const [isLoadingSession, setIsLoadingSession] = useState(true);
 
-  const [memoryCount, setMemoryCount] = useState(8);
+  const [memoryCount, setMemoryCount] = useState(0);
   const maxMemory = 15;
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'assistant',
-      content: 'Здравствуйте! Я ваш Бизнес-аналитик / Продакт. Опишите продукт или гипотезу, которую нужно разобрать.',
+      content: 'Здравствуйте! Я ваш интеллектуальный помощник. Опишите вопрос или задачу, которую нужно разобрать.',
       created_at: new Date().toISOString(),
     },
   ]);
@@ -56,11 +57,47 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Load session from server on mount
+  useEffect(() => {
+    let isMounted = true;
+    apiClient
+      .getChatSession()
+      .then((session) => {
+        if (!isMounted) return;
+        if (session.role_id) setSelectedRole(session.role_id);
+        if (session.tone_id) setSelectedTone(session.tone_id);
+        if (session.messages && session.messages.length > 0) {
+          setMessages(session.messages);
+          setMemoryCount(session.messages.length);
+          setActiveTab('dialog');
+        } else {
+          const role = rolesList.find((r) => r.id === (session.role_id || 1));
+          setMessages([
+            {
+              role: 'assistant',
+              content: `Здравствуйте! Я ваш ${role?.name || 'Ассистент'}. Опишите вопрос или задачу, которую нужно разобрать.`,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load chat session from server:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingSession(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSelectRole = (roleId: number) => {
+  const handleSelectRole = async (roleId: number) => {
     setSelectedRole(roleId);
     const role = rolesList.find((r) => r.id === roleId);
     onSuccessToast(`Роль переключена на: ${role?.name}`);
@@ -73,12 +110,22 @@ export const ChatView: React.FC<ChatViewProps> = ({
         },
       ]);
     }
+    try {
+      await apiClient.setChatSettings(roleId, selectedTone);
+    } catch (err) {
+      console.warn('Failed to persist chat role to server:', err);
+    }
   };
 
-  const handleSelectTone = (toneId: number) => {
+  const handleSelectTone = async (toneId: number) => {
     setSelectedTone(toneId);
     const tone = tonesList.find((t) => t.id === toneId);
     onSuccessToast(`Тональность: ${tone?.name}`);
+    try {
+      await apiClient.setChatSettings(selectedRole, toneId);
+    } catch (err) {
+      console.warn('Failed to persist chat tone to server:', err);
+    }
   };
 
   const handleClearHistory = async () => {
