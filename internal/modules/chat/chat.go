@@ -479,3 +479,24 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		Handled: false,
 	}, nil
 }
+
+// GetConfig returns the configured roles and tones.
+func (m *Module) GetConfig(ctx context.Context) ([]Role, []Tone, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	roles := make([]Role, 0, len(m.roles))
+	for i := 1; i <= len(m.roles); i++ {
+		if r, ok := m.roles[i]; ok {
+			roles = append(roles, r)
+		}
+	}
+	tones := make([]Tone, 0, len(m.tones))
+	for i := 1; i <= len(m.tones); i++ {
+		if t, ok := m.tones[i]; ok {
+			tones = append(tones, t)
+		}
+	}
+	return roles, tones, nil
+}
+

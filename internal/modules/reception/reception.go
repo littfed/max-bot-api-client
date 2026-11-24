@@ -469,3 +469,56 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		Handled: false,
 	}, nil
 }
+
+// GetServices returns the list of bookable services.
+func (m *Module) GetServices(ctx context.Context) ([]store.Service, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]store.Service, 0, len(m.services))
+	for _, s := range m.services {
+		res = append(res, s)
+	}
+	return res, nil
+}
+
+// GetEvents returns the list of upcoming events.
+func (m *Module) GetEvents(ctx context.Context) ([]store.Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]store.Event, 0, len(m.events))
+	for _, ev := range m.events {
+		res = append(res, *ev)
+	}
+	return res, nil
+}
+
+// GetSlots returns available time slots for a service on a given date.
+func (m *Module) GetSlots(ctx context.Context, serviceID string, targetDate time.Time) ([]store.TimeSlot, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	baseDate := targetDate
+	if baseDate.IsZero() {
+		baseDate = time.Now().Add(24 * time.Hour)
+	}
+	baseDate = time.Date(baseDate.Year(), baseDate.Month(), baseDate.Day(), 0, 0, 0, 0, baseDate.Location())
+
+	hours := []int{10, 12, 14, 16, 18}
+	slots := make([]store.TimeSlot, 0, len(hours))
+	for _, h := range hours {
+		st := baseDate.Add(time.Duration(h) * time.Hour)
+		k := slotKey(serviceID, st)
+		isBooked := false
+		if _, exists := m.bookedSlots[k]; exists {
+			isBooked = true
+		}
+		slots = append(slots, store.TimeSlot{
+			ID:        fmt.Sprintf("slot_%s_%d", serviceID, st.Unix()),
+			ServiceID: serviceID,
+			SlotTime:  st,
+			IsBooked:  isBooked,
+		})
+	}
+	return slots, nil
+}
+

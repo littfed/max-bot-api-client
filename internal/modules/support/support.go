@@ -329,3 +329,17 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		Handled: false,
 	}, nil
 }
+
+// GetTickets returns tickets, optionally filtered by userID (if userID > 0).
+func (m *Module) GetTickets(ctx context.Context, userID int64) ([]Ticket, error) {
+	m.ticketMu.Lock()
+	defer m.ticketMu.Unlock()
+	res := make([]Ticket, 0, len(m.tickets))
+	for _, t := range m.tickets {
+		if userID <= 0 || t.UserID == userID {
+			res = append(res, t)
+		}
+	}
+	return res, nil
+}
+
