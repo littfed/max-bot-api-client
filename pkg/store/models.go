@@ -251,3 +251,15 @@ type ChatSession struct {
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
+// AdminAuditLog represents an audit log entry for actions performed in the admin panel.
+type AdminAuditLog struct {
+	ID          int64           `json:"id"`
+	AdminID     int64           `json:"admin_id"`
+	Action      string          `json:"action"`
+	TargetMode  string          `json:"target_mode,omitempty"`
+	PayloadDiff json.RawMessage `json:"payload_diff,omitempty"`
+	IP          string          `json:"ip,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+

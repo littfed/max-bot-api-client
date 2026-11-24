@@ -938,6 +938,315 @@ func (s *SQLStore) GetMascotPhrases(ctx context.Context) ([]MascotPhrase, error)
 	return phrases, nil
 }
 
+// UpdateLeadStatus updates the status of an existing lead.
+func (s *SQLStore) UpdateLeadStatus(ctx context.Context, leadID int64, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := `UPDATE leads SET status = $1 WHERE id = $2;`
+	res, err := s.db.ExecContext(ctx, query, status, leadID)
+	if err != nil {
+		return fmt.Errorf("failed to update lead status: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("lead %d not found: %w", leadID, sql.ErrNoRows)
+	}
+	return nil
+}
+
+// CreateSupportTicket creates a new support ticket and returns its generated ID.
+func (s *SQLStore) CreateSupportTicket(ctx context.Context, ticket *SupportTicket) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if ticket == nil {
+		return 0, errors.New("ticket cannot be nil")
+	}
+	if ticket.Status == "" {
+		ticket.Status = "open"
+	}
+	now := time.Now()
+	if ticket.CreatedAt.IsZero() {
+		ticket.CreatedAt = now
+	}
+	if ticket.UpdatedAt.IsZero() {
+		ticket.UpdatedAt = now
+	}
+
+	if s.dialect == "postgres" {
+		query := `INSERT INTO support_tickets (user_id, platform, mode_scope, subject, status, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;`
+		err := s.db.QueryRowContext(ctx, query, ticket.UserID, ticket.Platform, ticket.ModeScope, ticket.Subject, ticket.Status, ticket.CreatedAt, ticket.UpdatedAt).Scan(&ticket.ID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create support ticket in postgres: %w", err)
+		}
+	} else {
+		query := `INSERT INTO support_tickets (user_id, platform, mode_scope, subject, status, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7);`
+		res, err := s.db.ExecContext(ctx, query, ticket.UserID, ticket.Platform, ticket.ModeScope, ticket.Subject, ticket.Status, ticket.CreatedAt, ticket.UpdatedAt)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create support ticket in sqlite: %w", err)
+		}
+		ticket.ID, err = res.LastInsertId()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get support ticket last insert id: %w", err)
+		}
+	}
+	return ticket.ID, nil
+}
+
+// GetSupportTickets retrieves support tickets optionally filtered by status, ordered by created_at descending.
+func (s *SQLStore) GetSupportTickets(ctx context.Context, status string) ([]SupportTicket, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var rows *sql.Rows
+	var err error
+	if status != "" {
+		query := `SELECT id, user_id, platform, mode_scope, subject, status, created_at, updated_at FROM support_tickets WHERE status = $1 ORDER BY created_at DESC;`
+		rows, err = s.db.QueryContext(ctx, query, status)
+	} else {
+		query := `SELECT id, user_id, platform, mode_scope, subject, status, created_at, updated_at FROM support_tickets ORDER BY created_at DESC;`
+		rows, err = s.db.QueryContext(ctx, query)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query support tickets: %w", err)
+	}
+	defer rows.Close()
+
+	var tickets []SupportTicket
+	for rows.Next() {
+		var t SupportTicket
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Platform, &t.ModeScope, &t.Subject, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan support ticket: %w", err)
+		}
+		tickets = append(tickets, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error in support tickets: %w", err)
+	}
+	return tickets, nil
+}
+
+// GetSupportTicket retrieves a single support ticket by ID.
+func (s *SQLStore) GetSupportTicket(ctx context.Context, ticketID int64) (*SupportTicket, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT id, user_id, platform, mode_scope, subject, status, created_at, updated_at FROM support_tickets WHERE id = $1;`
+	row := s.db.QueryRowContext(ctx, query, ticketID)
+
+	var t SupportTicket
+	if err := row.Scan(&t.ID, &t.UserID, &t.Platform, &t.ModeScope, &t.Subject, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("support ticket %d not found: %w", ticketID, sql.ErrNoRows)
+		}
+		return nil, fmt.Errorf("failed to get support ticket %d: %w", ticketID, err)
+	}
+	return &t, nil
+}
+
+// UpdateSupportTicketStatus updates the status and updated_at timestamp of a support ticket.
+func (s *SQLStore) UpdateSupportTicketStatus(ctx context.Context, ticketID int64, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	query := `UPDATE support_tickets SET status = $1, updated_at = $2 WHERE id = $3;`
+	res, err := s.db.ExecContext(ctx, query, status, now, ticketID)
+	if err != nil {
+		return fmt.Errorf("failed to update support ticket status: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("support ticket %d not found: %w", ticketID, sql.ErrNoRows)
+	}
+	return nil
+}
+
+// SaveSupportMessage creates a new support message linked to a ticket.
+func (s *SQLStore) SaveSupportMessage(ctx context.Context, msg *SupportMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if msg == nil {
+		return errors.New("support message cannot be nil")
+	}
+	if msg.CreatedAt.IsZero() {
+		msg.CreatedAt = time.Now()
+	}
+
+	if s.dialect == "postgres" {
+		query := `INSERT INTO support_messages (ticket_id, sender_type, message_text, created_at)
+VALUES ($1, $2, $3, $4) RETURNING id;`
+		err := s.db.QueryRowContext(ctx, query, msg.TicketID, msg.SenderType, msg.MessageText, msg.CreatedAt).Scan(&msg.ID)
+		if err != nil {
+			return fmt.Errorf("failed to save support message in postgres: %w", err)
+		}
+	} else {
+		query := `INSERT INTO support_messages (ticket_id, sender_type, message_text, created_at)
+VALUES ($1, $2, $3, $4);`
+		res, err := s.db.ExecContext(ctx, query, msg.TicketID, msg.SenderType, msg.MessageText, msg.CreatedAt)
+		if err != nil {
+			return fmt.Errorf("failed to save support message in sqlite: %w", err)
+		}
+		msg.ID, err = res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("failed to get support message last insert id: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetSupportMessages retrieves all messages for a ticket ordered by created_at ascending.
+func (s *SQLStore) GetSupportMessages(ctx context.Context, ticketID int64) ([]SupportMessage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT id, ticket_id, sender_type, message_text, created_at FROM support_messages WHERE ticket_id = $1 ORDER BY created_at ASC;`
+	rows, err := s.db.QueryContext(ctx, query, ticketID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query support messages: %w", err)
+	}
+	defer rows.Close()
+
+	var msgs []SupportMessage
+	for rows.Next() {
+		var m SupportMessage
+		if err := rows.Scan(&m.ID, &m.TicketID, &m.SenderType, &m.MessageText, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan support message: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error in support messages: %w", err)
+	}
+	return msgs, nil
+}
+
+// SaveAdminAuditLog records an admin action in the audit log table.
+func (s *SQLStore) SaveAdminAuditLog(ctx context.Context, log *AdminAuditLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if log == nil {
+		return errors.New("audit log cannot be nil")
+	}
+	if len(log.PayloadDiff) == 0 {
+		log.PayloadDiff = json.RawMessage("{}")
+	}
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = time.Now()
+	}
+
+	if s.dialect == "postgres" {
+		query := `INSERT INTO admin_audit_logs (admin_id, action, target_mode, payload_diff, ip, created_at)
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;`
+		err := s.db.QueryRowContext(ctx, query, log.AdminID, log.Action, log.TargetMode, string(log.PayloadDiff), log.IP, log.CreatedAt).Scan(&log.ID)
+		if err != nil {
+			return fmt.Errorf("failed to save admin audit log in postgres: %w", err)
+		}
+	} else {
+		query := `INSERT INTO admin_audit_logs (admin_id, action, target_mode, payload_diff, ip, created_at)
+VALUES ($1, $2, $3, $4, $5, $6);`
+		res, err := s.db.ExecContext(ctx, query, log.AdminID, log.Action, log.TargetMode, string(log.PayloadDiff), log.IP, log.CreatedAt)
+		if err != nil {
+			return fmt.Errorf("failed to save admin audit log in sqlite: %w", err)
+		}
+		log.ID, err = res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("failed to get admin audit log last insert id: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetAdminAuditLogs retrieves recent audit logs ordered by created_at descending.
+func (s *SQLStore) GetAdminAuditLogs(ctx context.Context, limit int) ([]AdminAuditLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := `SELECT id, admin_id, action, target_mode, payload_diff, ip, created_at FROM admin_audit_logs ORDER BY created_at DESC, id DESC LIMIT $1;`
+	rows, err := s.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query admin audit logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []AdminAuditLog
+	for rows.Next() {
+		var l AdminAuditLog
+		var targetMode sql.NullString
+		var diffStr sql.NullString
+		var ip sql.NullString
+		if err := rows.Scan(&l.ID, &l.AdminID, &l.Action, &targetMode, &diffStr, &ip, &l.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan admin audit log: %w", err)
+		}
+		if targetMode.Valid {
+			l.TargetMode = targetMode.String
+		}
+		if ip.Valid {
+			l.IP = ip.String
+		}
+		if diffStr.Valid && diffStr.String != "" {
+			l.PayloadDiff = json.RawMessage(diffStr.String)
+		} else {
+			l.PayloadDiff = json.RawMessage("{}")
+		}
+		logs = append(logs, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error in admin audit logs: %w", err)
+	}
+	return logs, nil
+}
+
+// GetUserIdentity retrieves the user identity for a given user ID and platform.
+func (s *SQLStore) GetUserIdentity(ctx context.Context, userID int64, platform string) (*UserIdentity, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var query string
+	var row *sql.Row
+	if platform != "" {
+		query = `SELECT id, user_id, platform, platform_user_id, username, first_name, phone, created_at FROM user_identities WHERE user_id = $1 AND platform = $2 LIMIT 1;`
+		row = s.db.QueryRowContext(ctx, query, userID, platform)
+	} else {
+		query = `SELECT id, user_id, platform, platform_user_id, username, first_name, phone, created_at FROM user_identities WHERE user_id = $1 LIMIT 1;`
+		row = s.db.QueryRowContext(ctx, query, userID)
+	}
+
+	var ident UserIdentity
+	var username, firstName, phone sql.NullString
+	if err := row.Scan(&ident.ID, &ident.UserID, &ident.Platform, &ident.PlatformUserID, &username, &firstName, &phone, &ident.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("user identity not found: %w", sql.ErrNoRows)
+		}
+		return nil, fmt.Errorf("failed to query user identity: %w", err)
+	}
+	if username.Valid {
+		ident.Username = username.String
+	}
+	if firstName.Valid {
+		ident.FirstName = firstName.String
+	}
+	if phone.Valid {
+		ident.Phone = phone.String
+	}
+	return &ident, nil
+}
+
 func (s *SQLStore) Close() error {
 	return s.db.Close()
 }

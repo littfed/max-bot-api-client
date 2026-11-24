@@ -361,3 +361,109 @@ func TestBotHubStore_UserAndModeState(t *testing.T) {
 		t.Errorf("Expected seeded mascot phrases, got 0")
 	}
 }
+
+func TestSQLStore_AdminAndSupportOperations(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_admin_support.db")
+
+	s, err := NewFromEnv("file:"+dbPath, "")
+	if err != nil {
+		t.Fatalf("failed to create SQL store: %v", err)
+	}
+	defer s.Close()
+
+	sqlStore := s.SQL()
+	ctx := context.Background()
+
+	// 1. Resolve user identity and verify GetUserIdentity
+	user, err := sqlStore.ResolveUserIdentity(ctx, "max", "user_admin_test_1", "tester1", "Test", "+79990001122")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity failed: %v", err)
+	}
+
+	ident, err := sqlStore.GetUserIdentity(ctx, user.ID, "max")
+	if err != nil {
+		t.Fatalf("GetUserIdentity failed: %v", err)
+	}
+	if ident.PlatformUserID != "user_admin_test_1" {
+		t.Errorf("expected platform user id 'user_admin_test_1', got %q", ident.PlatformUserID)
+	}
+
+	// 2. Lead operations: save and update status
+	leadID, err := sqlStore.SaveLead(ctx, &Lead{
+		UserID:     user.ID,
+		Platform:   "max",
+		SourceMode: "shop",
+		Contact:    "+79990001122",
+		Status:     "new",
+	})
+	if err != nil {
+		t.Fatalf("SaveLead failed: %v", err)
+	}
+	if err := sqlStore.UpdateLeadStatus(ctx, leadID, "closed"); err != nil {
+		t.Fatalf("UpdateLeadStatus failed: %v", err)
+	}
+	closedLeads, err := sqlStore.GetLeads(ctx, "closed")
+	if err != nil || len(closedLeads) != 1 || closedLeads[0].ID != leadID {
+		t.Fatalf("expected 1 closed lead with id %d, got %+v", leadID, closedLeads)
+	}
+
+	// 3. Support ticket operations
+	ticketID, err := sqlStore.CreateSupportTicket(ctx, &SupportTicket{
+		UserID:    user.ID,
+		Platform:  "max",
+		ModeScope: "support",
+		Subject:   "Тестовый тикет",
+		Status:    "open",
+	})
+	if err != nil {
+		t.Fatalf("CreateSupportTicket failed: %v", err)
+	}
+	ticket, err := sqlStore.GetSupportTicket(ctx, ticketID)
+	if err != nil || ticket.Subject != "Тестовый тикет" {
+		t.Fatalf("GetSupportTicket failed: %v", err)
+	}
+
+	openTickets, err := sqlStore.GetSupportTickets(ctx, "open")
+	if err != nil || len(openTickets) == 0 {
+		t.Fatalf("GetSupportTickets('open') failed: %v", err)
+	}
+
+	if err := sqlStore.UpdateSupportTicketStatus(ctx, ticketID, "answered"); err != nil {
+		t.Fatalf("UpdateSupportTicketStatus failed: %v", err)
+	}
+	updatedTicket, err := sqlStore.GetSupportTicket(ctx, ticketID)
+	if err != nil || updatedTicket.Status != "answered" {
+		t.Fatalf("expected status 'answered', got %v", updatedTicket)
+	}
+
+	// 4. Support message operations
+	msg := &SupportMessage{
+		TicketID:    ticketID,
+		SenderType:  "operator",
+		MessageText: "Здравствуйте!",
+	}
+	if err := sqlStore.SaveSupportMessage(ctx, msg); err != nil {
+		t.Fatalf("SaveSupportMessage failed: %v", err)
+	}
+	msgs, err := sqlStore.GetSupportMessages(ctx, ticketID)
+	if err != nil || len(msgs) != 1 || msgs[0].MessageText != "Здравствуйте!" {
+		t.Fatalf("GetSupportMessages failed: %v", err)
+	}
+
+	// 5. Admin audit log operations
+	auditLog := &AdminAuditLog{
+		AdminID:     user.ID,
+		Action:      "test_action",
+		TargetMode:  "shop",
+		PayloadDiff: []byte(`{"key":"value"}`),
+		IP:          "127.0.0.1",
+	}
+	if err := sqlStore.SaveAdminAuditLog(ctx, auditLog); err != nil {
+		t.Fatalf("SaveAdminAuditLog failed: %v", err)
+	}
+	logs, err := sqlStore.GetAdminAuditLogs(ctx, 10)
+	if err != nil || len(logs) == 0 || logs[0].Action != "test_action" {
+		t.Fatalf("GetAdminAuditLogs failed: %v, got %+v", err, logs)
+	}
+}
