@@ -371,3 +371,99 @@ func TestAdminService_GetAuditLogsLimit(t *testing.T) {
 		t.Errorf("expected latest log to be support, got %s", logs[0].TargetMode)
 	}
 }
+
+func TestAdminService_MultiPlatformAdapterRouting(t *testing.T) {
+	h := setupTestHarness(t)
+	svc := h.adminSvc
+	ctx := context.Background()
+
+	// Register Telegram adapter
+	tgAdapter := newMockPlatformAdapter(platform.PlatformTelegram)
+	svc.RegisterAdapter(tgAdapter)
+
+	// Create user with Telegram identity
+	tgUser, err := h.store.ResolveUserIdentity(ctx, "telegram", "tg_user_777", "tgtester", "Telegram User", "")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity failed: %v", err)
+	}
+
+	// Create Telegram ticket
+	tgTicketID, err := h.store.CreateSupportTicket(ctx, &store.SupportTicket{
+		UserID:    tgUser.ID,
+		Platform:  "telegram",
+		ModeScope: "support",
+		Subject:   "Вопрос по Telegram",
+		Status:    "open",
+	})
+	if err != nil {
+		t.Fatalf("CreateSupportTicket failed: %v", err)
+	}
+
+	// Admin replies to Telegram ticket
+	err = svc.ReplyTicket(ctx, 1, tgTicketID, "Ответ для Telegram", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("ReplyTicket failed: %v", err)
+	}
+
+	// Verify dispatched specifically to Telegram adapter, NOT MAX adapter
+	if len(tgAdapter.sentMessages) != 1 {
+		t.Fatalf("expected 1 message in telegram adapter, got %d", len(tgAdapter.sentMessages))
+	}
+	if tgAdapter.sentMessages[0].RecipientID != "tg_user_777" {
+		t.Errorf("expected tg recipient tg_user_777, got %s", tgAdapter.sentMessages[0].RecipientID)
+	}
+	if len(h.adapter.sentMessages) != 0 {
+		t.Errorf("expected 0 messages in MAX adapter, got %d", len(h.adapter.sentMessages))
+	}
+
+	// Create ticket with unmatched platform (e.g. "discord")
+	discordTicketID, err := h.store.CreateSupportTicket(ctx, &store.SupportTicket{
+		UserID:    tgUser.ID,
+		Platform:  "discord",
+		ModeScope: "support",
+		Subject:   "Discord issue",
+		Status:    "open",
+	})
+	if err != nil {
+		t.Fatalf("CreateSupportTicket for discord failed: %v", err)
+	}
+
+	// Reply to ticket without matching adapter should gracefully succeed (warning logged, ticket answered)
+	err = svc.ReplyTicket(ctx, 1, discordTicketID, "Ответ для Discord", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("ReplyTicket for unrouted platform should not fail: %v", err)
+	}
+
+	discordTicket, err := h.store.GetSupportTicket(ctx, discordTicketID)
+	if err != nil || discordTicket.Status != "answered" {
+		t.Errorf("expected discord ticket to be marked answered, got %v", discordTicket)
+	}
+}
+
+type errAuditStore struct {
+	admin.Store
+}
+
+func (s *errAuditStore) SaveAdminAuditLog(ctx context.Context, log *store.AdminAuditLog) error {
+	return sql.ErrConnDone
+}
+
+func TestAdminService_AuditLogErrorDoesNotBreakAdminAction(t *testing.T) {
+	h := setupTestHarness(t)
+	wrappedStore := &errAuditStore{Store: h.store}
+	svc := admin.NewService(wrappedStore, h.guard, h.adapter)
+	ctx := context.Background()
+
+	// ToggleMode should still succeed even if audit logging encounters an error
+	err := svc.ToggleMode(ctx, 1, "shop", false, "Техработы", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("ToggleMode failed despite audit logging error: %v", err)
+	}
+
+	// Mode should be toggled
+	active, _, err := h.guard.IsActive(ctx, "shop")
+	if err != nil || active {
+		t.Errorf("expected mode shop to be inactive, got active=%v, err=%v", active, err)
+	}
+}
+

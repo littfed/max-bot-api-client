@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/internal/platform"
@@ -41,18 +43,50 @@ type Guard interface {
 // Service provides hidden admin management functionality including maintenance toggles,
 // lead management, ticket support reply handling, and audit logging with RBAC enforcement.
 type Service struct {
-	store   Store
-	guard   Guard
-	adapter platform.PlatformAdapter
+	store    Store
+	guard    Guard
+	adapter  platform.PlatformAdapter
+	adapters map[string]platform.PlatformAdapter
+	mu       sync.RWMutex
 }
 
 // NewService creates a new Admin Service.
 func NewService(store Store, guard Guard, adapter platform.PlatformAdapter) *Service {
-	return &Service{
-		store:   store,
-		guard:   guard,
-		adapter: adapter,
+	s := &Service{
+		store:    store,
+		guard:    guard,
+		adapter:  adapter,
+		adapters: make(map[string]platform.PlatformAdapter),
 	}
+	if adapter != nil {
+		s.adapters[adapter.Platform()] = adapter
+	}
+	return s
+}
+
+// RegisterAdapter registers or updates a PlatformAdapter for a specific platform.
+func (s *Service) RegisterAdapter(adapter platform.PlatformAdapter) {
+	if adapter == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.adapters == nil {
+		s.adapters = make(map[string]platform.PlatformAdapter)
+	}
+	s.adapters[adapter.Platform()] = adapter
+}
+
+func (s *Service) getAdapter(platformName string) platform.PlatformAdapter {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if a, ok := s.adapters[platformName]; ok {
+		return a
+	}
+	if s.adapter != nil && (s.adapter.Platform() == platformName || s.adapter.Platform() == "" || platformName == "") {
+		return s.adapter
+	}
+	return nil
 }
 
 // checkAdmin verifies that the user with adminID exists and possesses admin or superadmin privileges.
@@ -96,7 +130,15 @@ func (s *Service) ToggleMode(ctx context.Context, adminID int64, modeID string, 
 		IP:          ip,
 		CreatedAt:   time.Now(),
 	}
-	_ = s.store.SaveAdminAuditLog(ctx, audit)
+	if err := s.store.SaveAdminAuditLog(ctx, audit); err != nil {
+		slog.ErrorContext(ctx, "failed to record admin audit log",
+			"error", err,
+			"admin_id", adminID,
+			"action", audit.Action,
+			"target_mode", audit.TargetMode,
+			"ip", ip,
+		)
+	}
 
 	return nil
 }
@@ -132,7 +174,15 @@ func (s *Service) UpdateLeadStatus(ctx context.Context, adminID int64, leadID in
 		IP:          ip,
 		CreatedAt:   time.Now(),
 	}
-	_ = s.store.SaveAdminAuditLog(ctx, audit)
+	if err := s.store.SaveAdminAuditLog(ctx, audit); err != nil {
+		slog.ErrorContext(ctx, "failed to record admin audit log",
+			"error", err,
+			"admin_id", adminID,
+			"action", audit.Action,
+			"target_mode", audit.TargetMode,
+			"ip", ip,
+		)
+	}
 
 	return nil
 }
@@ -146,7 +196,7 @@ func (s *Service) ListTickets(ctx context.Context, adminID int64, status string)
 }
 
 // ReplyTicket records an operator's reply to a support ticket, dispatches the message to the user
-// via PlatformAdapter, marks the ticket as answered, and records an audit log.
+// via matching PlatformAdapter, marks the ticket as answered, and records an audit log.
 func (s *Service) ReplyTicket(ctx context.Context, adminID int64, ticketID int64, messageText string, ip string) error {
 	if err := s.checkAdmin(ctx, adminID); err != nil {
 		return err
@@ -171,8 +221,9 @@ func (s *Service) ReplyTicket(ctx context.Context, adminID int64, ticketID int64
 		return fmt.Errorf("failed to save support message: %w", err)
 	}
 
-	// 2. Deliver message to recipient via PlatformAdapter
-	if s.adapter != nil {
+	// 2. Deliver message to recipient via matching PlatformAdapter
+	targetAdapter := s.getAdapter(ticket.Platform)
+	if targetAdapter != nil {
 		recipientID := strconv.FormatInt(ticket.UserID, 10)
 		if ident, err := s.store.GetUserIdentity(ctx, ticket.UserID, ticket.Platform); err == nil && ident != nil && ident.PlatformUserID != "" {
 			recipientID = ident.PlatformUserID
@@ -181,9 +232,15 @@ func (s *Service) ReplyTicket(ctx context.Context, adminID int64, ticketID int64
 		out := &platform.OutMessage{
 			Text: messageText,
 		}
-		if err := s.adapter.SendMessage(ctx, recipientID, out); err != nil {
-			return fmt.Errorf("failed to deliver message via platform adapter: %w", err)
+		if err := targetAdapter.SendMessage(ctx, recipientID, out); err != nil {
+			return fmt.Errorf("failed to deliver message via platform adapter %s: %w", targetAdapter.Platform(), err)
 		}
+	} else {
+		slog.WarnContext(ctx, "no matching platform adapter found for ticket reply",
+			"ticket_id", ticketID,
+			"platform", ticket.Platform,
+			"user_id", ticket.UserID,
+		)
 	}
 
 	// 3. Mark ticket as answered
@@ -205,7 +262,15 @@ func (s *Service) ReplyTicket(ctx context.Context, adminID int64, ticketID int64
 		IP:          ip,
 		CreatedAt:   time.Now(),
 	}
-	_ = s.store.SaveAdminAuditLog(ctx, audit)
+	if err := s.store.SaveAdminAuditLog(ctx, audit); err != nil {
+		slog.ErrorContext(ctx, "failed to record admin audit log",
+			"error", err,
+			"admin_id", adminID,
+			"action", audit.Action,
+			"target_mode", audit.TargetMode,
+			"ip", ip,
+		)
+	}
 
 	return nil
 }
