@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/littfed/max-bot-api-client/internal/admin"
+	"github.com/littfed/max-bot-api-client/internal/api"
+	"github.com/littfed/max-bot-api-client/internal/core"
+	"github.com/littfed/max-bot-api-client/internal/modules/chat"
+	"github.com/littfed/max-bot-api-client/internal/modules/reception"
+	"github.com/littfed/max-bot-api-client/internal/modules/shop"
+	"github.com/littfed/max-bot-api-client/internal/modules/support"
+	"github.com/littfed/max-bot-api-client/internal/platform/max"
 	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
@@ -201,13 +210,77 @@ func main() {
 		})
 	}
 
+	// 7.1. Initialize Persistent SQL Store for Bot Hub
+	var sqlStore *store.SQLStore
+	if appStore != nil && appStore.SQL() != nil {
+		sqlStore = appStore.SQL()
+	} else {
+		dbConn, err := sql.Open("sqlite", ":memory:")
+		if err == nil {
+			sqlStore, err = store.NewSQLStore(dbConn, "sqlite")
+			if err != nil {
+				logger.Warn("не удалось инициализировать in-memory SQLStore", slog.Any("error", err))
+			} else {
+				logger.Info("SQLStore инициализирован в режиме in-memory SQLite с миграциями")
+			}
+		}
+	}
+
+	// 7.2. Initialize Bot Hub Core Components, Adapters & Virtual Modules
+	compositeFSM := core.NewCompositeFSM(sqlStore, nil)
+	lockManager := core.NewLockManager(nil)
+	maintenanceGuard := core.NewMaintenanceGuard(sqlStore, nil)
+	orchestrator := core.NewOrchestrator(sqlStore, compositeFSM, lockManager, maintenanceGuard)
+
+	var botClient max.BotClient = client
+	maxAdapter := max.NewAdapter(botClient)
+	adminService := admin.NewService(sqlStore, maintenanceGuard, maxAdapter)
+
+	shopMod := shop.New(sqlStore)
+	receptionMod := reception.New(sqlStore, lockManager)
+	supportMod := support.New(sqlStore)
+	chatMod := chat.New(sqlStore, aiClient)
+
+	orchestrator.RegisterModule(shopMod)
+	orchestrator.RegisterModule(receptionMod)
+	orchestrator.RegisterModule(supportMod)
+	orchestrator.RegisterModule(chatMod)
+
+	// 7.3. Mount /api/v1/ REST API routes
+	apiRouter := api.NewRouter(api.RouterConfig{
+		Store:           sqlStore,
+		Guard:           maintenanceGuard,
+		FSM:             compositeFSM,
+		Orchestrator:    orchestrator,
+		AdminService:    adminService,
+		ShopModule:      shopMod,
+		ReceptionModule: receptionMod,
+		SupportModule:   supportMod,
+		ChatModule:      chatMod,
+		BotToken:        token,
+		JWTSecret:       os.Getenv("JWT_SECRET"),
+		PlatformAdapter: maxAdapter,
+		AllowDevHeaders: os.Getenv("ALLOW_DEV_HEADERS") == "true" || os.Getenv("DEV_MODE") == "true",
+	})
+	httpMux.Handle("/api/v1/", apiRouter)
+
+	// 7.4. Mount Webhook endpoint and wire bot updates to Core Orchestrator
+	webhookSecret := strings.TrimSpace(os.Getenv("MAX_WEBHOOK_SECRET"))
+	httpMux.HandleFunc("/webhook", b.WebhookHandler(webhookSecret))
+	wireBotToOrchestrator(b, orchestrator, logger)
+
 	// 8. Register Core Routes, Menu & Scenarios
 	hood.RegisterRoutes(b.Router())
 	RegisterMenuRoutes(b, hood, aiClient)
 	RegisterEcomScenario(b, hood, paymentRouter, appStore)
 	RegisterBookingScenario(b, hood, appStore)
 	RegisterQuizScenario(b, hood)
-	RegisterWebappScenario(b, hood, httpMux, token, *portFlag, appStore, client, aiClient, chatModel)
+	RegisterWebappScenario(b, hood, httpMux, token, *portFlag, appStore, client, aiClient, chatModel, true)
+	if err := RegisterWebSPA(httpMux); err != nil {
+		logger.Error("ошибка регистрации embedded SPA", slog.Any("error", err))
+	} else {
+		logger.Info("встроенный React Mini App SPA успешно подключен на /")
+	}
 	RegisterGuardScenario(b, hood, client)
 	RegisterChannelsScenario(b, hood, ChannelScenarioConfig{
 		Client:     client,
@@ -273,13 +346,16 @@ func main() {
 	if client != nil {
 		_ = client.SetCommands(ctx, []maxbot.BotCommand{
 			{Name: "start", Description: "Приветствие и возможности бота"},
+			{Name: "hub", Description: "Главный экран Bot Hub"},
+			{Name: "mode", Description: "Выбор активного режима (Магазин, Ресепшен, Поддержка, Чат)"},
+			{Name: "lead", Description: "Оставить заявку «Хочу такого бота»"},
+			{Name: "app", Description: "Открыть Mini App (витрина, AI, заказы)"},
 			{Name: "operator", Description: "Позвать человека / менеджера (HITL)"},
 			{Name: "resume", Description: "Вернуться к боту (возобновить AI)"},
 			{Name: "reset", Description: "Новый диалог (очистить контекст ИИ)"},
 			{Name: "new", Description: "Новый диалог с чистого листа"},
 			{Name: "model", Description: "Выбор активной модели AI (LLM)"},
 			{Name: "img", Description: "Сгенерировать картинку нейросетью"},
-			{Name: "app", Description: "Открыть Mini App (витрина, AI, заказы)"},
 			{Name: "orders", Description: "Мои заказы и бронирования"},
 			{Name: "menu", Description: "Витрина возможностей MAX (Магазин, Бронь, Mini App)"},
 			{Name: "dev", Description: "Режим разработчика (Под капотом)"},

@@ -1,4 +1,17 @@
-# ── Stage 1: Build Showcase Bot Binary ─────────────────────────────
+# ── Stage 1: Build React 18 SPA Frontend ───────────────────────────
+FROM node:20-alpine AS web-builder
+
+WORKDIR /web
+
+# Copy package manifests and install dependencies
+COPY web/package.json web/package-lock.jso[n] ./
+RUN npm ci
+
+# Copy web source and build production bundle into /web/dist
+COPY web/ ./
+RUN npm run build
+
+# ── Stage 2: Build Showcase Bot Binary with Embedded Web Assets ────
 FROM golang:alpine AS builder
 
 ENV GOTOOLCHAIN=auto
@@ -6,19 +19,23 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /src
 
-# Copy module manifests
+# Copy module manifests and pre-fetch Go dependencies
 COPY go.mod ./
 COPY go.su[m] ./
+RUN go mod download
 
-# Copy complete repository (including certs/ with embedded Минцифры TLS certificates)
+# Copy complete repository
 COPY . .
+
+# Copy compiled React SPA assets from web-builder into web/dist
+COPY --from=web-builder /web/dist ./web/dist
 
 # Build statically linked binary without CGO
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" \
     -o /bin/showcase-bot ./cmd/showcase-bot
 
-# ── Stage 2: Minimal Distroless/Alpine Runtime ─────────────────────
+# ── Stage 3: Minimal Distroless/Alpine Runtime ─────────────────────
 FROM alpine:3.20
 
 RUN apk --no-cache add ca-certificates tzdata ffmpeg

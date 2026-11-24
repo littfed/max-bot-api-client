@@ -33,6 +33,7 @@ func RegisterWebappScenario(
 	client *maxbot.Client,
 	aiClient *ai.Client,
 	chatModel string,
+	skipRoot ...bool,
 ) {
 	const ownerUserID int64 = 396393759
 	var lastActiveUserID int64 = ownerUserID
@@ -768,13 +769,15 @@ func RegisterWebappScenario(
 	httpMux.HandleFunc("/webapp/", serveMiniApp)
 	httpMux.HandleFunc("/maxapp", serveMiniApp)
 	httpMux.HandleFunc("/maxapp/", serveMiniApp)
-	httpMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			serveMiniApp(w, r)
-			return
-		}
-		http.NotFound(w, r)
-	})
+	if len(skipRoot) == 0 || !skipRoot[0] {
+		httpMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" {
+				serveMiniApp(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})
+	}
 
 	// 3. Scenario Launch Route (scen:webapp and /app commands)
 	openMiniAppHandler := func(c *bot.Context) error {
