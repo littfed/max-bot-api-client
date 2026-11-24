@@ -185,7 +185,7 @@ export const App: React.FC = () => {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 pb-4 safe-bottom">
+      <main className={`flex-1 ${currentView === 'chat' ? 'flex flex-col min-h-0' : 'pb-4 safe-bottom'}`}>
         {currentView === 'hub' && (
           <HubGrid
             modes={modes}

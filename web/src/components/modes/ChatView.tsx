@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { ChatMessage } from '../../types';
+import { FormattedMessage } from '../common/FormattedMessage';
 
 interface ChatViewProps {
   onBack: () => void;
@@ -277,11 +278,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const currentTone = tonesList.find((t) => t.id === selectedTone) || tonesList[0];
 
   return (
-    <div className="w-full max-w-md sm:max-w-lg mx-auto px-3 sm:px-4 py-2 sm:py-3 animate-in fade-in duration-200">
-      {/* Main Dialogue Container */}
-      <div className="flex flex-col h-[74vh] sm:h-[78vh] bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden relative">
-        {/* Top Control Bar: Quick Role/Tone switchers + Settings Gear */}
-        <div className="px-3 py-2 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between gap-1.5 text-xs select-none">
+    <div className="w-full flex-1 flex flex-col bg-[#f8fafc] overflow-hidden relative animate-in fade-in duration-200">
+      {/* Top Control Bar: Quick Role/Tone switchers + Settings Gear */}
+      <div className="px-3 sm:px-4 py-2 bg-white border-b border-slate-200/80 flex items-center justify-between gap-1.5 text-xs select-none shrink-0 shadow-2xs">
           <div className="flex items-center gap-1.5 min-w-0">
             {/* Quick Role Switcher Pill */}
             <div className="relative" ref={roleMenuRef}>
@@ -431,13 +430,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 </div>
               )}
               <div
-                className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed ${
+                className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed ${
                   msg.role === 'user'
                     ? 'bg-[#0d9488] text-white rounded-tr-sm shadow-xs'
-                    : 'bg-slate-100 text-slate-900 border border-slate-200/60 rounded-tl-sm'
+                    : 'bg-white text-slate-900 border border-slate-200/80 rounded-tl-sm shadow-2xs'
                 }`}
               >
-                {msg.content}
+                <FormattedMessage content={msg.content} isUser={msg.role === 'user'} />
               </div>
             </div>
           ))}
@@ -455,14 +454,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
         {/* Input Bar */}
         <form
           onSubmit={handleSendMessage}
-          className="p-2.5 sm:p-3 border-t border-slate-100 flex items-center gap-2 bg-slate-50"
+          className="p-2.5 sm:p-3 border-t border-slate-200/80 flex items-center gap-2 bg-white shrink-0"
         >
           <input
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             placeholder="Напишите сообщение..."
-            className="flex-1 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-teal-500 shadow-xs"
+            className="flex-1 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-teal-500 shadow-xs"
           />
           <button
             type="submit"
@@ -472,7 +471,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
             <Send className="w-4 h-4" />
           </button>
         </form>
-      </div>
 
       {/* --- POPUP SETTINGS MODAL --- */}
       {showSettingsModal && (
