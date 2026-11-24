@@ -78,7 +78,7 @@ export const MascotRenderer: React.FC<MascotRendererProps> = ({ mascot, onTap })
             />
 
             {/* Expressive Glowing Eyes & Smile on Visor */}
-            {mascot.emotion === 'excited' || mascot.emotion === 'happy' ? (
+            {mascot?.emotion === 'excited' || mascot?.emotion === 'happy' ? (
               // Happy curved eyes ^^
               <>
                 <path

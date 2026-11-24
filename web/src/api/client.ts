@@ -37,17 +37,45 @@ declare global {
   }
 }
 
+// Safe LocalStorage helpers (prevent exceptions in restricted WebViews)
+function safeGetStorage(key: string): string | null {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function safeSetStorage(key: string, value: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
+  } catch (_) {}
+}
+
+function safeRemoveStorage(key: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(key);
+  } catch (_) {}
+}
+
 // Detect client platform
 export function getClientPlatform(): 'max' | 'telegram' | 'web' {
   if (typeof window !== 'undefined') {
     const win = window as any;
-    if (win.max || win.MaxWebApp) return 'max';
+    if (win.WebViewHandler || win.max || win.MaxWebApp || (win.WebApp && !win.Telegram?.WebApp?.initData)) {
+      return 'max';
+    }
     if (win.Telegram?.WebApp?.initData) return 'telegram';
 
     const params = new URLSearchParams(window.location.search);
     const p = params.get('platform');
     if (p === 'max' || p === 'telegram') return p;
-    if (params.get('query_id')?.startsWith('MAX_')) return 'max';
+    if (params.get('query_id')?.startsWith('MAX_') || params.get('WebAppData')) return 'max';
+
+    if (window.location.hash) {
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      if (hashParams.get('WebAppData') || hashParams.get('query_id')?.startsWith('MAX_')) return 'max';
+    }
 
     if (/telegram/i.test(navigator.userAgent)) return 'telegram';
   }
@@ -59,10 +87,12 @@ export function getInitData(): string {
   if (typeof window === 'undefined') return '';
 
   const win = window as any;
-  if (win.MaxWebApp?.initData) return win.MaxWebApp.initData;
-  if (win.max?.initData) return win.max.initData;
-  if (win.Telegram?.WebApp?.initData) return win.Telegram.WebApp.initData;
-  if (win.WebApp?.initData) return win.WebApp.initData;
+  try {
+    if (win.WebApp?.initData) return win.WebApp.initData;
+    if (win.max?.initData) return win.max.initData;
+    if (win.MaxWebApp?.initData) return win.MaxWebApp.initData;
+    if (win.Telegram?.WebApp?.initData) return win.Telegram.WebApp.initData;
+  } catch (_) {}
 
   // Check URL query parameters
   if (window.location.search) {
@@ -71,6 +101,7 @@ export function getInitData(): string {
       : window.location.search;
     const params = new URLSearchParams(search);
 
+    if (params.get('WebAppData')) return params.get('WebAppData')!;
     if (params.get('init_data')) return params.get('init_data')!;
     if (params.get('tgWebAppData')) return params.get('tgWebAppData')!;
 
@@ -87,6 +118,7 @@ export function getInitData(): string {
       : window.location.hash;
     const hashParams = new URLSearchParams(hashStr);
 
+    if (hashParams.get('WebAppData')) return hashParams.get('WebAppData')!;
     if (hashParams.get('tgWebAppData')) return hashParams.get('tgWebAppData')!;
     if (hashParams.get('init_data')) return hashParams.get('init_data')!;
     if (hashParams.has('hash') && (hashParams.has('user') || hashParams.has('auth_date'))) {
@@ -116,7 +148,7 @@ api.interceptors.request.use((config) => {
   const platform = getClientPlatform();
   config.headers['X-Platform'] = platform;
 
-  const storedToken = localStorage.getItem('bothub_jwt_token');
+  const storedToken = safeGetStorage('bothub_jwt_token');
   if (storedToken) {
     config.headers['Authorization'] = `Bearer ${storedToken}`;
   }
@@ -137,7 +169,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => {
     if (response.data && response.data.token) {
-      localStorage.setItem('bothub_jwt_token', response.data.token);
+      safeSetStorage('bothub_jwt_token', response.data.token);
     }
     return response;
   },

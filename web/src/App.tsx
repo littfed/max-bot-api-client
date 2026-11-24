@@ -85,17 +85,33 @@ export const App: React.FC = () => {
 
   // Initialize Telegram/MAX WebApp & Bootstrap
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (window.Telegram?.WebApp) {
-        window.Telegram.WebApp.ready?.();
-        window.Telegram.WebApp.expand?.();
+    const notifyReady = () => {
+      if (typeof window !== 'undefined') {
+        const win = window as any;
+        try {
+          if (win.WebApp && typeof win.WebApp.ready === 'function') {
+            win.WebApp.ready();
+          }
+          if (win.Telegram?.WebApp && typeof win.Telegram.WebApp.ready === 'function') {
+            win.Telegram.WebApp.ready();
+            win.Telegram.WebApp.expand?.();
+          }
+          if (win.max && typeof win.max.ready === 'function') {
+            win.max.ready();
+          }
+          if (win.MaxWebApp && typeof win.MaxWebApp.ready === 'function') {
+            win.MaxWebApp.ready();
+          }
+        } catch (e) {
+          console.error('Error invoking ready:', e);
+        }
       }
-      if ((window as any).max?.ready) {
-        (window as any).max.ready();
-      }
-    }
+    };
 
-    loadBootstrap();
+    notifyReady();
+    loadBootstrap().finally(() => {
+      notifyReady();
+    });
   }, []);
 
   const loadBootstrap = async () => {
