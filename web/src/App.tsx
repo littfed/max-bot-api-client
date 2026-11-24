@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/common/Header';
+import { BottomBar } from './components/common/BottomBar';
 import { ToastContainer } from './components/common/Toast';
 import { LeadModal } from './components/common/LeadModal';
+import { MaintenanceModal } from './components/hub/MaintenanceModal';
 import { HubGrid } from './components/hub/HubGrid';
 import { ShopView } from './components/modes/ShopView';
 import { ReceptionView } from './components/modes/ReceptionView';
@@ -17,7 +19,7 @@ import {
   BootstrapResponse,
 } from './types';
 
-// Default 8 modes list conforming to the Bot Hub spec
+// Default 8 modes list conforming to the Bot Hub spec & mockups
 const initial8Modes: ModeItem[] = [
   { id: 'shop', title: 'Магазин', is_active: true, daily_quota: 100 },
   { id: 'reception', title: 'Ресепшен', is_active: true, daily_quota: 100 },
@@ -25,29 +27,29 @@ const initial8Modes: ModeItem[] = [
     id: 'reminders',
     title: 'Напоминания',
     is_active: false,
-    maintenance_message: 'Модуль находится в разработке (Этап 2)',
+    maintenance_message: 'Модуль «Напоминания» временно отключён администратором для обновления. Скоро вернётся в работу!',
     daily_quota: 100,
   },
   {
     id: 'channels',
     title: 'Каналы',
     is_active: false,
-    maintenance_message: 'Модуль находится в разработке (Этап 2)',
+    maintenance_message: 'Модуль «Каналы» временно отключён администратором для обновления. Скоро вернётся в работу!',
     daily_quota: 100,
   },
   {
     id: 'giveaways',
     title: 'Конкурсы',
     is_active: false,
-    maintenance_message: 'Модуль находится в разработке (Этап 2)',
+    maintenance_message: 'Модуль «Конкурсы» временно отключён администратором для обновления. Скоро вернётся в работу!',
     daily_quota: 100,
   },
-  { id: 'support', title: 'Поддержка', is_active: true, daily_quota: 100 },
+  { id: 'support', title: 'Помощь', is_active: true, daily_quota: 100 },
   {
     id: 'docs',
     title: 'Документы',
     is_active: false,
-    maintenance_message: 'Модуль находится в разработке (Этап 2)',
+    maintenance_message: 'Модуль «Документы» временно отключён администратором для обновления. Скоро вернётся в работу!',
     daily_quota: 100,
   },
   { id: 'chat', title: 'Общение', is_active: true, daily_quota: 100 },
@@ -57,7 +59,7 @@ export const App: React.FC = () => {
   const [user, setUser] = useState<User | null>({
     id: 1,
     active_mode_id: 'shop',
-    role: 'admin', // Allows viewing admin by default in dev/demo
+    role: 'admin', // Allows viewing admin button in demo
     timezone: 'UTC+3',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -68,21 +70,29 @@ export const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<string>('hub'); // 'hub' | 'admin' | mode_id
   const [testedModes, setTestedModes] = useState<string[]>(['shop']);
 
+  // Mascot state with speech cloud text from mockup
   const [mascot, setMascot] = useState<MascotState>({
-    phrase: 'Привет! Я бот-маскот MAX. Нажмите на любой режим, чтобы начать тестирование.',
+    phrase: 'Загляни в Документы — разберу любой чек за 3 сек!',
     priority: 4,
     emotion: 'friendly',
   });
 
+  // Modals state
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false);
+  const [maintenanceTargetMode, setMaintenanceTargetMode] = useState<ModeItem | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isLoadingBootstrap, setIsLoadingBootstrap] = useState(true);
 
-  // Initialize Telegram WebApp / Bootstrap
+  // Initialize Telegram/MAX WebApp & Bootstrap
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-      window.Telegram.WebApp.ready?.();
-      window.Telegram.WebApp.expand?.();
+    if (typeof window !== 'undefined') {
+      if (window.Telegram?.WebApp) {
+        window.Telegram.WebApp.ready?.();
+        window.Telegram.WebApp.expand?.();
+      }
+      if ((window as any).max?.ready) {
+        (window as any).max.ready();
+      }
     }
 
     loadBootstrap();
@@ -97,7 +107,7 @@ export const App: React.FC = () => {
       if (data.modes && data.modes.length > 0) setModes(data.modes);
       if (data.mascot) setMascot(data.mascot);
     } catch (err: any) {
-      console.warn('Bootstrap API call failed or offline, using fallback state:', err);
+      console.warn('Bootstrap API call offline or unauthenticated, using fallback state:', err);
     } finally {
       setIsLoadingBootstrap(false);
     }
@@ -109,7 +119,7 @@ export const App: React.FC = () => {
     setToasts((prev) => [...prev, { id, type, text }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4500);
+    }, 4000);
   };
 
   const handleDismissToast = (id: string) => {
@@ -118,27 +128,21 @@ export const App: React.FC = () => {
 
   // Mode Selection
   const handleSelectMode = async (mode: ModeItem) => {
-    // Record tested mode
     setTestedModes((prev) => Array.from(new Set([...prev, mode.id])));
 
     try {
-      // Synchronize active mode with backend
       await apiClient.setUserMode(mode.id);
       setActiveModeId(mode.id);
     } catch (_) {
-      // In offline mode, still activate locally
       setActiveModeId(mode.id);
     }
 
     setCurrentView(mode.id);
   };
 
-  // Maintenance mode tap handling
+  // Maintenance mode tap handling: open Bottom Sheet matching Mockup 3
   const handleMaintenanceClick = (mode: ModeItem) => {
-    const msg =
-      mode.maintenance_message ||
-      "Модуль находится в разработке (Этап 2). Оставьте заявку через 'Хочу такого бота'";
-    addToast('warning', msg);
+    setMaintenanceTargetMode(mode);
   };
 
   // Mascot tap handling
@@ -151,14 +155,15 @@ export const App: React.FC = () => {
         emotion: (res.emotion as any) || 'happy',
       });
     } catch (_) {
-      const randomPhrases = [
-        'Попробуйте модуль Магазина — там есть демо-симуляция оплаты с QR-кодом!',
-        'На Ресепшене можно забронировать слот времени с защитой от овербукинга.',
-        'В Поддержке работает RAG-поиск с эскалацией на живого оператора.',
-        'В Общении можно сменить роль LLM на Маркетолога или Критика!',
+      const phrases = [
+        'Загляни в Документы — разберу любой чек за 3 сек!',
+        'В Магазине работает демо-оплата с генерацией QR-кода!',
+        'На Ресепшене можно забронировать слот времени без овербукинга.',
+        'В Поддержке подключена база знаний с эскалацией на оператора.',
+        'В Общении можно сменить роль ИИ на Маркетолога или Критика!',
       ];
       setMascot({
-        phrase: randomPhrases[Math.floor(Math.random() * randomPhrases.length)],
+        phrase: phrases[Math.floor(Math.random() * phrases.length)],
         priority: 4,
         emotion: 'happy',
       });
@@ -166,8 +171,8 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-indigo-500/30 selection:text-indigo-200">
-      {/* Sticky Header */}
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col justify-between selection:bg-teal-500/20 selection:text-teal-900">
+      {/* Sticky Top Header (Dark Navy #0b1329 matching mockups) */}
       <Header
         user={user}
         currentView={currentView}
@@ -177,8 +182,8 @@ export const App: React.FC = () => {
         onReturnToHub={() => setCurrentView('hub')}
       />
 
-      {/* Main Body */}
-      <main className="flex-1 pb-10 safe-bottom">
+      {/* Main Content Area */}
+      <main className="flex-1 pb-4 safe-bottom">
         {currentView === 'hub' && (
           <HubGrid
             modes={modes}
@@ -232,7 +237,26 @@ export const App: React.FC = () => {
         )}
       </main>
 
-      {/* Global Modals & Toasts */}
+      {/* Sticky Bottom Bar (Active Mode + Back to Chat + Admin Button) */}
+      <BottomBar
+        user={user}
+        modes={modes}
+        activeModeId={activeModeId}
+        currentView={currentView}
+        onOpenAdmin={() => setCurrentView('admin')}
+      />
+
+      {/* Maintenance Bottom Sheet Modal matching Mockup 3 */}
+      <MaintenanceModal
+        isOpen={Boolean(maintenanceTargetMode)}
+        mode={maintenanceTargetMode}
+        onClose={() => setMaintenanceTargetMode(null)}
+        onRequestNotify={(mode) => {
+          setIsLeadModalOpen(true);
+        }}
+      />
+
+      {/* Lead Modal ("Хочу такого бота") */}
       <LeadModal
         isOpen={isLeadModalOpen}
         onClose={() => setIsLeadModalOpen(false)}
@@ -241,6 +265,7 @@ export const App: React.FC = () => {
         onSuccessToast={(msg) => addToast('success', msg)}
       />
 
+      {/* Toasts */}
       <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
     </div>
   );

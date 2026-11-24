@@ -7,34 +7,37 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: {
-          50: '#eef2ff',
-          100: '#e0e7ff',
-          200: '#c7d2fe',
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#6366f1',
-          600: '#4f46e5',
-          700: '#4338ca',
-          800: '#3730a3',
-          900: '#312e81',
-          950: '#1e1b4b',
-        }
+        navy: {
+          900: '#0b1329',
+          950: '#070c1a',
+        },
+        teal: {
+          50: '#f0fdfa',
+          100: '#ccfbf1',
+          200: '#99f6e4',
+          300: '#5eead4',
+          400: '#2dd4bf',
+          500: '#14b8a6',
+          600: '#0d9488',
+          700: '#0f766e',
+          800: '#115e59',
+          900: '#134e4a',
+        },
       },
       animation: {
         'float-slow': 'float 3.5s ease-in-out infinite',
-        'pulse-glow': 'pulseGlow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'bounce-subtle': 'bounceSubtle 0.3s ease-in-out',
       },
       keyframes: {
         float: {
           '0%, 100%': { transform: 'translateY(0px)' },
-          '50%': { transform: 'translateY(-8px)' },
+          '50%': { transform: 'translateY(-6px)' },
         },
-        pulseGlow: {
-          '0%, 100%': { opacity: '1', filter: 'drop-shadow(0 0 12px rgba(99, 102, 241, 0.6))' },
-          '50%': { opacity: '.85', filter: 'drop-shadow(0 0 4px rgba(99, 102, 241, 0.2))' },
-        }
-      }
+        bounceSubtle: {
+          '0%, 100%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(0.92)' },
+        },
+      },
     },
   },
   plugins: [],

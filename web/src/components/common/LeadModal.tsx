@@ -64,21 +64,18 @@ export const LeadModal: React.FC<LeadModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl overflow-hidden">
-        {/* Accent glow corner */}
-        <div className="absolute -top-12 -right-12 w-32 h-32 bg-indigo-600/20 rounded-full blur-2xl pointer-events-none" />
-
-        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="relative w-full max-w-md rounded-3xl bg-white border border-slate-200 p-6 shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
+            <div className="p-1.5 rounded-lg bg-teal-50 text-teal-600">
               <Sparkles className="w-5 h-5" />
             </div>
-            <h3 className="text-base font-semibold text-white">Хочу такого бота!</h3>
+            <h3 className="text-base font-bold text-slate-900">Хочу такого бота!</h3>
           </div>
           <button
             onClick={handleResetAndClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
             aria-label="Закрыть"
           >
             <X className="w-5 h-5" />
@@ -87,81 +84,81 @@ export const LeadModal: React.FC<LeadModalProps> = ({
 
         {isSubmitted ? (
           <div className="py-6 flex flex-col items-center text-center">
-            <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mb-3">
+            <div className="w-12 h-12 rounded-full bg-teal-50 border border-teal-200 text-teal-600 flex items-center justify-center mb-3">
               <CheckCircle2 className="w-7 h-7" />
             </div>
-            <h4 className="text-lg font-bold text-white mb-1">Заявка принята!</h4>
-            <p className="text-sm text-slate-300 max-w-xs mb-5">
-              Спасибо за интерес! Наш архитектор изучит контекст вашего запроса и свяжется с вами с готовым расчетом решения.
+            <h4 className="text-lg font-bold text-slate-900 mb-1">Заявка принята!</h4>
+            <p className="text-xs sm:text-sm text-slate-600 max-w-xs mb-5">
+              Спасибо за интерес! Наш архитектор изучит контекст вашего запроса и свяжется с вами с расчетом решения.
             </p>
             <button
               onClick={handleResetAndClose}
-              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-medium text-slate-200 transition-colors"
+              className="w-full py-2.5 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] text-sm font-semibold text-white shadow-sm transition-all"
             >
               Вернуться в приложение
             </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-            <p className="text-xs text-slate-400 leading-relaxed">
+            <p className="text-xs text-slate-500 leading-relaxed">
               Оставьте контакты для обсуждения разработки аналогичного виртуального бота, Mini App или интеграции с вашими системами.
             </p>
 
             {/* Context metadata preview */}
-            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-slate-400">
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between text-slate-500">
                 <span className="flex items-center gap-1.5">
-                  <Bot className="w-3.5 h-3.5 text-indigo-400" />
+                  <Bot className="w-3.5 h-3.5 text-teal-600" />
                   Платформа:
                 </span>
-                <span className="font-medium text-slate-200 uppercase tracking-wide">
+                <span className="font-semibold text-slate-800 uppercase tracking-wide">
                   {platform}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-slate-400">
+              <div className="flex items-center justify-between text-slate-500">
                 <span className="flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                  Режим просмотра:
+                  <Layers className="w-3.5 h-3.5 text-teal-600" />
+                  Исходный режим:
                 </span>
-                <span className="font-medium text-indigo-300">
-                  {sourceMode || 'Главный хаб'}
+                <span className="font-semibold text-slate-800">
+                  {sourceMode}
                 </span>
               </div>
             </div>
 
             {/* Contact Input */}
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Контакты для связи <span className="text-rose-400">*</span>
+              <label htmlFor="contact" className="block text-xs font-semibold text-slate-700 mb-1">
+                Контакты для связи (Telegram @ или телефон) <span className="text-rose-500">*</span>
               </label>
               <input
+                id="contact"
                 type="text"
                 value={contact}
                 onChange={(e) => setContact(e.target.value)}
-                placeholder="@username в Telegram или номер телефона"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 placeholder:text-slate-500 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
-                disabled={isSubmitting}
+                placeholder="@username или +7 999 123-45-67"
                 required
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-teal-500"
               />
             </div>
 
-            {/* Comment / Idea */}
+            {/* Comment Input */}
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Опишите задачу или проект (необязательно)
+              <label htmlFor="comment" className="block text-xs font-semibold text-slate-700 mb-1">
+                Что требуется разработать? (опционально)
               </label>
               <textarea
+                id="comment"
+                rows={3}
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
-                rows={3}
-                placeholder="Например: нужен интернет-магазин с приемом платежей и синхронизацией со складом..."
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 placeholder:text-slate-500 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none transition-colors"
-                disabled={isSubmitting}
+                placeholder="Опишите задачи вашего бизнеса или пожелания..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-teal-500"
               />
             </div>
 
             {errorMessage && (
-              <p className="text-xs text-rose-400 bg-rose-950/40 border border-rose-800/40 p-2.5 rounded-lg">
+              <p className="text-xs text-rose-600 font-medium">
                 {errorMessage}
               </p>
             )}
@@ -169,16 +166,10 @@ export const LeadModal: React.FC<LeadModalProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white font-medium text-sm shadow-lg shadow-indigo-600/30 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all"
+              className="w-full py-3 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] disabled:opacity-50 text-white font-semibold text-sm shadow-sm transition-all flex items-center justify-center gap-1.5"
             >
-              {isSubmitting ? (
-                <span>Отправка...</span>
-              ) : (
-                <>
-                  <Send className="w-4 h-4" />
-                  <span>Отправить заявку</span>
-                </>
-              )}
+              <Send className="w-4 h-4" />
+              <span>{isSubmitting ? 'Отправка...' : 'Отправить заявку'}</span>
             </button>
           </form>
         )}

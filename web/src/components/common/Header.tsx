@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, Shield, Home } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight } from 'lucide-react';
 import { User, ModeItem } from '../../types';
 
 interface HeaderProps {
@@ -19,77 +19,65 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAdmin,
   onReturnToHub,
 }) => {
-  const isAdmin = user && (user.role === 'admin' || user.role === 'superadmin');
-  const isInsideMode = currentView !== 'hub' && currentView !== 'admin';
+  const isInsideMode = currentView !== 'hub';
   const currentMode = modes.find((m) => m.id === currentView);
 
-  return (
-    <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 px-4 py-3 safe-top">
-      <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
-        {/* Brand & Active Mode Nav */}
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={onReturnToHub}
-            className="flex items-center gap-2 group text-left focus:outline-none"
-            title="Главный экран Хаба"
-          >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-lg shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
-              🤖
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-sm tracking-tight text-white group-hover:text-indigo-300 transition-colors">
-                  Bot Hub
-                </span>
-                <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                  8 в 1
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400 leading-none">Мультирежимная демо-платформа</p>
-            </div>
-          </button>
+  const getTitle = () => {
+    if (currentView === 'hub') return 'Bot Hub';
+    if (currentView === 'admin') return 'Админ-панель';
+    if (currentView === 'shop') return 'Магазин';
+    if (currentView === 'reception') return 'Стойка регистрации';
+    if (currentView === 'support') return 'Помощь';
+    if (currentView === 'chat') return 'Общение';
+    return currentMode?.title || 'Bot Hub';
+  };
 
-          {/* Current Mode Badge / Return button */}
-          {isInsideMode && currentMode && (
-            <div className="hidden sm:flex items-center gap-1.5 pl-2 border-l border-slate-800">
-              <button
-                onClick={onReturnToHub}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-xs font-medium text-slate-300 transition-colors"
-              >
-                <Home className="w-3.5 h-3.5 text-slate-400" />
-                <span>Хаб</span>
-              </button>
-              <span className="text-slate-600">/</span>
-              <span className="text-xs font-semibold text-indigo-400 bg-indigo-950/50 border border-indigo-800/50 px-2 py-0.5 rounded-md">
-                {currentMode.title}
+  return (
+    <header className="sticky top-0 z-40 bg-[#0b1329] text-white px-4 py-3 safe-top shadow-md">
+      <div className="max-w-md sm:max-w-lg mx-auto flex items-center justify-between gap-3">
+        {/* Left: Brand or Back Navigation */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          {isInsideMode ? (
+            <button
+              onClick={onReturnToHub}
+              className="flex items-center gap-1.5 text-slate-200 hover:text-white transition-colors focus:outline-none"
+              title="Вернуться в Хаб"
+            >
+              <ArrowLeft className="w-5 h-5 text-slate-300" />
+              <span className="text-sm font-medium text-slate-300 hover:text-white">
+                {currentView === 'admin' ? 'Хаб' : 'Хаб'}
+              </span>
+              <span className="text-slate-500 font-light mx-0.5">/</span>
+              <span className="text-sm sm:text-base font-bold text-white truncate max-w-[140px] sm:max-w-[180px]">
+                {getTitle()}
+              </span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-teal-500/20 border border-teal-500/40 flex items-center justify-center text-teal-300">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <circle cx="12" cy="5" r="2" />
+                  <path d="M12 7v4" />
+                  <circle cx="8" cy="16" r="1" fill="currentColor" />
+                  <circle cx="16" cy="16" r="1" fill="currentColor" />
+                </svg>
+              </div>
+              <span className="font-bold text-base sm:text-lg tracking-tight text-white">
+                Bot Hub
               </span>
             </div>
           )}
         </div>
 
-        {/* Actions: Admin button & CTA */}
-        <div className="flex items-center gap-2">
-          {isAdmin && (
-            <button
-              onClick={onOpenAdmin}
-              className={`p-2 rounded-xl border transition-all ${
-                currentView === 'admin'
-                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 shadow-sm shadow-amber-500/20'
-                  : 'bg-slate-900 border-slate-800 hover:border-amber-500/40 text-slate-400 hover:text-amber-300'
-              }`}
-              title="Панель администратора"
-              aria-label="Панель администратора"
-            >
-              <Shield className="w-4 h-4" />
-            </button>
-          )}
-
+        {/* Right: CTA Button */}
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={onOpenLeadModal}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500 via-indigo-600 to-violet-600 text-white font-medium text-xs sm:text-sm shadow-md shadow-indigo-600/30 hover:shadow-indigo-600/50 active:scale-95 transition-all"
+            className="flex items-center gap-1 px-3 sm:px-3.5 py-1.5 rounded-full bg-[#0d9488] hover:bg-[#0f766e] active:scale-95 text-white font-medium text-xs sm:text-sm shadow-sm transition-all"
           >
-            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
             <span>Хочу такого бота</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

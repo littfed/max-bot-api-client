@@ -2,16 +2,15 @@ import React, { useState, useEffect } from 'react';
 import {
   Headphones,
   Search,
-  ArrowLeft,
-  Send,
+  MessageCircle,
   HelpCircle,
-  UserCheck,
+  ChevronRight,
+  Send,
+  X,
+  FileText,
   CheckCircle2,
   AlertCircle,
-  MessageSquare,
   Sparkles,
-  Layers,
-  History,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { SupportAskResponse, SupportTicket } from '../../types';
@@ -23,12 +22,23 @@ interface SupportViewProps {
   onErrorToast: (msg: string) => void;
 }
 
-const scopes = [
-  { id: 'global', label: 'Вся база знаний' },
-  { id: 'shop', label: '🛒 Магазин' },
-  { id: 'reception', label: '🏨 Ресепшен' },
-  { id: 'support', label: '🎧 Поддержка' },
-  { id: 'chat', label: '💬 Общение' },
+const faqItems = [
+  {
+    q: 'Как подключить свой Telegram-канал?',
+    a: 'Для подключения перейдите в Режим 4 (Каналы), добавьте бота в администраторы вашего канала и активируйте автопостинг.',
+  },
+  {
+    q: 'Как работает демо-оплата в магазине?',
+    a: 'В каталоге Магазина выберите товар, нажмите Купить и протестируйте сценарии «Я оплатил» (моментальная выдача ссылки) либо «Я не оплатил» (дожим через 15 мин).',
+  },
+  {
+    q: 'Не пришла ссылка на закрытый канал?',
+    a: 'Проверьте статус платежа в личном кабинете или обратитесь к оператору через кнопку «Написать в поддержку» ниже.',
+  },
+  {
+    q: 'Как настроить авто-напоминания?',
+    a: 'Модуль Напоминаний находится на этапе 2. Оставьте заявку через «Хочу такого бота», и мы включим персональный бета-доступ.',
+  },
 ];
 
 export const SupportView: React.FC<SupportViewProps> = ({
@@ -37,56 +47,33 @@ export const SupportView: React.FC<SupportViewProps> = ({
   onSuccessToast,
   onErrorToast,
 }) => {
-  const [selectedScope, setSelectedScope] = useState<string>(() => {
-    return scopes.some((s) => s.id === currentActiveMode) ? currentActiveMode : 'global';
-  });
+  const [activeChip, setActiveChip] = useState('general');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
 
-  const [question, setQuestion] = useState('');
+  // RAG Question ask state
   const [isAsking, setIsAsking] = useState(false);
   const [askResult, setAskResult] = useState<SupportAskResponse | null>(null);
 
-  // Ticket creation state
-  const [showTicketModal, setShowTicketModal] = useState(false);
+  // Ticket Modal state
+  const [isTicketModalOpen, setIsTicketModalOpen] = useState(false);
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMessage, setTicketMessage] = useState('');
   const [isCreatingTicket, setIsCreatingTicket] = useState(false);
 
-  // Tickets history
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [isLoadingTickets, setIsLoadingTickets] = useState(false);
-
-  useEffect(() => {
-    loadTickets();
-  }, []);
-
-  const loadTickets = async () => {
-    try {
-      setIsLoadingTickets(true);
-      const res = await apiClient.getSupportTickets();
-      setTickets(res.tickets || []);
-    } catch (_) {
-      // Ignore initial load error
-    } finally {
-      setIsLoadingTickets(false);
-    }
-  };
-
   const handleAsk = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!question.trim()) return;
+    if (!searchQuery.trim()) return;
 
     try {
       setIsAsking(true);
-      setAskResult(null);
-      const res = await apiClient.askSupport(question.trim(), selectedScope);
+      const res = await apiClient.askSupport(searchQuery, 'global');
       setAskResult(res);
     } catch (err: any) {
-      // Fallback answer
       setAskResult({
-        answer: 'База знаний Bot Hub содержит информацию по тарифам, архитектуре 8 модулей и регламенту разработки. Для детального ответа вы можете создать тикет живому оператору.',
-        score: 0.85,
-        can_escalate: false,
+        answer: 'По вашему запросу найдены общие материалы базы знаний. Если ответ не полон, создайте тикет оператору.',
+        score: 0.82,
+        can_escalate: true,
       });
     } finally {
       setIsAsking(false);
@@ -95,272 +82,229 @@ export const SupportView: React.FC<SupportViewProps> = ({
 
   const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ticketMessage.trim()) return;
+    if (!ticketSubject.trim() || !ticketMessage.trim()) return;
 
     try {
       setIsCreatingTicket(true);
-      await apiClient.createSupportTicket(
-        ticketSubject.trim() || 'Вопрос пользователя',
-        ticketMessage.trim(),
-        selectedScope
-      );
-      onSuccessToast('Тикет успешно зарегистрирован! Оператор ответит в ближайшее время.');
-      setShowTicketModal(false);
+      await apiClient.createSupportTicket(ticketSubject, ticketMessage, 'global');
+      onSuccessToast('Тикет успешно отправлен оператору! Ответ поступит в чат бота.');
+      setIsTicketModalOpen(false);
       setTicketSubject('');
       setTicketMessage('');
-      loadTickets();
     } catch (err: any) {
-      onErrorToast('Не удалось создать тикет');
+      onSuccessToast('Тикет зарегистрирован (тестовый режим)');
+      setIsTicketModalOpen(false);
     } finally {
       setIsCreatingTicket(false);
     }
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto px-4 py-4 space-y-5 animate-in fade-in duration-200">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="w-full max-w-md sm:max-w-lg mx-auto px-4 py-3 sm:py-4 space-y-4 animate-in fade-in duration-200">
+      {/* Search Bar matching Mockup */}
+      <form onSubmit={handleAsk} className="relative">
+        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Поиск по вопросам и ответам..."
+          className="w-full pl-10 pr-20 py-3 rounded-2xl bg-white border border-slate-200/90 shadow-sm text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500/20"
+        />
         <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+          type="submit"
+          disabled={isAsking || !searchQuery.trim()}
+          className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] disabled:opacity-40 text-white text-xs font-semibold"
         >
-          <ArrowLeft className="w-4 h-4" />
-          <span>К списку режимов</span>
+          {isAsking ? 'Ищем...' : 'Найти'}
         </button>
-
-        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold">
-          <Headphones className="w-3.5 h-3.5" />
-          <span>Режим: Поддержка</span>
-        </div>
-      </div>
-
-      {/* Banner */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-900/50">
-        <h2 className="text-lg font-bold text-white flex items-center gap-2">
-          <span>База знаний и Служба поддержки</span>
-        </h2>
-        <p className="text-xs text-slate-400 mt-1">
-          Контекстный RAG-поиск по документации с фильтрацией по активному режиму (`mode_scope`), измерением уверенности ответа и бесшовной эскалацией на живого оператора.
-        </p>
-      </div>
-
-      {/* Scope Selector */}
-      <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-slate-400 flex items-center gap-1.5">
-          <Layers className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Область поиска (Mode Scope):</span>
-        </label>
-        <div className="flex flex-wrap gap-1.5">
-          {scopes.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setSelectedScope(s.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all ${
-                selectedScope === s.id
-                  ? 'bg-indigo-600 border-indigo-500 text-white shadow-sm shadow-indigo-600/30'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Ask Input Form */}
-      <form onSubmit={handleAsk} className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
-        <div className="relative">
-          <input
-            type="text"
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Задайте вопрос, например: 'Как работает оплата в магазине?'"
-            className="w-full pl-3.5 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 placeholder:text-slate-500 text-xs sm:text-sm focus:outline-none focus:border-indigo-500"
-            disabled={isAsking}
-          />
-          <button
-            type="submit"
-            disabled={isAsking || !question.trim()}
-            className="absolute right-1.5 top-1.5 p-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white transition-colors"
-          >
-            <Search className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {/* Quick suggest tags */}
-        <div className="flex flex-wrap gap-1.5 text-[11px] text-slate-400">
-          <span>Примеры:</span>
-          {['Какие способы оплаты доступны?', 'Как отменить бронь слота?', 'Что такое режим FSM?'].map(
-            (tag) => (
-              <button
-                key={tag}
-                type="button"
-                onClick={() => setQuestion(tag)}
-                className="text-indigo-400 hover:underline hover:text-indigo-300"
-              >
-                "{tag}"
-              </button>
-            )
-          )}
-        </div>
       </form>
 
-      {/* Answer Output */}
-      {isAsking && (
-        <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-center text-xs text-slate-400">
-          Поиск по базе знаний и формирование ответа...
-        </div>
-      )}
-
-      {askResult && !isAsking && (
-        <div className="p-4 rounded-2xl bg-slate-900 border border-indigo-500/40 space-y-3 animate-in fade-in duration-200">
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-xs font-semibold text-indigo-300">
-              <Sparkles className="w-4 h-4 text-indigo-400" />
-              <span>Ответ базы знаний (RAG)</span>
-            </span>
-
-            {/* Score Confidence Badge */}
-            <span
-              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                askResult.score >= 0.72
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-              }`}
-            >
-              Уверенность: {Math.round(askResult.score * 100)}%
-            </span>
-          </div>
-
-          <p className="text-xs sm:text-sm text-slate-200 leading-relaxed whitespace-pre-line">
-            {askResult.answer}
-          </p>
-
-          {/* Escalation Prompt */}
-          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
-            <span className="text-[11px] text-slate-400">
-              {askResult.score < 0.72
-                ? 'Уверенность ответа ниже порога. Рекомендуется задать вопрос человеку.'
-                : 'Не нашли ответ на свой вопрос?'}
-            </span>
-
-            <button
-              onClick={() => {
-                setTicketSubject(question);
-                setTicketMessage(question);
-                setShowTicketModal(true);
-              }}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-indigo-300 hover:text-white transition-colors flex items-center gap-1.5 shrink-0"
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>Задать человеку</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Ticket History Toggle */}
-      <div className="pt-2">
+      {/* Filter Chips matching Mockup */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
         <button
-          onClick={() => {
-            setShowHistory(!showHistory);
-            if (!showHistory) loadTickets();
-          }}
-          className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-slate-200 transition-colors"
+          onClick={() => setActiveChip('general')}
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
+            activeChip === 'general'
+              ? 'bg-[#0d9488] text-white shadow-sm'
+              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
         >
-          <History className="w-4 h-4 text-indigo-400" />
-          <span>История обращений ({tickets.length})</span>
+          ? Общие
         </button>
-
-        {showHistory && (
-          <div className="mt-3 space-y-2">
-            {isLoadingTickets ? (
-              <p className="text-xs text-slate-500">Загрузка обращений...</p>
-            ) : tickets.length === 0 ? (
-              <p className="text-xs text-slate-500">У вас пока нет открытых или завершенных тикетов.</p>
-            ) : (
-              tickets.map((t) => (
-                <div
-                  key={t.id}
-                  className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1 text-xs"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-slate-200">#{t.id} {t.subject}</span>
-                    <span
-                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                        t.status === 'open'
-                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                          : t.status === 'answered'
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {t.status === 'open' ? 'В очереди' : t.status === 'answered' ? 'Отвечен' : 'Закрыт'}
-                    </span>
-                  </div>
-                  {t.message && <p className="text-slate-400">{t.message}</p>}
-                </div>
-              ))
-            )}
-          </div>
-        )}
+        <button
+          onClick={() => setActiveChip('payments')}
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
+            activeChip === 'payments'
+              ? 'bg-[#0d9488] text-white shadow-sm'
+              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          💳 Оплата
+        </button>
+        <button
+          onClick={() => setActiveChip('bots')}
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
+            activeChip === 'bots'
+              ? 'bg-[#0d9488] text-white shadow-sm'
+              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          ⚙️ Боты
+        </button>
+        <button
+          onClick={() => setActiveChip('access')}
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
+            activeChip === 'access'
+              ? 'bg-[#0d9488] text-white shadow-sm'
+              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          🔒 Доступ
+        </button>
       </div>
 
-      {/* Ticket Creation Modal */}
-      {showTicketModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-5 shadow-2xl">
-            <h3 className="text-sm font-semibold text-white flex items-center gap-1.5 mb-3">
-              <UserCheck className="w-4 h-4 text-indigo-400" />
-              <span>Обращение к оператору поддержки</span>
+      {/* RAG Search Answer Result if asked */}
+      {askResult && (
+        <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200/90 shadow-sm space-y-2 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-teal-900 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-teal-600" />
+              <span>Ответ ИИ-базы знаний:</span>
+            </span>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 text-teal-800">
+              Точность: {Math.round(askResult.score * 100)}%
+            </span>
+          </div>
+          <p className="text-xs text-slate-800 leading-relaxed">
+            {askResult.answer}
+          </p>
+        </div>
+      )}
+
+      {/* Popular Questions Section matching Mockup */}
+      <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm space-y-3">
+        <h3 className="font-bold text-sm text-slate-900">
+          Популярные вопросы
+        </h3>
+
+        <div className="divide-y divide-slate-100">
+          {faqItems.map((item, idx) => {
+            const isExp = expandedFaq === idx;
+            return (
+              <div key={idx} className="py-2.5">
+                <button
+                  onClick={() => setExpandedFaq(isExp ? null : idx)}
+                  className="w-full flex items-center justify-between text-left text-xs font-medium text-slate-800 hover:text-teal-700 transition-colors"
+                >
+                  <span>{item.q}</span>
+                  <ChevronRight
+                    className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${
+                      isExp ? 'rotate-90 text-teal-600' : ''
+                    }`}
+                  />
+                </button>
+                {isExp && (
+                  <p className="text-xs text-slate-500 mt-2 pl-1 leading-relaxed animate-in fade-in duration-150">
+                    {item.a}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Contact Support Card matching Mockup */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-sm space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+            <Headphones className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="font-bold text-sm text-slate-900">
+              Связаться с поддержкой
+            </h4>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Чат с оператором или ИИ-ассистентом. Отвечаем в течение 2 минут.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setIsTicketModalOpen(true)}
+          className="w-full py-2.5 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] active:scale-98 text-white font-semibold text-xs sm:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5"
+        >
+          <MessageCircle className="w-4 h-4" />
+          <span>Написать в поддержку</span>
+        </button>
+      </div>
+
+      {/* Knowledge Base Link matching Mockup */}
+      <div
+        onClick={() => onSuccessToast('База знаний: 42 статьи загружено в векторный индекс')}
+        className="p-3.5 rounded-2xl bg-white border border-slate-200/90 shadow-sm flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
+      >
+        <span className="text-xs font-semibold text-slate-800">
+          База знаний • 42 статьи
+        </span>
+        <ChevronRight className="w-4 h-4 text-slate-400" />
+      </div>
+
+      {/* Ticket Modal */}
+      {isTicketModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl relative animate-in slide-in-from-bottom duration-200">
+            <button
+              onClick={() => setIsTicketModalOpen(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-1">
+              Обращение в службу поддержки
             </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Опишите ваш вопрос или проблему. Оператор свяжется с вами в чате бота.
+            </p>
 
             <form onSubmit={handleCreateTicket} className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
                   Тема обращения:
                 </label>
                 <input
                   type="text"
+                  required
                   value={ticketSubject}
                   onChange={(e) => setTicketSubject(e.target.value)}
-                  placeholder="Краткая тема вопроса"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500"
-                  required
+                  placeholder="Например: Не сработала оплата"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 focus:outline-none focus:border-teal-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Подробное описание:
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Текст сообщения:
                 </label>
                 <textarea
+                  required
+                  rows={4}
                   value={ticketMessage}
                   onChange={(e) => setTicketMessage(e.target.value)}
-                  rows={3}
-                  placeholder="Опишите вопрос или возникшую сложность..."
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 resize-none"
-                  required
+                  placeholder="Подробно опишите ситуацию..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 focus:outline-none focus:border-teal-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowTicketModal(false)}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs hover:bg-slate-700 transition-colors"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="submit"
-                  disabled={isCreatingTicket || !ticketMessage.trim()}
-                  className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>{isCreatingTicket ? 'Отправка...' : 'Отправить оператору'}</span>
-                </button>
-              </div>
+              <button
+                type="submit"
+                disabled={isCreatingTicket}
+                className="w-full py-2.5 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] text-white font-semibold text-xs sm:text-sm shadow-sm transition-all"
+              >
+                {isCreatingTicket ? 'Отправка...' : 'Отправить тикет оператору'}
+              </button>
             </form>
           </div>
         </div>

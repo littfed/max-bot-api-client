@@ -1,15 +1,13 @@
 import React from 'react';
 import {
   ShoppingBag,
-  CalendarCheck,
-  BellRing,
+  Calendar,
+  Bell,
   Megaphone,
   Gift,
   Headphones,
   FileText,
-  MessageSquare,
-  Lock,
-  CheckCircle,
+  MessageCircle,
   Wrench,
 } from 'lucide-react';
 import { ModeItem } from '../../types';
@@ -21,28 +19,40 @@ interface ModeCardProps {
   onMaintenanceClick: (mode: ModeItem) => void;
 }
 
-// Icon mapper for 8 modes
+// Icon mapper matching mockup
 const modeIcons: Record<string, React.ReactNode> = {
-  shop: <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />,
-  reception: <CalendarCheck className="w-5 h-5 sm:w-6 sm:h-6" />,
-  reminders: <BellRing className="w-5 h-5 sm:w-6 sm:h-6" />,
-  channels: <Megaphone className="w-5 h-5 sm:w-6 sm:h-6" />,
-  giveaways: <Gift className="w-5 h-5 sm:w-6 sm:h-6" />,
-  support: <Headphones className="w-5 h-5 sm:w-6 sm:h-6" />,
-  docs: <FileText className="w-5 h-5 sm:w-6 sm:h-6" />,
-  chat: <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6" />,
+  shop: <ShoppingBag className="w-6 h-6 text-teal-600" />,
+  reception: <Calendar className="w-6 h-6 text-teal-600" />,
+  reminders: <Bell className="w-6 h-6 text-teal-600" />,
+  channels: <Megaphone className="w-6 h-6 text-teal-600" />,
+  giveaways: <Gift className="w-6 h-6 text-teal-600" />,
+  support: <Headphones className="w-6 h-6 text-teal-600" />,
+  docs: <FileText className="w-6 h-6 text-teal-600" />,
+  chat: <MessageCircle className="w-6 h-6 text-teal-600" />,
 };
 
-// Mode subtitle descriptions
-const modeDescriptions: Record<string, string> = {
-  shop: 'Каталог, корзина, демо-оплата',
-  reception: 'Запись на слоты, ивенты, онбординг',
-  reminders: 'Умные таймеры и пуши',
-  channels: 'Автопостинг и реакции',
-  giveaways: 'Розыгрыши и проверка подписок',
-  support: 'RAG база знаний и операторы',
-  docs: 'Генерация КП и счетов',
-  chat: 'Диалог с LLM, 5 ролей и стилей',
+// Mode subtitle descriptions matching mockup
+const modeSubtitles: Record<string, string> = {
+  shop: 'Товары • QR',
+  reception: 'Слоты • Ивенты',
+  reminders: 'Таймеры',
+  channels: 'и группы',
+  giveaways: 'Розыгрыши',
+  support: 'RAG • Оператор',
+  docs: 'OCR • ИИ • PDF',
+  chat: 'Роли и тон',
+};
+
+// Mode short titles matching mockup
+const modeTitles: Record<string, string> = {
+  shop: 'Магазин',
+  reception: 'Ресепшен',
+  reminders: 'Напоминания',
+  channels: 'Каналы',
+  giveaways: 'Конкурсы',
+  support: 'Помощь',
+  docs: 'Документы',
+  chat: 'Общение',
 };
 
 export const ModeCard: React.FC<ModeCardProps> = ({
@@ -52,8 +62,21 @@ export const ModeCard: React.FC<ModeCardProps> = ({
   onMaintenanceClick,
 }) => {
   const isMaintenance = !mode.is_active;
-  const icon = modeIcons[mode.id] || <Wrench className="w-5 h-5" />;
-  const subtitle = modeDescriptions[mode.id] || 'Виртуальный модуль';
+  const icon = isMaintenance ? (
+    <div className="relative">
+      <div className="opacity-40">{modeIcons[mode.id] || <Gift className="w-6 h-6 text-slate-400" />}</div>
+      <Wrench className="w-3.5 h-3.5 text-slate-500 absolute -bottom-0.5 -right-0.5" />
+    </div>
+  ) : (
+    modeIcons[mode.id] || <ShoppingBag className="w-6 h-6 text-teal-600" />
+  );
+
+  const title = modeTitles[mode.id] || mode.title;
+  const subtitle = isMaintenance
+    ? 'Профилактика'
+    : isActiveMode
+    ? 'Активен'
+    : modeSubtitles[mode.id] || 'Виртуальный бот';
 
   const handleClick = () => {
     if (isMaintenance) {
@@ -66,55 +89,44 @@ export const ModeCard: React.FC<ModeCardProps> = ({
   return (
     <div
       onClick={handleClick}
-      className={`group relative flex flex-col justify-between p-3.5 sm:p-4 rounded-2xl cursor-pointer transition-all duration-200 select-none ${
-        isMaintenance
-          ? 'grayscale opacity-40 hover:opacity-60 bg-slate-900/40 border border-slate-800'
-          : isActiveMode
-          ? 'bg-gradient-to-br from-indigo-950/80 to-slate-900 border-2 border-indigo-500 shadow-xl shadow-indigo-500/20 ring-2 ring-indigo-500/20 scale-[1.02]'
-          : 'bg-slate-900/90 border border-slate-800/90 hover:border-indigo-500/50 hover:bg-slate-800/80 hover:shadow-lg hover:shadow-slate-950/50 active:scale-98'
+      className={`group relative flex flex-col items-center sm:items-start text-center sm:text-left p-3.5 rounded-2xl cursor-pointer transition-all duration-200 select-none ${
+        isActiveMode
+          ? 'bg-teal-50/50 border-2 border-teal-500 shadow-sm ring-1 ring-teal-500/30'
+          : isMaintenance
+          ? 'bg-white border border-slate-200/90 shadow-sm opacity-75 hover:opacity-90'
+          : 'bg-white border border-slate-200/90 shadow-sm hover:shadow-md hover:border-teal-400/60 active:scale-98'
       }`}
     >
-      {/* Top row: Icon and status badge */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div
-          className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition-colors ${
-            isMaintenance
-              ? 'bg-slate-800 text-slate-500'
-              : isActiveMode
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/40'
-              : 'bg-slate-800 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white'
-          }`}
-        >
-          {icon}
-        </div>
-
-        {/* Status Badges */}
-        {isActiveMode ? (
-          <span className="flex items-center gap-1 text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse">
-            <CheckCircle className="w-3 h-3" />
-            <span>Активен</span>
-          </span>
-        ) : isMaintenance ? (
-          <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
-            <Lock className="w-2.5 h-2.5" />
-            <span>Этап 2</span>
-          </span>
-        ) : (
-          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-400 group-hover:text-indigo-300 transition-colors">
-            Открыть
-          </span>
-        )}
+      {/* Icon Circle */}
+      <div
+        className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center mb-2 transition-transform group-hover:scale-105 ${
+          isActiveMode
+            ? 'bg-teal-100 text-teal-700'
+            : isMaintenance
+            ? 'bg-slate-100 text-slate-400'
+            : 'bg-teal-50 text-teal-600'
+        }`}
+      >
+        {icon}
       </div>
 
-      {/* Title & Description */}
-      <div>
-        <h4 className="font-semibold text-xs sm:text-sm text-white group-hover:text-indigo-200 transition-colors line-clamp-1">
-          {mode.title}
-        </h4>
-        <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5 leading-tight">
-          {subtitle}
-        </p>
-      </div>
+      {/* Title */}
+      <h3 className="font-semibold text-xs sm:text-sm text-slate-900 group-hover:text-teal-700 transition-colors line-clamp-1">
+        {title}
+      </h3>
+
+      {/* Subtitle / Status */}
+      <p
+        className={`text-[11px] sm:text-xs mt-0.5 font-normal line-clamp-1 ${
+          isActiveMode
+            ? 'text-teal-600 font-medium'
+            : isMaintenance
+            ? 'text-slate-400'
+            : 'text-slate-500'
+        }`}
+      >
+        {subtitle}
+      </p>
     </div>
   );
 };

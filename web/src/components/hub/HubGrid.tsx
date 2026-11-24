@@ -21,39 +21,29 @@ export const HubGrid: React.FC<HubGridProps> = ({
   onTapMascot,
 }) => {
   // Helper to find mode by ID
-  const getMode = (id: string): ModeItem => {
+  const getMode = (id: string, defaultTitle: string): ModeItem => {
     return (
       modes.find((m) => m.id === id) || {
         id,
-        title: id,
+        title: defaultTitle,
         is_active: false,
       }
     );
   };
 
-  const shopMode = getMode('shop');
-  const receptionMode = getMode('reception');
-  const remindersMode = getMode('reminders');
-  const channelsMode = getMode('channels');
-  const giveawaysMode = getMode('giveaways');
-  const supportMode = getMode('support');
-  const docsMode = getMode('docs');
-  const chatMode = getMode('chat');
+  const shopMode = getMode('shop', 'Магазин');
+  const receptionMode = getMode('reception', 'Ресепшен');
+  const remindersMode = getMode('reminders', 'Напоминания');
+  const channelsMode = getMode('channels', 'Каналы');
+  const giveawaysMode = getMode('giveaways', 'Конкурсы');
+  const supportMode = getMode('support', 'Помощь');
+  const docsMode = getMode('docs', 'Документы');
+  const chatMode = getMode('chat', 'Общение');
 
   return (
-    <div className="w-full max-w-2xl mx-auto px-4 py-4 space-y-4">
-      {/* Intro Header */}
-      <div className="text-center mb-2">
-        <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
-          Виртуальные боты Bot Hub
-        </h2>
-        <p className="text-xs sm:text-sm text-slate-400">
-          Симметричный хаб 8-в-1: выберите режим или нажмите на маскота
-        </p>
-      </div>
-
+    <div className="w-full max-w-md sm:max-w-lg mx-auto px-4 py-3 sm:py-4 space-y-3 sm:space-y-4">
       {/* Row 1: Top 3 Cards (Shop, Reception, Reminders) */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3.5">
+      <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
         <ModeCard
           mode={shopMode}
           isActiveMode={activeModeId === 'shop'}
@@ -75,7 +65,7 @@ export const HubGrid: React.FC<HubGridProps> = ({
       </div>
 
       {/* Row 2: Middle 3 Cells (Channels, Mascot in Center, Giveaways) */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3.5 items-center">
+      <div className="grid grid-cols-3 gap-2.5 sm:gap-3 items-center">
         <ModeCard
           mode={channelsMode}
           isActiveMode={activeModeId === 'channels'}
@@ -83,7 +73,7 @@ export const HubGrid: React.FC<HubGridProps> = ({
           onMaintenanceClick={onMaintenanceClick}
         />
 
-        {/* Center Cell: Mascot Renderer */}
+        {/* Center Cell: Mascot Renderer with Speech Bubble */}
         <div className="flex justify-center items-center">
           <MascotRenderer mascot={mascot} onTap={onTapMascot} />
         </div>
@@ -97,7 +87,7 @@ export const HubGrid: React.FC<HubGridProps> = ({
       </div>
 
       {/* Row 3: Bottom 3 Cards (Support, Documents, Chat) */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3.5">
+      <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
         <ModeCard
           mode={supportMode}
           isActiveMode={activeModeId === 'support'}

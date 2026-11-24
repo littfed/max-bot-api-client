@@ -5,8 +5,6 @@ import {
   Award,
   QrCode,
   CheckCircle2,
-  AlertTriangle,
-  ArrowLeft,
   X,
   CreditCard,
   Download,
@@ -48,12 +46,21 @@ export const ShopView: React.FC<ShopViewProps> = ({
       const res = await apiClient.getShopCatalog();
       setProducts(res.products || []);
     } catch (err: any) {
-      onErrorToast('Не удалось загрузить каталог товаров');
-      // Fallback default demo products if backend unreachable
+      // Fallback default demo products
       setProducts([
         {
+          id: 'prod_channel_pro',
+          title: 'Закрытый канал PRO',
+          description: 'Подписка 30 дней на закрытый канал с инсайтами, материалами и мастер-классами.',
+          price: 990,
+          category: 'subscription',
+          item_type: 'subscription',
+          content_payload: 'https://t.me/+exclusive_bothub_pro_channel',
+          is_active: true,
+        },
+        {
           id: 'prod_guide',
-          title: '📘 PDF Гайд по разработке ботов',
+          title: 'PDF Гайд по разработке ботов',
           description: 'Практическое руководство по созданию масштабируемых ботов и Mini App в MAX и Telegram.',
           price: 490,
           category: 'digital',
@@ -63,8 +70,8 @@ export const ShopView: React.FC<ShopViewProps> = ({
         },
         {
           id: 'prod_sub_vip',
-          title: '⭐ VIP Подписка на закрытый клуб (1 мес)',
-          description: 'Доступ к базе готовых шаблонов, исходникам ботов и закрытому сообществу архитекторов.',
+          title: 'VIP Клуб архитекторов (1 мес)',
+          description: 'Доступ к базе готовых шаблонов, исходникам ботов и закрытому сообществу.',
           price: 1490,
           category: 'subscription',
           item_type: 'subscription',
@@ -88,7 +95,7 @@ export const ShopView: React.FC<ShopViewProps> = ({
     } catch (err: any) {
       // Fallback local mock order
       const mockOrder: ShopOrder = {
-        id: 'ord_' + Math.random().toString(36).substring(2, 9),
+        id: '1042',
         user_id: 1,
         product_id: prod.id,
         status: 'pending',
@@ -113,7 +120,6 @@ export const ShopView: React.FC<ShopViewProps> = ({
         onErrorToast('Заказ переведен в статус "Оставлен". Напоминание отправлено.');
       }
     } catch (err: any) {
-      // Local fallback
       setSimResult({
         order_id: activeOrder.id,
         status: action,
@@ -123,7 +129,7 @@ export const ShopView: React.FC<ShopViewProps> = ({
             : 'Заказ отменен / брошен (симуляция)',
         delivery_payload:
           action === 'paid'
-            ? selectedProduct?.content_payload || 'https://example.com/delivery'
+            ? selectedProduct?.content_payload || 'https://t.me/+exclusive_link'
             : undefined,
         reminder_scheduled: action === 'abandoned',
       });
@@ -144,235 +150,215 @@ export const ShopView: React.FC<ShopViewProps> = ({
   });
 
   return (
-    <div className="w-full max-w-2xl mx-auto px-4 py-4 space-y-5 animate-in fade-in duration-200">
-      {/* Header with Back button */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>К списку режимов</span>
-        </button>
-
-        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold">
-          <ShoppingBag className="w-3.5 h-3.5" />
-          <span>Режим: Магазин</span>
-        </div>
-      </div>
-
-      {/* Banner / Title */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-900/50">
-        <h2 className="text-lg font-bold text-white flex items-center gap-2">
-          <span>Витрина цифровых товаров и подписок</span>
-        </h2>
-        <p className="text-xs text-slate-400 mt-1">
-          Демонстрация каталога, моментальной генерации платежного QR-кода и сценариев выдачи контента при оплате либо дожима брошенных корзин.
-        </p>
-      </div>
-
+    <div className="w-full max-w-md sm:max-w-lg mx-auto px-4 py-3 sm:py-4 space-y-4 animate-in fade-in duration-200">
       {/* Category Tabs */}
-      <div className="flex items-center gap-2 p-1 rounded-xl bg-slate-900 border border-slate-800">
+      <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-200/60 border border-slate-200">
         <button
           onClick={() => setSelectedCategory('all')}
-          className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-all ${
+          className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
             selectedCategory === 'all'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           Все товары
         </button>
         <button
           onClick={() => setSelectedCategory('digital')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+          className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
             selectedCategory === 'digital'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span>Цифровые гайды</span>
+          <BookOpen className="w-3.5 h-3.5 text-teal-600" />
+          <span>Гайды</span>
         </button>
         <button
           onClick={() => setSelectedCategory('subscription')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+          className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
             selectedCategory === 'subscription'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <Award className="w-3.5 h-3.5" />
-          <span>Платные подписки</span>
+          <Award className="w-3.5 h-3.5 text-teal-600" />
+          <span>Подписки</span>
         </button>
       </div>
 
       {/* Product List */}
       {loading ? (
-        <div className="py-12 text-center text-slate-400 text-sm">
+        <div className="py-12 text-center text-slate-500 text-sm">
           Загрузка каталога...
         </div>
       ) : filteredProducts.length === 0 ? (
-        <div className="py-12 text-center text-slate-400 text-sm">
+        <div className="py-12 text-center text-slate-500 text-sm">
           В данной категории пока нет товаров.
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        <div className="space-y-3">
           {filteredProducts.map((prod) => (
             <div
               key={prod.id}
-              className="flex flex-col justify-between p-4 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition-all shadow-md shadow-slate-950/40"
+              className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
             >
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span
-                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                      prod.item_type === 'subscription'
-                        ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                        : 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
-                    }`}
-                  >
-                    {prod.item_type === 'subscription' ? 'Подписка' : 'Цифровой товар'}
-                  </span>
-                  <span className="text-sm font-bold text-white">
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div>
+                  <h3 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
+                    {prod.title}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    {prod.description}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-base sm:text-lg font-bold text-slate-900">
                     {prod.price.toLocaleString('ru-RU')} ₽
                   </span>
+                  <p className="text-[10px] text-teal-600 font-medium">Демо-оплата</p>
                 </div>
-
-                <h3 className="font-semibold text-sm text-slate-100 mb-1 leading-snug">
-                  {prod.title}
-                </h3>
-                <p className="text-xs text-slate-400 leading-relaxed mb-4">
-                  {prod.description}
-                </p>
               </div>
 
               <button
                 onClick={() => handleBuy(prod)}
                 disabled={isProcessing}
-                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-98 text-white font-medium text-xs shadow-md shadow-indigo-600/30 transition-all"
+                className="w-full mt-2 py-2.5 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] active:scale-98 text-white font-semibold text-xs sm:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5"
               >
-                <CreditCard className="w-3.5 h-3.5" />
-                <span>Оформить заказ</span>
+                <CreditCard className="w-4 h-4" />
+                <span>Купить за {prod.price} ₽</span>
               </button>
             </div>
           ))}
         </div>
       )}
 
-      {/* Checkout / Payment Modal */}
+      {/* Payment Simulation / Checkout Modal matching Mockup */}
       {activeOrder && selectedProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-800 p-5 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-                <QrCode className="w-4 h-4 text-indigo-400" />
-                <span>Демо-оплата заказа</span>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom duration-200">
+            {/* Close button */}
+            <button
+              onClick={handleCloseModal}
+              className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Order Summary Card */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/90 mb-4">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-slate-500 font-medium">
+                  Заказ #{activeOrder.id}
+                </span>
+                <span className="text-base sm:text-lg font-bold text-slate-900">
+                  {selectedProduct.price} ₽
+                </span>
+              </div>
+              <h3 className="font-bold text-sm sm:text-base text-slate-900">
+                {selectedProduct.title}
               </h3>
-              <button
-                onClick={handleCloseModal}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-200"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {selectedProduct.item_type === 'subscription' ? 'Подписка 30 дней • ЮKassa (Демо)' : 'Цифровой продукт • ЮKassa (Демо)'}
+              </p>
             </div>
 
-            {simResult ? (
-              // Payment Outcome
-              <div className="py-4 text-center space-y-3">
+            {/* Simulated QR Code Box matching Mockup */}
+            <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-sm text-center mb-4 flex flex-col items-center">
+              <div className="w-44 h-44 bg-slate-50 p-3 rounded-2xl border border-slate-200 flex items-center justify-center shadow-inner mb-3">
+                <svg className="w-36 h-36" viewBox="0 0 100 100" fill="currentColor">
+                  {/* Stylized QR Code SVG Pattern */}
+                  <rect x="10" y="10" width="28" height="28" rx="4" fill="#0f172a" />
+                  <rect x="16" y="16" width="16" height="16" rx="2" fill="#ffffff" />
+                  <rect x="20" y="20" width="8" height="8" rx="1" fill="#0f172a" />
+
+                  <rect x="62" y="10" width="28" height="28" rx="4" fill="#0f172a" />
+                  <rect x="68" y="16" width="16" height="16" rx="2" fill="#ffffff" />
+                  <rect x="72" y="20" width="8" height="8" rx="1" fill="#0f172a" />
+
+                  <rect x="10" y="62" width="28" height="28" rx="4" fill="#0f172a" />
+                  <rect x="16" y="68" width="16" height="16" rx="2" fill="#ffffff" />
+                  <rect x="20" y="72" width="8" height="8" rx="1" fill="#0f172a" />
+
+                  <rect x="44" y="12" width="12" height="6" fill="#0f172a" />
+                  <rect x="44" y="24" width="8" height="14" fill="#0f172a" />
+                  <rect x="56" y="28" width="10" height="10" fill="#0f172a" />
+                  <rect x="12" y="44" width="14" height="8" fill="#0f172a" />
+                  <rect x="30" y="44" width="20" height="12" fill="#0f172a" />
+                  <rect x="54" y="44" width="14" height="14" fill="#0f172a" />
+                  <rect x="74" y="44" width="14" height="8" fill="#0f172a" />
+                  <rect x="44" y="62" width="10" height="26" fill="#0f172a" />
+                  <rect x="60" y="62" width="28" height="10" fill="#0f172a" />
+                  <rect x="62" y="76" width="12" height="14" fill="#0f172a" />
+                  <rect x="78" y="76" width="12" height="14" fill="#0f172a" />
+                </svg>
+              </div>
+              <p className="text-xs text-slate-500 font-medium">
+                Демонстрационный QR-код для теста
+              </p>
+            </div>
+
+            {/* Simulation controls */}
+            {!simResult ? (
+              <div className="space-y-2.5">
+                <p className="text-xs font-semibold text-slate-700 text-center mb-1">
+                  Симуляция оплаты:
+                </p>
+                <button
+                  onClick={() => handleSimulate('paid')}
+                  disabled={isProcessing}
+                  className="w-full py-3 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] active:scale-98 text-white font-semibold text-sm shadow-sm transition-all"
+                >
+                  Я оплатил
+                </button>
+                <button
+                  onClick={() => handleSimulate('abandoned')}
+                  disabled={isProcessing}
+                  className="w-full py-3 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-98 font-semibold text-sm transition-all"
+                >
+                  Я не оплатил
+                </button>
+                <p className="text-[11px] text-slate-400 text-center pt-1 leading-normal">
+                  При отмене придёт тестовое напоминание через 15 мин
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4 pt-1 animate-in fade-in duration-200">
                 {simResult.status === 'paid' ? (
-                  <>
-                    <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center border border-emerald-500/40">
-                      <CheckCircle2 className="w-7 h-7" />
-                    </div>
-                    <h4 className="text-base font-bold text-white">Оплата подтверждена!</h4>
-                    <p className="text-xs text-slate-300">
-                      Цифровой контент готов к выдаче. В реальном боте он отправляется в личные сообщения.
+                  <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200 text-teal-900 text-center space-y-2">
+                    <CheckCircle2 className="w-8 h-8 text-teal-600 mx-auto" />
+                    <h4 className="font-bold text-sm">Оплата успешно подтверждена!</h4>
+                    <p className="text-xs text-teal-800">
+                      {simResult.message || 'Товар доступен по ссылке ниже:'}
                     </p>
                     {simResult.delivery_payload && (
-                      <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-left">
-                        <span className="text-[11px] text-slate-400 block mb-1">Ссылка на материал:</span>
-                        <a
-                          href={simResult.delivery_payload}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center gap-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300 break-all"
-                        >
-                          <Download className="w-3.5 h-3.5 shrink-0" />
-                          <span>{simResult.delivery_payload}</span>
-                        </a>
-                      </div>
+                      <a
+                        href={simResult.delivery_payload}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-4 py-2 mt-2 rounded-xl bg-[#0d9488] text-white text-xs font-semibold hover:bg-[#0f766e]"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Получить доступ</span>
+                      </a>
                     )}
-                  </>
+                  </div>
                 ) : (
-                  <>
-                    <div className="w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 mx-auto flex items-center justify-center border border-amber-500/40">
-                      <AlertTriangle className="w-7 h-7" />
-                    </div>
-                    <h4 className="text-base font-bold text-white">Заказ оставлен</h4>
-                    <p className="text-xs text-slate-300">
-                      Запущена цепочка дожима: бот запланировал отправку напоминания с промокодом через 15 минут.
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-center space-y-2">
+                    <Clock className="w-8 h-8 text-amber-600 mx-auto" />
+                    <h4 className="font-bold text-sm">Заказ сохранён</h4>
+                    <p className="text-xs text-amber-800">
+                      Сценарий брошенной корзины: через 15 минут бот отправит напоминание со скидкой.
                     </p>
-                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400 text-left">
-                      <Clock className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>Триггер «Abandoned Cart» успешно зарегистрирован в FSM.</span>
-                    </div>
-                  </>
+                  </div>
                 )}
 
                 <button
                   onClick={handleCloseModal}
-                  className="w-full mt-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors"
+                  className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50"
                 >
-                  Закрыть
+                  Закрыть окно
                 </button>
-              </div>
-            ) : (
-              // Order QR & Action Buttons
-              <div className="py-4 space-y-4">
-                <div className="text-center">
-                  <p className="text-xs text-slate-400">Товар:</p>
-                  <p className="text-sm font-semibold text-white mt-0.5">{selectedProduct.title}</p>
-                  <p className="text-lg font-bold text-indigo-400 mt-1">
-                    {selectedProduct.price.toLocaleString('ru-RU')} ₽
-                  </p>
-                </div>
-
-                {/* Stylized QR Code placeholder */}
-                <div className="relative mx-auto w-40 h-40 p-2.5 rounded-xl bg-white flex flex-col items-center justify-center shadow-lg">
-                  <div className="w-full h-full border-2 border-dashed border-slate-800/40 rounded-lg flex flex-col items-center justify-center p-2 text-center">
-                    <QrCode className="w-16 h-16 text-slate-900" />
-                    <span className="text-[9px] font-mono font-bold text-slate-800 mt-1">
-                      СБП / ЮKassa Демо
-                    </span>
-                    <span className="text-[8px] text-slate-600 truncate max-w-[120px]">
-                      {activeOrder.id}
-                    </span>
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-                  Протестируйте оба сценария интеграции оплаты:
-                </p>
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    onClick={() => handleSimulate('paid')}
-                    disabled={isProcessing}
-                    className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-md shadow-emerald-600/30 active:scale-95 transition-all"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Я оплатил</span>
-                  </button>
-                  <button
-                    onClick={() => handleSimulate('abandoned')}
-                    disabled={isProcessing}
-                    className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs active:scale-95 transition-all"
-                  >
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Я не оплатил</span>
-                  </button>
-                </div>
               </div>
             )}
           </div>
