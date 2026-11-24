@@ -1,0 +1,289 @@
+import axios, { AxiosInstance } from 'axios';
+import {
+  BootstrapResponse,
+  Product,
+  ShopOrder,
+  PaymentSimulationResult,
+  TimeSlot,
+  ReceptionEvent,
+  EventRegistration,
+  SupportAskResponse,
+  SupportTicket,
+  ChatConfigResponse,
+  ChatMessageResponse,
+  Lead,
+  AdminAuditLog,
+  ModeItem,
+} from '../types';
+
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: {
+        initData?: string;
+        initDataUnsafe?: Record<string, any>;
+        close?: () => void;
+        expand?: () => void;
+        ready?: () => void;
+      };
+    };
+    MaxWebApp?: {
+      initData?: string;
+      close?: () => void;
+    };
+  }
+}
+
+// Detect client platform
+export function getClientPlatform(): 'max' | 'telegram' | 'web' {
+  if (typeof window !== 'undefined') {
+    if (window.MaxWebApp?.initData) return 'max';
+    if (window.Telegram?.WebApp?.initData) return 'telegram';
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('platform') === 'max') return 'max';
+    if (params.get('platform') === 'telegram') return 'telegram';
+  }
+  return 'max';
+}
+
+// Extract initData from webapp environment or URL query
+export function getInitData(): string {
+  if (typeof window === 'undefined') return '';
+  if (window.MaxWebApp?.initData) return window.MaxWebApp.initData;
+  if (window.Telegram?.WebApp?.initData) return window.Telegram.WebApp.initData;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('init_data') || params.get('tgWebAppData') || '';
+}
+
+// Base Axios instance
+export const api: AxiosInstance = axios.create({
+  baseURL: '/api/v1',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 15000,
+});
+
+// Attach auth headers to every outgoing request
+api.interceptors.request.use((config) => {
+  const initData = getInitData();
+  if (initData) {
+    config.headers['X-Init-Data'] = initData;
+  }
+
+  const platform = getClientPlatform();
+  config.headers['X-Platform'] = platform;
+
+  const storedToken = localStorage.getItem('bothub_jwt_token');
+  if (storedToken) {
+    config.headers['Authorization'] = `Bearer ${storedToken}`;
+  }
+
+  // Support local dev header if query param dev_user_id is present
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const devUserId = params.get('dev_user_id');
+    if (devUserId) {
+      config.headers['X-Dev-User-ID'] = devUserId;
+    }
+  }
+
+  return config;
+});
+
+// Interceptor to automatically persist token from bootstrap response
+api.interceptors.response.use(
+  (response) => {
+    if (response.data && response.data.token) {
+      localStorage.setItem('bothub_jwt_token', response.data.token);
+    }
+    return response;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Typed API methods
+export const apiClient = {
+  // Bootstrap & Core Hub
+  async getBootstrap(): Promise<BootstrapResponse> {
+    const res = await api.get<BootstrapResponse>('/bootstrap');
+    return res.data;
+  },
+
+  async setUserMode(modeId: string): Promise<{ success: boolean; active_mode: string }> {
+    const res = await api.post<{ success: boolean; active_mode: string }>('/user/mode', {
+      mode_id: modeId,
+    });
+    return res.data;
+  },
+
+  async tapMascot(): Promise<{ phrase: string; priority: number; emotion: string }> {
+    const res = await api.get<{ phrase: string; priority: number; emotion: string }>('/mascot/tap');
+    return res.data;
+  },
+
+  async submitLead(data: {
+    contact: string;
+    comment: string;
+    source_mode: string;
+    tested_modes: string[];
+  }): Promise<{ success: boolean; lead_id: number }> {
+    const res = await api.post<{ success: boolean; lead_id: number }>('/lead', data);
+    return res.data;
+  },
+
+  // Shop Module
+  async getShopCatalog(): Promise<{ products: Product[] }> {
+    const res = await api.get<{ products: Product[] }>('/shop/catalog');
+    return res.data;
+  },
+
+  async createShopOrder(productId: string): Promise<{ order: ShopOrder }> {
+    const res = await api.post<{ order: ShopOrder }>('/shop/orders', {
+      product_id: productId,
+    });
+    return res.data;
+  },
+
+  async simulateShopPayment(
+    orderId: string,
+    action: 'paid' | 'abandoned'
+  ): Promise<{ result: PaymentSimulationResult }> {
+    const res = await api.post<{ result: PaymentSimulationResult }>(
+      `/shop/orders/${encodeURIComponent(orderId)}/simulate`,
+      { action }
+    );
+    return res.data;
+  },
+
+  // Reception Module
+  async getReceptionSlots(serviceId: string, date?: string): Promise<{ service_id: string; slots: TimeSlot[] }> {
+    const res = await api.get<{ service_id: string; slots: TimeSlot[] }>('/reception/slots', {
+      params: { service_id: serviceId, date },
+    });
+    return res.data;
+  },
+
+  async bookReceptionSlot(serviceId: string, slotTime: string): Promise<{ success: boolean; message: string }> {
+    const res = await api.post<{ success: boolean; message: string }>('/reception/book', {
+      service_id: serviceId,
+      slot_time: slotTime,
+    });
+    return res.data;
+  },
+
+  async getReceptionEvents(): Promise<{ events: ReceptionEvent[] }> {
+    const res = await api.get<{ events: ReceptionEvent[] }>('/reception/events');
+    return res.data;
+  },
+
+  async registerReceptionEvent(eventId: string): Promise<{ registration: EventRegistration }> {
+    const res = await api.post<{ registration: EventRegistration }>(
+      `/reception/events/${encodeURIComponent(eventId)}/register`
+    );
+    return res.data;
+  },
+
+  async submitReceptionOnboarding(answers: Record<string, string>): Promise<{ success: boolean }> {
+    const res = await api.post<{ success: boolean }>('/reception/onboarding', { answers });
+    return res.data;
+  },
+
+  // Support Module
+  async askSupport(question: string, modeScope: string = 'global'): Promise<SupportAskResponse> {
+    const res = await api.post<SupportAskResponse>('/support/ask', {
+      question,
+      mode_scope: modeScope,
+    });
+    return res.data;
+  },
+
+  async createSupportTicket(
+    subject: string,
+    message: string,
+    modeScope: string = 'global'
+  ): Promise<{ ticket: SupportTicket }> {
+    const res = await api.post<{ ticket: SupportTicket }>('/support/tickets', {
+      subject,
+      message,
+      mode_scope: modeScope,
+    });
+    return res.data;
+  },
+
+  async getSupportTickets(): Promise<{ tickets: SupportTicket[] }> {
+    const res = await api.get<{ tickets: SupportTicket[] }>('/support/tickets');
+    return res.data;
+  },
+
+  // Chat Module
+  async getChatConfig(): Promise<ChatConfigResponse> {
+    const res = await api.get<ChatConfigResponse>('/chat/config');
+    return res.data;
+  },
+
+  async sendChatMessage(roleId: number, toneId: number, message: string): Promise<ChatMessageResponse> {
+    const res = await api.post<ChatMessageResponse>('/chat/message', {
+      role_id: roleId,
+      tone_id: toneId,
+      message,
+    });
+    return res.data;
+  },
+
+  async clearChatSession(): Promise<{ success: boolean }> {
+    const res = await api.post<{ success: boolean }>('/chat/clear');
+    return res.data;
+  },
+
+  // Admin Endpoints
+  async getAdminModes(): Promise<{ modes: ModeItem[] }> {
+    const res = await api.get<{ modes: ModeItem[] }>('/admin/modes');
+    return res.data;
+  },
+
+  async toggleAdminMode(
+    modeId: string,
+    isActive: boolean,
+    maintenanceMessage: string
+  ): Promise<{ success: boolean }> {
+    const res = await api.post<{ success: boolean }>(`/admin/modes/${encodeURIComponent(modeId)}/toggle`, {
+      is_active: isActive,
+      maintenance_message: maintenanceMessage,
+    });
+    return res.data;
+  },
+
+  async getAdminLeads(status?: string): Promise<{ leads: Lead[] }> {
+    const res = await api.get<{ leads: Lead[] }>('/admin/leads', {
+      params: status ? { status } : undefined,
+    });
+    return res.data;
+  },
+
+  async updateAdminLeadStatus(id: number, status: string): Promise<{ success: boolean }> {
+    const res = await api.post<{ success: boolean }>(`/admin/leads/${id}/status`, { status });
+    return res.data;
+  },
+
+  async getAdminTickets(status?: string): Promise<{ tickets: SupportTicket[] }> {
+    const res = await api.get<{ tickets: SupportTicket[] }>('/admin/tickets', {
+      params: status ? { status } : undefined,
+    });
+    return res.data;
+  },
+
+  async replyAdminTicket(id: number, message: string): Promise<{ success: boolean }> {
+    const res = await api.post<{ success: boolean }>(`/admin/tickets/${id}/reply`, { message });
+    return res.data;
+  },
+
+  async getAdminAuditLogs(limit?: number): Promise<{ audit_logs: AdminAuditLog[] }> {
+    const res = await api.get<{ audit_logs: AdminAuditLog[] }>('/admin/audit-logs', {
+      params: limit ? { limit } : undefined,
+    });
+    return res.data;
+  },
+};
