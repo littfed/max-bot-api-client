@@ -87,6 +87,11 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 		}
 	}
 
+	// Reset hub last_switch_mid so mode switch in-place edit only happens if the last message in chat was mode switch
+	if o.fsm != nil && user != nil && user.ID > 0 {
+		_ = o.fsm.Set(ctx, user.ID, "hub", "event_received", []byte(`{"last_switch_mid":""}`))
+	}
+
 	// 2. Global Command Interceptor: handles /start, /change_mode, /lead, /help
 	if event.Message != nil {
 		text := strings.TrimSpace(event.Message.Text)

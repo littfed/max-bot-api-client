@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -25,18 +26,23 @@ import (
 type diagPlatformAdapter struct {
 	mu           sync.Mutex
 	actions      []string
+	edits        []string
 	typingCalled bool
 	typingTarget string
 }
 
 func (d *diagPlatformAdapter) Platform() string { return "max" }
-func (d *diagPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) error {
+func (d *diagPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) (string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	mid := fmt.Sprintf("mid_%d", len(d.actions)+1)
 	d.actions = append(d.actions, fmt.Sprintf("send:%s:%s", recipientID, body.Text))
-	return nil
+	return mid, nil
 }
 func (d *diagPlatformAdapter) EditMessage(ctx context.Context, messageID string, body *platform.OutMessage) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.edits = append(d.edits, fmt.Sprintf("edit:%s:%s", messageID, body.Text))
 	return nil
 }
 func (d *diagPlatformAdapter) AnswerCallback(ctx context.Context, callbackID string, text string) error {
@@ -281,5 +287,218 @@ func TestDiagnosingBugs_BotTypingIndicatorFromMiniApp(t *testing.T) {
 
 	if !typingCalled {
 		t.Errorf("BUG 4 REPRODUCED: bot did not trigger typing action in messenger when mini-app sent chat message")
+	}
+}
+
+func TestDiagnosingBugs_AdminModeToggleAndID(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	sqlStore, err := store.NewSQLStore(db, "sqlite")
+	if err != nil {
+		t.Fatalf("failed to create SQLStore: %v", err)
+	}
+
+	ctx := context.Background()
+	user, err := sqlStore.ResolveUserIdentity(ctx, "max", "396393759", "littfed", "Fedor", "")
+	if err != nil {
+		t.Fatalf("failed to resolve user: %v", err)
+	}
+
+	adapter := &diagPlatformAdapter{}
+	guard := core.NewMaintenanceGuard(sqlStore, nil)
+	fsm := core.NewCompositeFSM(sqlStore, nil)
+	adminSvc := admin.NewService(sqlStore, guard, adapter)
+
+	token, _ := GenerateJWT(JWTClaims{UserID: user.ID, Role: "admin", Platform: "max"}, "secret")
+	apiRouter := NewRouter(RouterConfig{
+		Store:           sqlStore,
+		Guard:           guard,
+		FSM:             fsm,
+		AdminService:    adminSvc,
+		JWTSecret:       "secret",
+		PlatformAdapter: adapter,
+		AllowDevHeaders: true,
+	})
+
+	ts := httptest.NewServer(apiRouter)
+	defer ts.Close()
+
+	// 1. Check GET /api/v1/admin/modes returns id field
+	reqModes, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/modes", nil)
+	reqModes.Header.Set("Authorization", "Bearer "+token)
+	respModes, err := http.DefaultClient.Do(reqModes)
+	if err != nil {
+		t.Fatalf("GET admin/modes failed: %v", err)
+	}
+	defer respModes.Body.Close()
+
+	if respModes.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", respModes.StatusCode)
+	}
+
+	var modesResp struct {
+		Modes []struct {
+			ID                 string `json:"id"`
+			ModeID             string `json:"mode_id"`
+			Title              string `json:"title"`
+			IsActive           bool   `json:"is_active"`
+			MaintenanceMessage string `json:"maintenance_message"`
+		} `json:"modes"`
+	}
+	if err := json.NewDecoder(respModes.Body).Decode(&modesResp); err != nil {
+		t.Fatalf("decode admin modes failed: %v", err)
+	}
+
+	if len(modesResp.Modes) == 0 {
+		t.Fatalf("expected mode configs, got 0")
+	}
+
+	foundSupport := false
+	for _, m := range modesResp.Modes {
+		if m.ID == "" {
+			t.Errorf("BUG DETECTED: mode item has empty 'id' field, title=%s", m.Title)
+		}
+		if m.ID == "support" {
+			foundSupport = true
+			if !m.IsActive {
+				t.Errorf("expected support mode to initially be active")
+			}
+		}
+	}
+	if !foundSupport {
+		t.Fatalf("support mode not found in modes list")
+	}
+
+	// 2. Toggle support mode to inactive
+	togglePayload := `{"is_active":false,"maintenance_message":"Техобслуживание поддержки"}`
+	reqToggle, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/modes/support/toggle", bytes.NewBufferString(togglePayload))
+	reqToggle.Header.Set("Authorization", "Bearer "+token)
+	reqToggle.Header.Set("Content-Type", "application/json")
+	respToggle, err := http.DefaultClient.Do(reqToggle)
+	if err != nil {
+		t.Fatalf("toggle request failed: %v", err)
+	}
+	defer respToggle.Body.Close()
+
+	if respToggle.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on toggle, got %d", respToggle.StatusCode)
+	}
+
+	// 3. Verify in DB and via API that support is now inactive and shop is still active
+	reqModes2, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/modes", nil)
+	reqModes2.Header.Set("Authorization", "Bearer "+token)
+	respModes2, err := http.DefaultClient.Do(reqModes2)
+	if err != nil {
+		t.Fatalf("GET admin/modes #2 failed: %v", err)
+	}
+	defer respModes2.Body.Close()
+
+	var modesResp2 struct {
+		Modes []struct {
+			ID       string `json:"id"`
+			IsActive bool   `json:"is_active"`
+		} `json:"modes"`
+	}
+	_ = json.NewDecoder(respModes2.Body).Decode(&modesResp2)
+
+	for _, m := range modesResp2.Modes {
+		if m.ID == "support" && m.IsActive {
+			t.Errorf("BUG DETECTED: support mode was not disabled in DB/API")
+		}
+		if m.ID == "shop" && !m.IsActive {
+			t.Errorf("BUG DETECTED: shop mode was accidentally disabled when toggling support!")
+		}
+	}
+}
+
+func TestDiagnosingBugs_ModeSwitchInPlaceEdit(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	sqlStore, err := store.NewSQLStore(db, "sqlite")
+	if err != nil {
+		t.Fatalf("failed to create SQLStore: %v", err)
+	}
+
+	ctx := context.Background()
+	user, err := sqlStore.ResolveUserIdentity(ctx, "max", "396393759", "littfed", "Fedor", "")
+	if err != nil {
+		t.Fatalf("failed to resolve user: %v", err)
+	}
+
+	adapter := &diagPlatformAdapter{}
+	guard := core.NewMaintenanceGuard(sqlStore, nil)
+	fsm := core.NewCompositeFSM(sqlStore, nil)
+
+	token, _ := GenerateJWT(JWTClaims{UserID: user.ID, Platform: "max"}, "secret")
+	apiRouter := NewRouter(RouterConfig{
+		Store:           sqlStore,
+		Guard:           guard,
+		FSM:             fsm,
+		JWTSecret:       "secret",
+		PlatformAdapter: adapter,
+		AllowDevHeaders: true,
+	})
+
+	ts := httptest.NewServer(apiRouter)
+	defer ts.Close()
+
+	// 1. Switch to 'support' mode for the first time
+	req1, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/user/mode", bytes.NewBufferString(`{"mode_id":"support"}`))
+	req1.Header.Set("Authorization", "Bearer "+token)
+	req1.Header.Set("Content-Type", "application/json")
+	resp1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatalf("mode switch 1 failed: %v", err)
+	}
+	defer resp1.Body.Close()
+
+	adapter.mu.Lock()
+	actionCount1 := len(adapter.actions)
+	editCount1 := len(adapter.edits)
+	adapter.mu.Unlock()
+
+	if actionCount1 != 1 {
+		t.Errorf("expected 1 SendMessage call on first mode switch, got %d", actionCount1)
+	}
+	if editCount1 != 0 {
+		t.Errorf("expected 0 EditMessage calls on first mode switch, got %d", editCount1)
+	}
+
+	// 2. Switch to 'chat' mode without intervening messages
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/user/mode", bytes.NewBufferString(`{"mode_id":"chat"}`))
+	req2.Header.Set("Authorization", "Bearer "+token)
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("mode switch 2 failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	adapter.mu.Lock()
+	actionCount2 := len(adapter.actions)
+	editCount2 := len(adapter.edits)
+	lastEdit := ""
+	if editCount2 > 0 {
+		lastEdit = adapter.edits[editCount2-1]
+	}
+	adapter.mu.Unlock()
+
+	// Verify that SendMessage was NOT called again, but EditMessage WAS called!
+	if actionCount2 != 1 {
+		t.Errorf("BUG DETECTED: SendMessage was called again (%d times), duplicate message sent instead of editing previous!", actionCount2)
+	}
+	if editCount2 != 1 {
+		t.Errorf("expected 1 EditMessage call, got %d", editCount2)
+	}
+	if !strings.Contains(lastEdit, "chat") {
+		t.Errorf("expected edited message text to mention 'chat', got %s", lastEdit)
 	}
 }

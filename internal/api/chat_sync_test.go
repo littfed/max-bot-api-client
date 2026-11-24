@@ -29,13 +29,13 @@ type recordingPlatformAdapter struct {
 }
 
 func (r *recordingPlatformAdapter) Platform() string { return "max" }
-func (r *recordingPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) error {
+func (r *recordingPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if body != nil {
 		r.messages = append(r.messages, body.Text)
 	}
-	return nil
+	return "rec_mid", nil
 }
 func (r *recordingPlatformAdapter) EditMessage(ctx context.Context, messageID string, body *platform.OutMessage) error {
 	return nil

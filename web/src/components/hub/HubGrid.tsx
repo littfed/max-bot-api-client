@@ -31,6 +31,7 @@ export const HubGrid: React.FC<HubGridProps> = ({
     );
   };
 
+  const chatMode = getMode('chat', 'Общение');
   const shopMode = getMode('shop', 'Магазин');
   const receptionMode = getMode('reception', 'Ресепшен');
   const remindersMode = getMode('reminders', 'Напоминания');
@@ -38,34 +39,49 @@ export const HubGrid: React.FC<HubGridProps> = ({
   const giveawaysMode = getMode('giveaways', 'Конкурсы');
   const supportMode = getMode('support', 'Помощь');
   const docsMode = getMode('docs', 'Документы');
-  const chatMode = getMode('chat', 'Общение');
 
   return (
-    <div className="w-full max-w-md sm:max-w-lg mx-auto px-4 py-3 sm:py-4 space-y-3 sm:space-y-4">
-      {/* Row 1: Top 3 Cards (Shop, Reception, Reminders) */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+    <div className="w-full max-w-md sm:max-w-lg mx-auto px-4 py-3 sm:py-4">
+      {/* Symmetrical 3x3 Grid: 'Общение' at top-left, Mascot in center */}
+      <div className="grid grid-cols-3 gap-2.5 sm:gap-3 items-stretch">
+        {/* Cell 1 (Row 1, Col 1): Chat ('Общение') */}
+        <ModeCard
+          mode={chatMode}
+          isActiveMode={activeModeId === 'chat'}
+          onSelect={onSelectMode}
+          onMaintenanceClick={onMaintenanceClick}
+        />
+
+        {/* Cell 2 (Row 1, Col 2): Shop ('Магазин') */}
         <ModeCard
           mode={shopMode}
           isActiveMode={activeModeId === 'shop'}
           onSelect={onSelectMode}
           onMaintenanceClick={onMaintenanceClick}
         />
+
+        {/* Cell 3 (Row 1, Col 3): Reception ('Ресепшен') */}
         <ModeCard
           mode={receptionMode}
           isActiveMode={activeModeId === 'reception'}
           onSelect={onSelectMode}
           onMaintenanceClick={onMaintenanceClick}
         />
+
+        {/* Cell 4 (Row 2, Col 1): Reminders ('Напоминания') */}
         <ModeCard
           mode={remindersMode}
           isActiveMode={activeModeId === 'reminders'}
           onSelect={onSelectMode}
           onMaintenanceClick={onMaintenanceClick}
         />
-      </div>
 
-      {/* Row 2: Middle 3 Cells (Channels, Mascot in Center, Giveaways) */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3 items-center">
+        {/* Cell 5 (Row 2, Col 2): Center Mascot */}
+        <div className="flex flex-col items-center justify-center p-2 rounded-2xl bg-white border border-slate-200/90 shadow-sm min-h-[92px] sm:min-h-[104px] overflow-hidden">
+          <MascotRenderer mascot={mascot} onTap={onTapMascot} />
+        </div>
+
+        {/* Cell 6 (Row 2, Col 3): Channels ('Каналы') */}
         <ModeCard
           mode={channelsMode}
           isActiveMode={activeModeId === 'channels'}
@@ -73,36 +89,26 @@ export const HubGrid: React.FC<HubGridProps> = ({
           onMaintenanceClick={onMaintenanceClick}
         />
 
-        {/* Center Cell: Mascot Renderer with Speech Bubble */}
-        <div className="flex justify-center items-center">
-          <MascotRenderer mascot={mascot} onTap={onTapMascot} />
-        </div>
-
+        {/* Cell 7 (Row 3, Col 1): Giveaways ('Конкурсы') */}
         <ModeCard
           mode={giveawaysMode}
           isActiveMode={activeModeId === 'giveaways'}
           onSelect={onSelectMode}
           onMaintenanceClick={onMaintenanceClick}
         />
-      </div>
 
-      {/* Row 3: Bottom 3 Cards (Support, Documents, Chat) */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+        {/* Cell 8 (Row 3, Col 2): Support ('Помощь') */}
         <ModeCard
           mode={supportMode}
           isActiveMode={activeModeId === 'support'}
           onSelect={onSelectMode}
           onMaintenanceClick={onMaintenanceClick}
         />
+
+        {/* Cell 9 (Row 3, Col 3): Documents ('Документы') */}
         <ModeCard
           mode={docsMode}
           isActiveMode={activeModeId === 'docs'}
-          onSelect={onSelectMode}
-          onMaintenanceClick={onMaintenanceClick}
-        />
-        <ModeCard
-          mode={chatMode}
-          isActiveMode={activeModeId === 'chat'}
           onSelect={onSelectMode}
           onMaintenanceClick={onMaintenanceClick}
         />

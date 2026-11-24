@@ -80,7 +80,7 @@ type IncomingEvent struct {
 // PlatformAdapter defines the unified contract that any messaging platform must implement.
 type PlatformAdapter interface {
 	Platform() string
-	SendMessage(ctx context.Context, recipientID string, body *OutMessage) error
+	SendMessage(ctx context.Context, recipientID string, body *OutMessage) (string, error)
 	EditMessage(ctx context.Context, messageID string, body *OutMessage) error
 	AnswerCallback(ctx context.Context, callbackID string, text string) error
 	CheckMembership(ctx context.Context, chatID string, userID string) (bool, error)

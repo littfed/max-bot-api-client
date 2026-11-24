@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { SpeechBubble } from './SpeechBubble';
 import { MascotState } from '../../types';
 
 interface MascotRendererProps {
@@ -25,29 +24,22 @@ export const MascotRenderer: React.FC<MascotRendererProps> = ({ mascot, onTap })
   };
 
   return (
-    <div className="flex flex-col items-center justify-center select-none py-1">
-      {/* Speech Cloud above mascot */}
-      <SpeechBubble
-        phrase={mascot.phrase}
-        priority={mascot.priority}
-        emotion={mascot.emotion}
-      />
-
+    <div className="flex flex-col items-center justify-center select-none w-full h-full">
       {/* Mascot character with floating animation and tap bounce */}
       <div
         onClick={handleTap}
         className={`relative cursor-pointer group transition-transform duration-150 flex flex-col items-center ${
           isTapped ? 'scale-90' : 'hover:scale-105 active:scale-95'
         }`}
-        title="Нажмите на маскота, чтобы пообщаться!"
+        title="Нажмите на маскота!"
       >
         {/* Soft radial glow behind mascot */}
-        <div className="absolute top-2 w-24 h-24 bg-teal-300/30 rounded-full blur-xl pointer-events-none group-hover:bg-teal-400/40 transition-all" />
+        <div className="absolute top-1 w-20 h-20 bg-teal-300/30 rounded-full blur-xl pointer-events-none group-hover:bg-teal-400/40 transition-all" />
 
         {/* Mascot Robot SVG */}
         <div className="relative animate-float-slow">
           <svg
-            className="w-24 h-24 sm:w-28 sm:h-28 drop-shadow-md"
+            className="w-16 h-16 sm:w-20 sm:h-20 drop-shadow-md"
             viewBox="0 0 120 120"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
@@ -141,11 +133,6 @@ export const MascotRenderer: React.FC<MascotRendererProps> = ({ mascot, onTap })
             <path d="M84 99 C90 102 94 109 90 114 C88 116 84 114 82 108" fill="#ffffff" stroke="#0d9488" strokeWidth="2" strokeLinecap="round" />
           </svg>
         </div>
-
-        {/* Tap hint below mascot */}
-        <span className="text-[11px] text-slate-400 group-hover:text-teal-600 transition-colors mt-1 font-normal">
-          нажми на меня
-        </span>
       </div>
     </div>
   );

@@ -39,11 +39,11 @@ func (m *mockPlatformAdapter) Platform() string {
 	return m.platformName
 }
 
-func (m *mockPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) error {
+func (m *mockPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sentMessages = append(m.sentMessages, sentMsg{RecipientID: recipientID, Body: body})
-	return nil
+	return "mock_mid_1", nil
 }
 
 func (m *mockPlatformAdapter) EditMessage(ctx context.Context, messageID string, body *platform.OutMessage) error {

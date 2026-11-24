@@ -79,15 +79,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleToggleMode = async (mode: ModeItem, newActive: boolean, newMsg?: string) => {
+    const targetId = mode.id || (mode as any).mode_id;
+    if (!targetId) return;
+
     try {
       const msg = newMsg !== undefined ? newMsg : (mode.maintenance_message || 'Режим временно недоступен');
-      await apiClient.toggleAdminMode(mode.id, newActive, msg);
+      await apiClient.toggleAdminMode(targetId, newActive, msg);
       setModes((prev) =>
-        prev.map((m) =>
-          m.id === mode.id
-            ? { ...m, is_active: newActive, maintenance_message: msg }
-            : m
-        )
+        prev.map((m) => {
+          const mId = m.id || (m as any).mode_id;
+          return mId === targetId
+            ? { ...m, id: targetId, is_active: newActive, maintenance_message: msg }
+            : m;
+        })
       );
       onSuccessToast(`Режим «${mode.title}» переключен: ${newActive ? 'Активен' : 'Профилактика'}`);
       setEditingModeId(null);
@@ -227,15 +231,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <p className="text-xs text-slate-400 py-6 text-center">Загрузка конфигурации режимов...</p>
           ) : (
             <div className="space-y-2.5">
-              {modes.map((m) => (
+              {modes.map((m) => {
+                const modeId = m.id || (m as any).mode_id;
+                return (
                 <div
-                  key={m.id}
+                  key={modeId}
                   className="p-3.5 rounded-2xl bg-white border border-slate-200/90 shadow-sm space-y-2"
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <h4 className="font-bold text-xs sm:text-sm text-slate-900">{m.title}</h4>
-                      <span className="text-[10px] text-slate-400 font-mono">id: {m.id}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">id: {modeId}</span>
                     </div>
 
                     {/* Toggle Switch */}
@@ -254,7 +260,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
 
                   {/* Maintenance message editor */}
-                  {editingModeId === m.id ? (
+                  {editingModeId === modeId ? (
                     <div className="space-y-1.5 pt-1">
                       <input
                         type="text"
@@ -281,7 +287,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   ) : (
                     <div
                       onClick={() => {
-                        setEditingModeId(m.id);
+                        setEditingModeId(modeId);
                         setEditMsg(m.maintenance_message || '');
                       }}
                       className="cursor-pointer group p-2 rounded-xl bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors"
@@ -293,7 +299,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

@@ -844,16 +844,26 @@ func (s *SQLStore) SetModeActive(ctx context.Context, modeID string, isActive bo
 	defer s.mu.Unlock()
 
 	now := time.Now()
+	var res sql.Result
 	var err error
 	if maintMsg != "" {
 		query := `UPDATE mode_configs SET is_active = $1, maintenance_message = $2, updated_at = $3 WHERE mode_id = $4;`
-		_, err = s.db.ExecContext(ctx, query, isActive, maintMsg, now, modeID)
+		res, err = s.db.ExecContext(ctx, query, isActive, maintMsg, now, modeID)
 	} else {
 		query := `UPDATE mode_configs SET is_active = $1, updated_at = $2 WHERE mode_id = $3;`
-		_, err = s.db.ExecContext(ctx, query, isActive, now, modeID)
+		res, err = s.db.ExecContext(ctx, query, isActive, now, modeID)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to set mode active for %s: %w", modeID, err)
+	}
+
+	if res != nil {
+		rows, err := res.RowsAffected()
+		if err == nil && rows == 0 {
+			// Mode didn't exist in mode_configs, insert new row
+			insertQuery := `INSERT INTO mode_configs (mode_id, title, is_active, maintenance_message, daily_quota, updated_at) VALUES ($1, $2, $3, $4, 100, $5);`
+			_, _ = s.db.ExecContext(ctx, insertQuery, modeID, modeID, isActive, maintMsg, now)
+		}
 	}
 	return nil
 }

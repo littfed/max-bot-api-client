@@ -39,8 +39,29 @@ func (h *adminHandler) handleAdminModes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	type adminModeItem struct {
+		ID                 string `json:"id"`
+		ModeID             string `json:"mode_id"`
+		Title              string `json:"title"`
+		IsActive           bool   `json:"is_active"`
+		MaintenanceMessage string `json:"maintenance_message"`
+		DailyQuota         int    `json:"daily_quota"`
+	}
+
+	modes := make([]adminModeItem, len(configs))
+	for i, c := range configs {
+		modes[i] = adminModeItem{
+			ID:                 c.ModeID,
+			ModeID:             c.ModeID,
+			Title:              c.Title,
+			IsActive:           c.IsActive,
+			MaintenanceMessage: c.MaintenanceMessage,
+			DailyQuota:         c.DailyQuota,
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"modes": configs,
+		"modes": modes,
 	})
 }
 

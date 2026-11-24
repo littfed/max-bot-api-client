@@ -31,18 +31,6 @@ const modeIcons: Record<string, React.ReactNode> = {
   chat: <MessageCircle className="w-6 h-6 text-teal-600" />,
 };
 
-// Mode subtitle descriptions matching mockup
-const modeSubtitles: Record<string, string> = {
-  shop: 'Товары • QR',
-  reception: 'Слоты • Ивенты',
-  reminders: 'Таймеры',
-  channels: 'и группы',
-  giveaways: 'Розыгрыши',
-  support: 'RAG • Оператор',
-  docs: 'OCR • ИИ • PDF',
-  chat: 'Роли и тон',
-};
-
 // Mode short titles matching mockup
 const modeTitles: Record<string, string> = {
   shop: 'Магазин',
@@ -72,11 +60,6 @@ export const ModeCard: React.FC<ModeCardProps> = ({
   );
 
   const title = modeTitles[mode.id] || mode.title;
-  const subtitle = isMaintenance
-    ? 'Профилактика'
-    : isActiveMode
-    ? 'Активен'
-    : modeSubtitles[mode.id] || 'Виртуальный бот';
 
   const handleClick = () => {
     if (isMaintenance) {
@@ -89,7 +72,7 @@ export const ModeCard: React.FC<ModeCardProps> = ({
   return (
     <div
       onClick={handleClick}
-      className={`group relative flex flex-col items-center sm:items-start text-center sm:text-left p-3.5 rounded-2xl cursor-pointer transition-all duration-200 select-none ${
+      className={`group relative flex flex-col items-center justify-center text-center p-3 sm:p-3.5 rounded-2xl cursor-pointer transition-all duration-200 select-none min-h-[92px] sm:min-h-[104px] ${
         isActiveMode
           ? 'bg-teal-50/50 border-2 border-teal-500 shadow-sm ring-1 ring-teal-500/30'
           : isMaintenance
@@ -99,7 +82,7 @@ export const ModeCard: React.FC<ModeCardProps> = ({
     >
       {/* Icon Circle */}
       <div
-        className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center mb-2 transition-transform group-hover:scale-105 ${
+        className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center mb-1.5 transition-transform group-hover:scale-105 ${
           isActiveMode
             ? 'bg-teal-100 text-teal-700'
             : isMaintenance
@@ -114,19 +97,6 @@ export const ModeCard: React.FC<ModeCardProps> = ({
       <h3 className="font-semibold text-xs sm:text-sm text-slate-900 group-hover:text-teal-700 transition-colors line-clamp-1">
         {title}
       </h3>
-
-      {/* Subtitle / Status */}
-      <p
-        className={`text-[11px] sm:text-xs mt-0.5 font-normal line-clamp-1 ${
-          isActiveMode
-            ? 'text-teal-600 font-medium'
-            : isMaintenance
-            ? 'text-slate-400'
-            : 'text-slate-500'
-        }`}
-      >
-        {subtitle}
-      </p>
     </div>
   );
 };

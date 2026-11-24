@@ -43,8 +43,8 @@ func (m *mockPlatformAdapter) Platform() string {
 	return m.platformName
 }
 
-func (m *mockPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) error {
-	return nil
+func (m *mockPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) (string, error) {
+	return "mock_mid_1", nil
 }
 
 func (m *mockPlatformAdapter) EditMessage(ctx context.Context, messageID string, body *platform.OutMessage) error {

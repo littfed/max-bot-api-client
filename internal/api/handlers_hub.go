@@ -217,9 +217,44 @@ func (h *hubHandler) handleUserMode(w http.ResponseWriter, r *http.Request) {
 					recipientID = ident.PlatformUserID
 				}
 			}
-			_ = h.cfg.PlatformAdapter.SendMessage(ctx, recipientID, &platform.OutMessage{
-				Text: fmt.Sprintf("🔄 **Режим успешно переключен:** _%s_", req.ModeID),
-			})
+
+			modeSwitchMsgText := fmt.Sprintf("🔄 **Режим успешно переключен:** _%s_", req.ModeID)
+			var lastSwitchMID string
+
+			// Check if previous message was also a mode switch notification
+			if h.cfg.FSM != nil {
+				if hubState, err := h.cfg.FSM.Get(ctx, user.ID, "hub"); err == nil && hubState != nil && len(hubState.Payload) > 0 {
+					var payload struct {
+						LastSwitchMID string `json:"last_switch_mid"`
+					}
+					if err := json.Unmarshal(hubState.Payload, &payload); err == nil {
+						lastSwitchMID = payload.LastSwitchMID
+					}
+				}
+			}
+
+			edited := false
+			if lastSwitchMID != "" {
+				err := h.cfg.PlatformAdapter.EditMessage(ctx, lastSwitchMID, &platform.OutMessage{
+					Text: modeSwitchMsgText,
+				})
+				if err == nil {
+					edited = true
+				}
+			}
+
+			if !edited {
+				sentMID, err := h.cfg.PlatformAdapter.SendMessage(ctx, recipientID, &platform.OutMessage{
+					Text: modeSwitchMsgText,
+				})
+				if err == nil && sentMID != "" && h.cfg.FSM != nil {
+					pBytes, _ := json.Marshal(map[string]any{
+						"last_switch_mid": sentMID,
+						"mode_id":         req.ModeID,
+					})
+					_ = h.cfg.FSM.Set(ctx, user.ID, "hub", "mode_switched", pBytes)
+				}
+			}
 		}
 	}
 

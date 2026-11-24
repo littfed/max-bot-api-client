@@ -41,17 +41,17 @@ func (a *Adapter) Platform() string {
 }
 
 // SendMessage delivers a message to a recipient (user or chat) via MAX Bot API.
-func (a *Adapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) error {
+func (a *Adapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) (string, error) {
 	if a.client == nil {
-		return fmt.Errorf("max client is not configured")
+		return "", fmt.Errorf("max client is not configured")
 	}
 	if body == nil {
-		return fmt.Errorf("message body cannot be nil")
+		return "", fmt.Errorf("message body cannot be nil")
 	}
 
 	recipient, err := parseRecipient(recipientID)
 	if err != nil {
-		return fmt.Errorf("failed to parse recipient ID %q: %w", recipientID, err)
+		return "", fmt.Errorf("failed to parse recipient ID %q: %w", recipientID, err)
 	}
 
 	req := &maxbot.SendMessageRequest{
@@ -68,8 +68,14 @@ func (a *Adapter) SendMessage(ctx context.Context, recipientID string, body *pla
 		req.Attachments = append(req.Attachments, kb.ToAttachment())
 	}
 
-	_, err = a.client.SendMessage(ctx, recipient, req)
-	return err
+	msg, err := a.client.SendMessage(ctx, recipient, req)
+	if err != nil {
+		return "", err
+	}
+	if msg != nil {
+		return msg.ID(), nil
+	}
+	return "", nil
 }
 
 // EditMessage modifies an existing message's text and/or buttons.

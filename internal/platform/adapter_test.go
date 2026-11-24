@@ -114,9 +114,12 @@ func TestMAXAdapter_SendMessage(t *testing.T) {
 			{{Text: "Сменить режим", Action: "change_mode"}},
 		},
 	}
-	err := adapter.SendMessage(context.Background(), "user_42", msg)
+	sentMID, err := adapter.SendMessage(context.Background(), "user_42", msg)
 	if err != nil {
 		t.Fatalf("SendMessage failed: %v", err)
+	}
+	if sentMID != "msg_123" {
+		t.Errorf("Expected sentMID 'msg_123', got %s", sentMID)
 	}
 	if len(mockClient.sentMessages) != 1 {
 		t.Errorf("Expected 1 sent message, got %d", len(mockClient.sentMessages))
@@ -147,7 +150,7 @@ func TestMAXAdapter_RecipientTypes(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		err := adapter.SendMessage(context.Background(), tc.recipientID, &platform.OutMessage{Text: "test"})
+		_, err := adapter.SendMessage(context.Background(), tc.recipientID, &platform.OutMessage{Text: "test"})
 		if err != nil {
 			t.Fatalf("SendMessage(%s) failed: %v", tc.recipientID, err)
 		}
@@ -176,7 +179,7 @@ func TestMAXAdapter_ButtonTypes(t *testing.T) {
 		},
 	}
 
-	err := adapter.SendMessage(context.Background(), "user_1", msg)
+	_, err := adapter.SendMessage(context.Background(), "user_1", msg)
 	if err != nil {
 		t.Fatalf("SendMessage failed: %v", err)
 	}
@@ -313,7 +316,7 @@ func TestTelegramAdapter_SendMessage(t *testing.T) {
 		},
 	}
 
-	err := adapter.SendMessage(context.Background(), "chat_9999", msg)
+	_, err := adapter.SendMessage(context.Background(), "chat_9999", msg)
 	if err != nil {
 		t.Fatalf("Telegram SendMessage failed: %v", err)
 	}
@@ -527,7 +530,7 @@ func TestMAXAdapter_ErrorHandling(t *testing.T) {
 
 	// 1. Nil client
 	nilAdapter := max.NewAdapter(nil)
-	if err := nilAdapter.SendMessage(ctx, "42", &platform.OutMessage{Text: "hi"}); err == nil {
+	if _, err := nilAdapter.SendMessage(ctx, "42", &platform.OutMessage{Text: "hi"}); err == nil {
 		t.Error("Expected error with nil client")
 	}
 	if err := nilAdapter.EditMessage(ctx, "mid", &platform.OutMessage{Text: "hi"}); err == nil {
@@ -548,7 +551,7 @@ func TestMAXAdapter_ErrorHandling(t *testing.T) {
 	}
 	adapter := max.NewAdapter(mockClient)
 
-	if err := adapter.SendMessage(ctx, "42", &platform.OutMessage{Text: "hi"}); err == nil {
+	if _, err := adapter.SendMessage(ctx, "42", &platform.OutMessage{Text: "hi"}); err == nil {
 		t.Error("Expected propagated sendErr")
 	}
 	if err := adapter.EditMessage(ctx, "mid", &platform.OutMessage{Text: "hi"}); err == nil {
@@ -559,13 +562,13 @@ func TestMAXAdapter_ErrorHandling(t *testing.T) {
 	}
 
 	// 3. Validation errors
-	if err := adapter.SendMessage(ctx, "42", nil); err == nil {
+	if _, err := adapter.SendMessage(ctx, "42", nil); err == nil {
 		t.Error("Expected error with nil message body")
 	}
-	if err := adapter.SendMessage(ctx, "", &platform.OutMessage{Text: "hi"}); err == nil {
+	if _, err := adapter.SendMessage(ctx, "", &platform.OutMessage{Text: "hi"}); err == nil {
 		t.Error("Expected error with empty recipient")
 	}
-	if err := adapter.SendMessage(ctx, "not_a_number", &platform.OutMessage{Text: "hi"}); err == nil {
+	if _, err := adapter.SendMessage(ctx, "not_a_number", &platform.OutMessage{Text: "hi"}); err == nil {
 		t.Error("Expected error with invalid recipient syntax")
 	}
 	if err := adapter.EditMessage(ctx, "", &platform.OutMessage{Text: "hi"}); err == nil {
@@ -594,16 +597,16 @@ func TestTelegramAdapter_ErrorHandling(t *testing.T) {
 		telegram.WithHTTPClient(srv.Client()),
 	)
 
-	err := adapter.SendMessage(ctx, "123", &platform.OutMessage{Text: "hi"})
+	_, err := adapter.SendMessage(ctx, "123", &platform.OutMessage{Text: "hi"})
 	if err == nil || !strings.Contains(err.Error(), "chat not found") {
 		t.Errorf("Expected Telegram API error, got %v", err)
 	}
 
 	// 2. Validation errors
-	if err := adapter.SendMessage(ctx, "123", nil); err == nil {
+	if _, err := adapter.SendMessage(ctx, "123", nil); err == nil {
 		t.Error("Expected error for nil body")
 	}
-	if err := adapter.SendMessage(ctx, "", &platform.OutMessage{Text: "hi"}); err == nil {
+	if _, err := adapter.SendMessage(ctx, "", &platform.OutMessage{Text: "hi"}); err == nil {
 		t.Error("Expected error for empty recipientID")
 	}
 	if err := adapter.EditMessage(ctx, "", &platform.OutMessage{Text: "hi"}); err == nil {

@@ -232,7 +232,7 @@ func (s *Service) ReplyTicket(ctx context.Context, adminID int64, ticketID int64
 		out := &platform.OutMessage{
 			Text: messageText,
 		}
-		if err := targetAdapter.SendMessage(ctx, recipientID, out); err != nil {
+		if _, err := targetAdapter.SendMessage(ctx, recipientID, out); err != nil {
 			return fmt.Errorf("failed to deliver message via platform adapter %s: %w", targetAdapter.Platform(), err)
 		}
 	} else {

@@ -97,14 +97,14 @@ type InlineKeyboardMarkup struct {
 }
 
 // SendMessage delivers a message to a chat or user on Telegram.
-func (a *Adapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) error {
+func (a *Adapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) (string, error) {
 	if body == nil {
-		return fmt.Errorf("message body cannot be nil")
+		return "", fmt.Errorf("message body cannot be nil")
 	}
 
 	chatID := cleanRecipientID(recipientID)
 	if chatID == "" {
-		return fmt.Errorf("recipientID cannot be empty")
+		return "", fmt.Errorf("recipientID cannot be empty")
 	}
 
 	payload := map[string]any{
@@ -123,7 +123,18 @@ func (a *Adapter) SendMessage(ctx context.Context, recipientID string, body *pla
 		payload["reply_markup"] = buildInlineKeyboardMarkup(body.Buttons)
 	}
 
-	return a.call(ctx, "sendMessage", payload, nil)
+	var resp struct {
+		Ok     bool `json:"ok"`
+		Result struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+
+	if err := a.call(ctx, "sendMessage", payload, &resp); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%s:%d", chatID, resp.Result.MessageID), nil
 }
 
 // EditMessage edits an existing message on Telegram.
