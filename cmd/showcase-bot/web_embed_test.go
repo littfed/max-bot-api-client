@@ -69,4 +69,15 @@ func TestRegisterWebSPA(t *testing.T) {
 			t.Errorf("expected 404 from SPA handler for %s, got %d", apiPath, recAPI.Code)
 		}
 	}
+
+	// 6. Directory requests (e.g. /assets, /assets/) should not serve directory listings
+	for _, dirPath := range []string{"/assets", "/assets/"} {
+		reqDir := httptest.NewRequest(http.MethodGet, dirPath, nil)
+		recDir := httptest.NewRecorder()
+		mux.ServeHTTP(recDir, reqDir)
+
+		if recDir.Code != http.StatusNotFound {
+			t.Errorf("expected 404 for directory request %s, got %d", dirPath, recDir.Code)
+		}
+	}
 }

@@ -96,6 +96,8 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 			switch cmd {
 			case "/start":
 				return o.handleStart(ctx, user, event.Message)
+			case "/hub":
+				return o.handleListModes(ctx, user)
 			case "/change_mode", "/mode":
 				if len(parts) > 1 {
 					return o.handleChangeMode(ctx, user, parts[1])

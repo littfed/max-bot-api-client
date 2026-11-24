@@ -6,7 +6,6 @@ import (
 	"mime"
 	"net/http"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/littfed/max-bot-api-client/web"
@@ -43,21 +42,28 @@ func RegisterWebSPA(mux *http.ServeMux) error {
 			return
 		}
 
-		// Check if file exists in distFS
+		// Check if file exists in distFS and is a regular file (prevent directory listing)
 		f, err := distFS.Open(cleanPath)
 		if err == nil {
+			stat, statErr := f.Stat()
 			_ = f.Close()
-			// Set proper content type based on extension
-			ext := filepath.Ext(cleanPath)
-			if mimeType := mime.TypeByExtension(ext); mimeType != "" {
-				w.Header().Set("Content-Type", mimeType)
+			if statErr == nil {
+				if stat.IsDir() {
+					// Never serve directory listing
+					http.NotFound(w, r)
+					return
+				}
+				ext := path.Ext(cleanPath)
+				if mimeType := mime.TypeByExtension(ext); mimeType != "" {
+					w.Header().Set("Content-Type", mimeType)
+				}
+				fileServer.ServeHTTP(w, r)
+				return
 			}
-			fileServer.ServeHTTP(w, r)
-			return
 		}
 
-		// Missing static assets under /assets/ should return 404 rather than fallback HTML
-		if strings.HasPrefix(cleanPath, "assets/") {
+		// Missing static assets or directory requests under /assets should return 404 rather than fallback HTML
+		if cleanPath == "assets" || strings.HasPrefix(cleanPath, "assets/") {
 			http.NotFound(w, r)
 			return
 		}

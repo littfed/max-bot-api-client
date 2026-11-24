@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/internal/core"
@@ -157,4 +158,32 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 	b.OnCallbackPrefix("support:", dispatchHandler)
 	b.OnCallbackPrefix("chat:", dispatchHandler)
 	b.OnCallbackPrefix("lead:", dispatchHandler)
+
+	// Plain text messages in active conversational modes (Reception, Support, Chat, etc.)
+	b.OnIdleMessage(func(c *bot.Context) error {
+		userText := strings.TrimSpace(c.Text())
+		if userText == "" {
+			return nil
+		}
+		// Intercept invite links sent to the bot (let other handlers process them)
+		if strings.Contains(userText, "max.ru/join/") || strings.Contains(userText, "/join/") {
+			return nil
+		}
+
+		ctx := c.Ctx()
+		event := convertContextToDomainEvent(c)
+		if event == nil {
+			return nil
+		}
+
+		resp, err := orchestrator.ProcessEvent(ctx, event)
+		if err != nil {
+			logger.Error("orchestrator: error processing plain text message", slog.Any("error", err))
+			return err
+		}
+		if resp != nil && (resp.Handled || resp.Text != "") {
+			return sendDomainResponse(c, resp)
+		}
+		return nil
+	})
 }
