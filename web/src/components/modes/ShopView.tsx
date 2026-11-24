@@ -10,6 +10,9 @@ import {
   Download,
   Clock,
   Sparkles,
+  ExternalLink,
+  Receipt,
+  RefreshCw,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { Product, ShopOrder, PaymentSimulationResult } from '../../types';
@@ -25,6 +28,7 @@ export const ShopView: React.FC<ShopViewProps> = ({
   onSuccessToast,
   onErrorToast,
 }) => {
+  const [activeTab, setActiveTab] = useState<'catalog' | 'orders'>('catalog');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'digital' | 'subscription'>('all');
@@ -35,10 +39,21 @@ export const ShopView: React.FC<ShopViewProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [simResult, setSimResult] = useState<PaymentSimulationResult | null>(null);
 
-  // Fetch catalog
+  // My Orders state
+  const [orders, setOrders] = useState<ShopOrder[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+
+  // Fetch catalog on mount
   useEffect(() => {
     loadCatalog();
   }, []);
+
+  // Fetch user orders when switching to 'orders' tab
+  useEffect(() => {
+    if (activeTab === 'orders') {
+      loadUserOrders();
+    }
+  }, [activeTab]);
 
   const loadCatalog = async () => {
     try {
@@ -84,6 +99,18 @@ export const ShopView: React.FC<ShopViewProps> = ({
     }
   };
 
+  const loadUserOrders = async () => {
+    try {
+      setLoadingOrders(true);
+      const res = await apiClient.getUserOrders();
+      setOrders(res.orders || []);
+    } catch (err: any) {
+      console.warn('Failed to fetch user orders:', err);
+    } finally {
+      setLoadingOrders(false);
+    }
+  };
+
   const handleBuy = async (prod: Product) => {
     try {
       setIsProcessing(true);
@@ -98,6 +125,8 @@ export const ShopView: React.FC<ShopViewProps> = ({
         id: '1042',
         user_id: 1,
         product_id: prod.id,
+        product_title: prod.title,
+        price: prod.price,
         status: 'pending',
         qr_code: `demo:pay:${prod.id}:${prod.price}rub`,
         created_at: new Date().toISOString(),
@@ -106,6 +135,22 @@ export const ShopView: React.FC<ShopViewProps> = ({
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleResumeOrderPayment = (ord: ShopOrder) => {
+    const prod = products.find((p) => p.id === ord.product_id) || {
+      id: ord.product_id,
+      title: ord.product_title || 'Цифровой продукт',
+      description: 'Оформленный заказ в магазине',
+      price: ord.price || 490,
+      category: 'digital',
+      item_type: 'digital',
+      content_payload: ord.delivery_payload || 'https://combot.littfed.ru/downloads/demo-content.pdf',
+      is_active: true,
+    };
+    setSelectedProduct(prod);
+    setActiveOrder(ord);
+    setSimResult(null);
   };
 
   const handleSimulate = async (action: 'paid' | 'abandoned') => {
@@ -119,6 +164,8 @@ export const ShopView: React.FC<ShopViewProps> = ({
       } else {
         onErrorToast('Заказ переведен в статус "Оставлен". Напоминание отправлено.');
       }
+      // Reload orders in background
+      loadUserOrders();
     } catch (err: any) {
       setSimResult({
         order_id: activeOrder.id,
@@ -149,87 +196,256 @@ export const ShopView: React.FC<ShopViewProps> = ({
     return p.item_type === selectedCategory;
   });
 
+  const formatDate = (isoString: string) => {
+    try {
+      const d = new Date(isoString);
+      return d.toLocaleDateString('ru-RU', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return isoString;
+    }
+  };
+
   return (
     <div className="w-full max-w-md sm:max-w-lg mx-auto px-4 py-3 sm:py-4 space-y-4 animate-in fade-in duration-200">
-      {/* Category Tabs */}
-      <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-200/60 border border-slate-200">
+      {/* Main Top Navigation: Catalog vs My Orders */}
+      <div className="flex items-center gap-2 p-1 rounded-2xl bg-slate-200/70 border border-slate-200">
         <button
-          onClick={() => setSelectedCategory('all')}
-          className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
-            selectedCategory === 'all'
+          onClick={() => setActiveTab('catalog')}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
+            activeTab === 'catalog'
               ? 'bg-white text-slate-900 shadow-sm'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Все товары
+          <ShoppingBag className="w-4 h-4 text-teal-600" />
+          <span>Каталог товаров</span>
         </button>
         <button
-          onClick={() => setSelectedCategory('digital')}
-          className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
-            selectedCategory === 'digital'
+          onClick={() => setActiveTab('orders')}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
+            activeTab === 'orders'
               ? 'bg-white text-slate-900 shadow-sm'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <BookOpen className="w-3.5 h-3.5 text-teal-600" />
-          <span>Гайды</span>
-        </button>
-        <button
-          onClick={() => setSelectedCategory('subscription')}
-          className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
-            selectedCategory === 'subscription'
-              ? 'bg-white text-slate-900 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Award className="w-3.5 h-3.5 text-teal-600" />
-          <span>Подписки</span>
+          <Receipt className="w-4 h-4 text-teal-600" />
+          <span>Мои покупки</span>
+          {orders.length > 0 && (
+            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">
+              {orders.length}
+            </span>
+          )}
         </button>
       </div>
 
-      {/* Product List */}
-      {loading ? (
-        <div className="py-12 text-center text-slate-500 text-sm">
-          Загрузка каталога...
-        </div>
-      ) : filteredProducts.length === 0 ? (
-        <div className="py-12 text-center text-slate-500 text-sm">
-          В данной категории пока нет товаров.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {filteredProducts.map((prod) => (
-            <div
-              key={prod.id}
-              className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+      {activeTab === 'catalog' && (
+        <>
+          {/* Category Tabs */}
+          <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-100 border border-slate-200/80">
+            <button
+              onClick={() => setSelectedCategory('all')}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
+                selectedCategory === 'all'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
             >
-              <div className="flex items-start justify-between gap-3 mb-2">
-                <div>
-                  <h3 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
-                    {prod.title}
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    {prod.description}
-                  </p>
-                </div>
-                <div className="text-right shrink-0">
-                  <span className="text-base sm:text-lg font-bold text-slate-900">
-                    {prod.price.toLocaleString('ru-RU')} ₽
-                  </span>
-                  <p className="text-[10px] text-teal-600 font-medium">Демо-оплата</p>
-                </div>
-              </div>
+              Все товары
+            </button>
+            <button
+              onClick={() => setSelectedCategory('digital')}
+              className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
+                selectedCategory === 'digital'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5 text-teal-600" />
+              <span>Гайды</span>
+            </button>
+            <button
+              onClick={() => setSelectedCategory('subscription')}
+              className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-xl transition-all ${
+                selectedCategory === 'subscription'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Award className="w-3.5 h-3.5 text-teal-600" />
+              <span>Подписки</span>
+            </button>
+          </div>
 
+          {/* Product List */}
+          {loading ? (
+            <div className="py-12 text-center text-slate-500 text-sm">
+              Загрузка каталога...
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="py-12 text-center text-slate-500 text-sm">
+              В данной категории пока нет товаров.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredProducts.map((prod) => (
+                <div
+                  key={prod.id}
+                  className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div>
+                      <h3 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
+                        {prod.title}
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                        {prod.description}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-base sm:text-lg font-bold text-slate-900">
+                        {prod.price.toLocaleString('ru-RU')} ₽
+                      </span>
+                      <p className="text-[10px] text-teal-600 font-medium">Демо-оплата</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleBuy(prod)}
+                    disabled={isProcessing}
+                    className="w-full mt-2 py-2.5 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] active:scale-98 text-white font-semibold text-xs sm:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <CreditCard className="w-4 h-4" />
+                    <span>Купить за {prod.price} ₽</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === 'orders' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-sm font-bold text-slate-800">История ваших заказов</h3>
+            <button
+              onClick={loadUserOrders}
+              disabled={loadingOrders}
+              className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1 font-medium"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingOrders ? 'animate-spin' : ''}`} />
+              <span>Обновить</span>
+            </button>
+          </div>
+
+          {loadingOrders ? (
+            <div className="py-12 text-center text-slate-500 text-sm">
+              Загрузка истории покупок...
+            </div>
+          ) : orders.length === 0 ? (
+            <div className="py-12 text-center p-6 bg-white rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+              <ShoppingBag className="w-12 h-12 text-slate-300 mx-auto" />
+              <div className="space-y-1">
+                <p className="font-semibold text-sm text-slate-800">У вас пока нет покупок</p>
+                <p className="text-xs text-slate-500">
+                  Выберите гайд или подписку в каталоге, чтобы протестировать мгновенную выдачу доступа.
+                </p>
+              </div>
               <button
-                onClick={() => handleBuy(prod)}
-                disabled={isProcessing}
-                className="w-full mt-2 py-2.5 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] active:scale-98 text-white font-semibold text-xs sm:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5"
+                onClick={() => setActiveTab('catalog')}
+                className="px-4 py-2 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] text-white text-xs font-semibold transition-all shadow-sm"
               >
-                <CreditCard className="w-4 h-4" />
-                <span>Купить за {prod.price} ₽</span>
+                Перейти в каталог
               </button>
             </div>
-          ))}
+          ) : (
+            <div className="space-y-3">
+              {orders.map((ord) => {
+                const isPaid = ord.status === 'paid';
+                const isPending = ord.status === 'pending';
+                const isAbandoned = ord.status === 'abandoned';
+
+                return (
+                  <div
+                    key={ord.id}
+                    className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm flex flex-col justify-between gap-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            #{ord.id}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              isPaid
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : isPending
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {isPaid ? 'Оплачен' : isPending ? 'Ожидает оплаты' : 'Не завершен'}
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-sm sm:text-base text-slate-900">
+                          {ord.product_title || 'Цифровой продукт'}
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {formatDate(ord.created_at)}
+                        </p>
+                      </div>
+
+                      {ord.price && (
+                        <span className="text-sm sm:text-base font-bold text-slate-900 shrink-0">
+                          {ord.price} ₽
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Actions depending on status */}
+                    {isPaid ? (
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <span className="text-xs text-emerald-700 font-medium flex items-center gap-1">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Доступ открыт</span>
+                        </span>
+                        {ord.delivery_payload && (
+                          <a
+                            href={ord.delivery_payload}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0d9488] hover:bg-[#0f766e] text-white text-xs font-semibold transition-all shadow-sm"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Открыть доступ</span>
+                          </a>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <span className="text-xs text-slate-500">
+                          {isPending ? 'Заказ ждет подтверждения' : 'Брошенная корзина'}
+                        </span>
+                        <button
+                          onClick={() => handleResumeOrderPayment(ord)}
+                          className="px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-semibold border border-teal-200/80 transition-all"
+                        >
+                          Оплатить
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

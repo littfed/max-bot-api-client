@@ -104,7 +104,7 @@ func (m *Module) initRolesAndTones() {
 		},
 		2: {
 			ID:          2,
-			Name:        "Продуктовый аналитик",
+			Name:        "Аналитик",
 			Description: "Юнит-экономика, когорты, метрики",
 			SystemPrompt: "Вы — Senior Product Analyst. Ваш фокус: юнит-экономика (CAC, LTV, ARPU, Churn), воронки конверсий, когортный анализ и окупаемость каналов.",
 		},
@@ -131,9 +131,9 @@ func (m *Module) initRolesAndTones() {
 	m.tones = map[int]Tone{
 		1: {
 			ID:          1,
-			Name:        "Деловой",
-			Description: "Формальный и структурированный",
-			Instruction: "Соблюдайте строгий деловой стиль, четкую логику, списки и профессиональную терминологию.",
+			Name:        "Нейтральный",
+			Description: "Объективный, спокойный и сбалансированный",
+			Instruction: "Соблюдайте максимально нейтральный, объективный, спокойный и вежливый стиль. Излагайте информацию сбалансированно, без эмоциональной окраски и предвзятости.",
 		},
 		2: {
 			ID:          2,
@@ -149,7 +149,7 @@ func (m *Module) initRolesAndTones() {
 		},
 		4: {
 			ID:          4,
-			Name:        "Юмористический",
+			Name:        "Юмор",
 			Description: "С легкой иронией и метафорами",
 			Instruction: "Отвечайте остроумно, с легким юмором, яркими метафорами и позитивной иронией.",
 		},
@@ -431,9 +431,9 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 			Text: fmt.Sprintf("⚠️ **Не удалось получить ответ от нейросети**\n\nПричина: %v\nПопробуйте повторить запрос или сменить роль.", err),
 			Buttons: [][]core.ResponseButton{
 				{
-					{Text: "🎭 Роль: " + roleName, Data: "chat:menu:roles"},
-					{Text: "🎨 Тон: " + toneName, Data: "chat:menu:tones"},
-					{Text: "🔄 Сброс контекста", Data: "chat:reset"},
+					{Text: "🎭 " + roleName, Data: "chat:menu:roles"},
+					{Text: "🎨 " + toneName, Data: "chat:menu:tones"},
+					{Text: "🔄 Очистить", Data: "chat:reset"},
 				},
 			},
 			NewPayload: newP,
@@ -445,9 +445,9 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 
 	buttons := [][]core.ResponseButton{
 		{
-			{Text: "🎭 Роль: " + roleName, Data: "chat:menu:roles"},
-			{Text: "🎨 Тон: " + toneName, Data: "chat:menu:tones"},
-			{Text: "🔄 Очистить контекст", Data: "chat:reset"},
+			{Text: "🎭 " + roleName, Data: "chat:menu:roles"},
+			{Text: "🎨 " + toneName, Data: "chat:menu:tones"},
+			{Text: "🔄 Очистить", Data: "chat:reset"},
 		},
 	}
 
@@ -498,8 +498,12 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 			}
 			buttons = append(buttons, []core.ResponseButton{
 				{
-					Text: fmt.Sprintf("%s%s (%s)", prefix, r.Name, r.Description),
+					Text: fmt.Sprintf("%s%s", prefix, r.Name),
 					Data: fmt.Sprintf("chat:role:%d", i),
+				},
+				{
+					Text: "❓",
+					Data: fmt.Sprintf("chat:role_info:%d", i),
 				},
 			})
 		}
@@ -508,8 +512,28 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		})
 
 		return &core.ModuleResult{
-			Text:    "🎭 **Выберите роль виртуального собеседника:**",
+			Text:    "🎭 **Выберите роль виртуального собеседника:**\n\n_Нажмите на роль для переключения или ❓ для подробного описания._",
 			Buttons: buttons,
+			Handled: true,
+		}, nil
+	}
+
+	if strings.HasPrefix(data, "chat:role_info:") {
+		var roleID int
+		_, _ = fmt.Sscanf(data, "chat:role_info:%d", &roleID)
+		r, ok := m.roles[roleID]
+		if !ok {
+			r = m.roles[1]
+		}
+		text := fmt.Sprintf("ℹ️ **Роль: %s**\n\n📌 **Описание:** %s\n\n💡 **Инструкция для нейросети:**\n_%s_", r.Name, r.Description, r.SystemPrompt)
+		return &core.ModuleResult{
+			Text: text,
+			Buttons: [][]core.ResponseButton{
+				{
+					{Text: "« Выбрать эту роль", Data: fmt.Sprintf("chat:role:%d", r.ID)},
+					{Text: "« К списку ролей", Data: "chat:menu:roles"},
+				},
+			},
 			Handled: true,
 		}, nil
 	}
@@ -548,7 +572,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 			}
 			buttons = append(buttons, []core.ResponseButton{
 				{
-					Text: fmt.Sprintf("%s%s (%s)", prefix, t.Name, t.Description),
+					Text: fmt.Sprintf("%s%s", prefix, t.Name),
 					Data: fmt.Sprintf("chat:tone:%d", i),
 				},
 			})

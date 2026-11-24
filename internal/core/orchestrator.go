@@ -82,7 +82,7 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 	} else {
 		user = &store.User{
 			ID:           1,
-			ActiveModeID: "shop",
+			ActiveModeID: "chat",
 			Role:         "user",
 		}
 	}
@@ -120,7 +120,7 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 
 	activeMode := user.ActiveModeID
 	if activeMode == "" {
-		activeMode = "shop"
+		activeMode = "chat"
 	}
 
 	// 3. Redis Lock Acquisition: lock:fsm:{user_id}:{active_mode_id}
@@ -261,7 +261,7 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 func (o *Orchestrator) handleStart(ctx context.Context, u *store.User, msg *IncomingMessage) (*DomainResponse, error) {
 	activeMode := u.ActiveModeID
 	if activeMode == "" {
-		activeMode = "shop"
+		activeMode = "chat"
 	}
 	text := fmt.Sprintf("👋 Привет! Добро пожаловать в «Bot Hub» — мультирежимную платформу ботов.\n\nТекущий активный режим: *%s*.\nИспользуйте меню или Mini App для навигации.", activeMode)
 	buttons := o.activeModeButtons(ctx)
@@ -285,14 +285,14 @@ func (o *Orchestrator) handleChangeMode(ctx context.Context, u *store.User, targ
 
 	if targetMode == "chat" {
 		text := "✅ Активный режим переключен на: *Общение* (ИИ-собеседник)\n\n" +
-			"🎭 Роль: *Ассистент (Универсальный)*\n" +
-			"🎨 Тональность: *Деловой*\n\n" +
+			"🎭 Роль: *Ассистент*\n" +
+			"🎨 Тональность: *Нейтральный*\n\n" +
 			"Задайте любой вопрос в чат или настройте роль и тон кнопками ниже:"
 		buttons := [][]ResponseButton{
 			{
 				{Text: "🎭 Роль", Data: "chat:menu:roles"},
 				{Text: "🎨 Тон", Data: "chat:menu:tones"},
-				{Text: "🔄 Сброс контекста", Data: "chat:reset"},
+				{Text: "🔄 Очистить", Data: "chat:reset"},
 			},
 		}
 		return &DomainResponse{

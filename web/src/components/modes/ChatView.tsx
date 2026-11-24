@@ -74,10 +74,10 @@ const rolesList: RoleMeta[] = [
 const tonesList: ToneMeta[] = [
   {
     id: 1,
-    shortName: 'Деловой',
-    fullName: 'Официально-деловой',
-    desc: 'Формальный стиль, четкая логика, списки и профессиональный тон',
-    iconEmoji: '💼',
+    shortName: 'Нейтральный',
+    fullName: 'Нейтральный',
+    desc: 'Объективный, спокойный и сбалансированный стиль без эмоциональной окраски',
+    iconEmoji: '⚖️',
   },
   {
     id: 2,

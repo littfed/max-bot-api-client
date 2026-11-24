@@ -1,5 +1,5 @@
 import React from 'react';
-import { CornerDownLeft, Settings } from 'lucide-react';
+import { MessageSquare, CornerDownLeft, Settings } from 'lucide-react';
 import { ModeItem, User } from '../../types';
 
 interface BottomBarProps {
@@ -8,6 +8,7 @@ interface BottomBarProps {
   activeModeId: string;
   currentView: string;
   onOpenAdmin: () => void;
+  onOpenChat: () => void;
 }
 
 export const BottomBar: React.FC<BottomBarProps> = ({
@@ -16,22 +17,27 @@ export const BottomBar: React.FC<BottomBarProps> = ({
   activeModeId,
   currentView,
   onOpenAdmin,
+  onOpenChat,
 }) => {
-  const isAdmin = user && (user.role === 'admin' || user.role === 'superadmin');
-
-  // Find active mode title
+  // Find active mode title (default to Общение)
   const activeMode = modes.find((m) => m.id === activeModeId);
-  const activeTitle = activeMode ? activeMode.title : 'Магазин';
+  const activeTitle = activeMode ? activeMode.title : 'Общение';
 
-  // Return to bot chat (closing webapp in Telegram or MAX)
-  const handleReturnToChat = () => {
+  const isAlreadyInChat = currentView === 'chat';
+
+  // Handle click on chat/return button
+  const handleChatAction = () => {
+    if (!isAlreadyInChat) {
+      onOpenChat();
+      return;
+    }
+
+    // If already in chat, close the webapp window to return to MAX messenger
     if (typeof window !== 'undefined') {
       if (window.Telegram?.WebApp?.close) {
         window.Telegram.WebApp.close();
       } else if ((window as any).max?.close) {
         (window as any).max.close();
-      } else {
-        alert('Возврат в чат бота (в клиенте Telegram или MAX это окно закроется)');
       }
     }
   };
@@ -49,30 +55,42 @@ export const BottomBar: React.FC<BottomBarProps> = ({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {/* Back to Chat button */}
+          {/* Chat / Messenger button */}
           <button
-            onClick={handleReturnToChat}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 text-xs sm:text-sm font-medium border border-slate-200/80 transition-all shadow-sm"
+            onClick={handleChatAction}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-medium border transition-all shadow-sm active:scale-95 ${
+              isAlreadyInChat
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/80'
+                : 'bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-200/80'
+            }`}
+            title={isAlreadyInChat ? 'Закрыть окно мини-апп и вернуться в чат' : 'Перейти в диалог с ИИ-ассистентом'}
           >
-            <span>В чат</span>
-            <CornerDownLeft className="w-3.5 h-3.5 text-slate-500" />
+            {isAlreadyInChat ? (
+              <>
+                <span>В мессенджер</span>
+                <CornerDownLeft className="w-3.5 h-3.5 text-slate-500" />
+              </>
+            ) : (
+              <>
+                <MessageSquare className="w-3.5 h-3.5 text-teal-600" />
+                <span>В чат</span>
+              </>
+            )}
           </button>
 
-          {/* Admin panel button if user has permissions */}
-          {isAdmin && (
-            <button
-              onClick={onOpenAdmin}
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs sm:text-sm font-medium border transition-all shadow-sm ${
-                currentView === 'admin'
-                  ? 'bg-amber-100 border-amber-300 text-amber-900'
-                  : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
-              }`}
-              title="Панель администратора"
-            >
-              <Settings className="w-3.5 h-3.5 text-amber-700" />
-              <span>Админ</span>
-            </button>
-          )}
+          {/* Admin panel button - always visible in bottom-right corner */}
+          <button
+            onClick={onOpenAdmin}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-medium border transition-all shadow-sm active:scale-95 ${
+              currentView === 'admin'
+                ? 'bg-amber-100 border-amber-300 text-amber-900'
+                : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
+            }`}
+            title="Панель администратора"
+          >
+            <Settings className="w-3.5 h-3.5 text-amber-700" />
+            <span>Админ</span>
+          </button>
         </div>
       </div>
     </footer>

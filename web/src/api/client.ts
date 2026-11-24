@@ -5,6 +5,7 @@ import {
   ShopOrder,
   PaymentSimulationResult,
   TimeSlot,
+  Booking,
   ReceptionEvent,
   EventRegistration,
   SupportAskResponse,
@@ -199,6 +200,11 @@ export const apiClient = {
     return res.data;
   },
 
+  async getUserOrders(): Promise<{ orders: ShopOrder[] }> {
+    const res = await api.get<{ orders: ShopOrder[] }>('/shop/orders');
+    return res.data;
+  },
+
   // Reception Module
   async getReceptionSlots(serviceId: string, date?: string): Promise<{ service_id: string; slots: TimeSlot[] }> {
     const res = await api.get<{ service_id: string; slots: TimeSlot[] }>('/reception/slots', {
@@ -215,6 +221,11 @@ export const apiClient = {
     return res.data;
   },
 
+  async getUserBookings(): Promise<{ bookings: Booking[] }> {
+    const res = await api.get<{ bookings: Booking[] }>('/reception/bookings');
+    return res.data;
+  },
+
   async getReceptionEvents(): Promise<{ events: ReceptionEvent[] }> {
     const res = await api.get<{ events: ReceptionEvent[] }>('/reception/events');
     return res.data;
@@ -227,8 +238,18 @@ export const apiClient = {
     return res.data;
   },
 
+  async getUserRegistrations(): Promise<{ registrations: EventRegistration[] }> {
+    const res = await api.get<{ registrations: EventRegistration[] }>('/reception/registrations');
+    return res.data;
+  },
+
   async submitReceptionOnboarding(answers: Record<string, string>): Promise<{ success: boolean }> {
     const res = await api.post<{ success: boolean }>('/reception/onboarding', { answers });
+    return res.data;
+  },
+
+  async getReceptionOnboarding(): Promise<{ submission: { id: number; user_id: number; answers: Record<string, string>; created_at: string } | null }> {
+    const res = await api.get<{ submission: { id: number; user_id: number; answers: Record<string, string>; created_at: string } | null }>('/reception/onboarding');
     return res.data;
   },
 

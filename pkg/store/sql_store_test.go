@@ -241,7 +241,7 @@ func TestBotHubStore_UserAndModeState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveUserIdentity failed: %v", err)
 	}
-	if user.ID == 0 || user.ActiveModeID != "shop" {
+	if user.ID == 0 || user.ActiveModeID != "chat" {
 		t.Errorf("Unexpected user: %+v", user)
 	}
 
@@ -250,7 +250,7 @@ func TestBotHubStore_UserAndModeState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUser failed: %v", err)
 	}
-	if gotUser.ID != user.ID || gotUser.ActiveModeID != "shop" {
+	if gotUser.ID != user.ID || gotUser.ActiveModeID != "chat" {
 		t.Errorf("Unexpected GetUser result: %+v", gotUser)
 	}
 

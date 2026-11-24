@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ type Module struct {
 	services      map[string]store.Service
 	bookedSlots   map[string]store.Booking
 	events        map[string]*store.Event
+	registrations map[string]*store.EventRegistration
 	submissionsMu sync.Mutex
 	submissions   []store.OnboardingSubmission
 }
@@ -40,11 +42,12 @@ func New(st any, lockManager *core.LockManager) *Module {
 	}
 
 	m := &Module{
-		lockManager: lockManager,
-		services:    make(map[string]store.Service),
-		bookedSlots: make(map[string]store.Booking),
-		events:      make(map[string]*store.Event),
-		submissions: make([]store.OnboardingSubmission, 0),
+		lockManager:   lockManager,
+		services:      make(map[string]store.Service),
+		bookedSlots:   make(map[string]store.Booking),
+		events:        make(map[string]*store.Event),
+		registrations: make(map[string]*store.EventRegistration),
+		submissions:   make([]store.OnboardingSubmission, 0),
 	}
 	m.seedDefaults()
 	return m
@@ -123,14 +126,20 @@ func (m *Module) BookSlot(ctx context.Context, userID int64, serviceID string, s
 		return errors.New("slot already booked: anti-overbooking triggered")
 	}
 
+	srvTitle := serviceID
+	if srv, ok := m.services[serviceID]; ok {
+		srvTitle = srv.Title
+	}
+
 	bookingID := fmt.Sprintf("bk_%s_%d_%d", serviceID, userID, time.Now().Unix())
 	m.bookedSlots[k] = store.Booking{
-		ID:        bookingID,
-		UserID:    userID,
-		ServiceID: serviceID,
-		SlotTime:  slotTime,
-		Status:    "confirmed",
-		CreatedAt: time.Now(),
+		ID:           bookingID,
+		UserID:       userID,
+		ServiceID:    serviceID,
+		ServiceTitle: srvTitle,
+		SlotTime:     slotTime,
+		Status:       "confirmed",
+		CreatedAt:    time.Now(),
 	}
 
 	return nil
@@ -154,12 +163,77 @@ func (m *Module) RegisterEvent(ctx context.Context, userID int64, eventID string
 	regID := fmt.Sprintf("reg_%s_%d_%d", eventID, userID, time.Now().Unix())
 	ticketQR := fmt.Sprintf("QR_TICKET:%s:USER_%d:%d", eventID, userID, time.Now().Unix())
 
+	if m.registrations == nil {
+		m.registrations = make(map[string]*store.EventRegistration)
+	}
+	m.registrations[regID] = &store.EventRegistration{
+		ID:           regID,
+		EventID:      eventID,
+		EventTitle:   ev.Title,
+		EventTime:    ev.EventTime,
+		UserID:       userID,
+		TicketQR:     ticketQR,
+		RegisteredAt: time.Now(),
+	}
+
 	return &EventRegistrationResult{
 		RegistrationID: regID,
 		EventID:        eventID,
 		UserID:         userID,
 		TicketQR:       ticketQR,
 	}, nil
+}
+
+// GetUserBookings returns all confirmed slot bookings for a user.
+func (m *Module) GetUserBookings(ctx context.Context, userID int64) ([]store.Booking, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []store.Booking
+	for _, b := range m.bookedSlots {
+		if b.UserID == userID {
+			if b.ServiceTitle == "" {
+				if srv, ok := m.services[b.ServiceID]; ok {
+					b.ServiceTitle = srv.Title
+				}
+			}
+			result = append(result, b)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].SlotTime.Before(result[j].SlotTime)
+	})
+	return result, nil
+}
+
+// GetUserRegistrations returns all registered events with QR tickets for a user.
+func (m *Module) GetUserRegistrations(ctx context.Context, userID int64) ([]*store.EventRegistration, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*store.EventRegistration
+	for _, reg := range m.registrations {
+		if reg.UserID == userID {
+			result = append(result, reg)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].RegisteredAt.After(result[j].RegisteredAt)
+	})
+	return result, nil
+}
+
+// GetUserOnboarding returns the latest submitted onboarding questionnaire for a user.
+func (m *Module) GetUserOnboarding(ctx context.Context, userID int64) (*store.OnboardingSubmission, error) {
+	m.submissionsMu.Lock()
+	defer m.submissionsMu.Unlock()
+
+	for i := len(m.submissions) - 1; i >= 0; i-- {
+		if m.submissions[i].UserID == userID {
+			return &m.submissions[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // SubmitOnboarding stores completed questionnaire answers.

@@ -69,10 +69,10 @@ func TestChatModule_LLMInvocationWithRoleAndTone(t *testing.T) {
 	}
 
 	sysMsg, _ := mock.lastReq.Messages[0].Content.(string)
-	if !strings.Contains(sysMsg, "Продуктовый аналитик") {
+	if !strings.Contains(sysMsg, "Аналитик") {
 		t.Errorf("expected system message to contain role, got: %s", sysMsg)
 	}
-	if !strings.Contains(sysMsg, "Юмористический") {
+	if !strings.Contains(sysMsg, "Юмор") {
 		t.Errorf("expected system message to contain tone, got: %s", sysMsg)
 	}
 }

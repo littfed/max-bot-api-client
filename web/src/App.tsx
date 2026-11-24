@@ -58,7 +58,7 @@ const initial8Modes: ModeItem[] = [
 export const App: React.FC = () => {
   const [user, setUser] = useState<User | null>({
     id: 1,
-    active_mode_id: 'shop',
+    active_mode_id: 'chat',
     role: 'admin', // Allows viewing admin button in demo
     timezone: 'UTC+3',
     created_at: new Date().toISOString(),
@@ -66,9 +66,9 @@ export const App: React.FC = () => {
   });
 
   const [modes, setModes] = useState<ModeItem[]>(initial8Modes);
-  const [activeModeId, setActiveModeId] = useState<string>('shop');
+  const [activeModeId, setActiveModeId] = useState<string>('chat');
   const [currentView, setCurrentView] = useState<string>('hub'); // 'hub' | 'admin' | mode_id
-  const [testedModes, setTestedModes] = useState<string[]>(['shop']);
+  const [testedModes, setTestedModes] = useState<string[]>(['chat']);
 
   // Mascot state with speech cloud text from mockup
   const [mascot, setMascot] = useState<MascotState>({
@@ -246,6 +246,13 @@ export const App: React.FC = () => {
         activeModeId={activeModeId}
         currentView={currentView}
         onOpenAdmin={() => setCurrentView('admin')}
+        onOpenChat={() => {
+          setCurrentView('chat');
+          const chatMode = modes.find((m) => m.id === 'chat');
+          if (chatMode && activeModeId !== 'chat') {
+            handleSelectMode(chatMode);
+          }
+        }}
       />
 
       {/* Maintenance Bottom Sheet Modal matching Mockup 3 */}

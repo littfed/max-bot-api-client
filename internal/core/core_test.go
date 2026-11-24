@@ -184,9 +184,9 @@ func TestOrchestrator_PipelineDispatch(t *testing.T) {
 	guard := core.NewMaintenanceGuard(s, nil)
 	orch := core.NewOrchestrator(s, fsm, lockMgr, guard)
 
-	shopMod := &mockModule{
-		id:    "shop",
-		title: "Магазин",
+	chatMod := &mockModule{
+		id:    "chat",
+		title: "Общение",
 		replyResult: &core.ModuleResult{
 			Text:       "Добро пожаловать в каталог!",
 			NewStep:    "catalog_view",
@@ -194,7 +194,7 @@ func TestOrchestrator_PipelineDispatch(t *testing.T) {
 			Handled:    true,
 		},
 	}
-	orch.RegisterModule(shopMod)
+	orch.RegisterModule(chatMod)
 
 	event := &core.DomainEvent{
 		Type:           core.EventTypeMessage,
@@ -224,7 +224,7 @@ func TestOrchestrator_PipelineDispatch(t *testing.T) {
 	}
 
 	// Verify state was persisted in composite FSM
-	st, err := fsm.Get(ctx, resp.UserID, "shop")
+	st, err := fsm.Get(ctx, resp.UserID, "chat")
 	if err != nil {
 		t.Fatalf("fsm.Get failed: %v", err)
 	}
@@ -447,11 +447,11 @@ func TestOrchestrator_ConcurrentLockError(t *testing.T) {
 	guard := core.NewMaintenanceGuard(s, nil)
 	orch := core.NewOrchestrator(s, fsm, lockMgr, guard)
 
-	shopMod := &mockModule{id: "shop", title: "Магазин"}
-	orch.RegisterModule(shopMod)
+	chatMod := &mockModule{id: "chat", title: "Общение"}
+	orch.RegisterModule(chatMod)
 
-	// Pre-acquire lock for user 777 in shop
-	lockKey := core.LockKey(1, "shop")
+	// Pre-acquire lock for user in chat
+	lockKey := core.LockKey(1, "chat")
 	_, _ = lockMgr.Acquire(ctx, lockKey, 5*time.Second)
 
 	event := &core.DomainEvent{
@@ -488,16 +488,16 @@ func TestOrchestrator_CallbackHandling(t *testing.T) {
 	guard := core.NewMaintenanceGuard(s, nil)
 	orch := core.NewOrchestrator(s, fsm, lockMgr, guard)
 
-	shopMod := &mockModule{
-		id:    "shop",
-		title: "Магазин",
+	chatMod := &mockModule{
+		id:    "chat",
+		title: "Общение",
 		replyResult: &core.ModuleResult{
 			Text:    "Товар добавлен в корзину",
 			NewStep: "cart_updated",
 			Handled: true,
 		},
 	}
-	orch.RegisterModule(shopMod)
+	orch.RegisterModule(chatMod)
 
 	event := &core.DomainEvent{
 		Type:           core.EventTypeCallback,
@@ -560,18 +560,18 @@ func TestOrchestrator_ResetState(t *testing.T) {
 	orch := core.NewOrchestrator(s, fsm, lockMgr, guard)
 
 	// Pre-populate state
-	_ = fsm.Set(ctx, 1, "shop", "checkout", []byte(`{"order_id":100}`))
+	_ = fsm.Set(ctx, 1, "chat", "checkout", []byte(`{"order_id":100}`))
 
-	shopMod := &mockModule{
-		id:    "shop",
-		title: "Магазин",
+	chatMod := &mockModule{
+		id:    "chat",
+		title: "Общение",
 		replyResult: &core.ModuleResult{
 			Text:       "Заказ оформлен!",
 			ResetState: true,
 			Handled:    true,
 		},
 	}
-	orch.RegisterModule(shopMod)
+	orch.RegisterModule(chatMod)
 
 	event := &core.DomainEvent{
 		Type:           core.EventTypeMessage,
@@ -596,7 +596,7 @@ func TestOrchestrator_ResetState(t *testing.T) {
 	}
 
 	// Verify state is reset
-	st, err := fsm.Get(ctx, resp.UserID, "shop")
+	st, err := fsm.Get(ctx, resp.UserID, "chat")
 	if err != nil {
 		t.Fatalf("fsm.Get failed: %v", err)
 	}
@@ -613,15 +613,15 @@ func TestOrchestrator_QuotaLimit(t *testing.T) {
 	guard := core.NewMaintenanceGuard(s, nil)
 	orch := core.NewOrchestrator(s, fsm, lockMgr, guard)
 
-	shopMod := &mockModule{
-		id:    "shop",
-		title: "Магазин",
+	chatMod := &mockModule{
+		id:    "chat",
+		title: "Общение",
 		replyResult: &core.ModuleResult{
 			Text:    "OK",
 			Handled: true,
 		},
 	}
-	orch.RegisterModule(shopMod)
+	orch.RegisterModule(chatMod)
 
 	u, err := s.ResolveUserIdentity(ctx, "max", "user_quota", "user", "Quota", "")
 	if err != nil {

@@ -698,7 +698,7 @@ func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUs
 
 	now := time.Now()
 	var user User
-	user.ActiveModeID = "shop"
+	user.ActiveModeID = "chat"
 	user.Role = "user"
 	user.Timezone = "UTC+3"
 	user.CreatedAt = now

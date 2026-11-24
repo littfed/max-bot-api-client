@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,12 +25,15 @@ type PaymentSimulationResult struct {
 
 // Order represents a shop order.
 type Order struct {
-	ID        string    `json:"id"`
-	UserID    int64     `json:"user_id"`
-	ProductID string    `json:"product_id"`
-	Status    string    `json:"status"` // "pending", "paid", "abandoned"
-	QRCode    string    `json:"qr_code"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	UserID          int64     `json:"user_id"`
+	ProductID       string    `json:"product_id"`
+	ProductTitle    string    `json:"product_title,omitempty"`
+	Price           int       `json:"price,omitempty"`
+	Status          string    `json:"status"` // "pending", "paid", "abandoned"
+	QRCode          string    `json:"qr_code"`
+	DeliveryPayload string    `json:"delivery_payload,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // Module implements the BotModule interface for the Shop mode.
@@ -148,12 +152,14 @@ func (m *Module) CreateOrder(ctx context.Context, userID int64, productID string
 	qrPayload := fmt.Sprintf("https://combot.littfed.ru/pay/demo?order=%s&amount=%d", orderID, p.Price)
 
 	ord := &Order{
-		ID:        orderID,
-		UserID:    userID,
-		ProductID: productID,
-		Status:    "pending",
-		QRCode:    qrPayload,
-		CreatedAt: time.Now(),
+		ID:              orderID,
+		UserID:          userID,
+		ProductID:       productID,
+		ProductTitle:    p.Title,
+		Price:           p.Price,
+		Status:          "pending",
+		QRCode:          qrPayload,
+		CreatedAt:       time.Now(),
 	}
 
 	m.orders[orderID] = ord
@@ -170,6 +176,32 @@ func (m *Module) GetOrder(ctx context.Context, orderID string) (*Order, error) {
 		return nil, errors.New("order not found")
 	}
 	return ord, nil
+}
+
+// GetUserOrders returns all orders placed by a specific user.
+func (m *Module) GetUserOrders(ctx context.Context, userID int64) ([]*Order, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*Order
+	for _, ord := range m.orders {
+		if ord.UserID == userID {
+			if ord.ProductTitle == "" {
+				if p, ok := m.products[ord.ProductID]; ok {
+					ord.ProductTitle = p.Title
+					ord.Price = p.Price
+					if ord.Status == "paid" && ord.DeliveryPayload == "" {
+						ord.DeliveryPayload = p.ContentPayload
+					}
+				}
+			}
+			result = append(result, ord)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
+	return result, nil
 }
 
 // SimulatePayment executes the demo checkout workflow:
@@ -202,6 +234,7 @@ func (m *Module) SimulatePayment(ctx context.Context, orderID string, action str
 	switch strings.ToLower(action) {
 	case "paid":
 		ord.Status = "paid"
+		ord.DeliveryPayload = payload
 		return &PaymentSimulationResult{
 			OrderID:           orderID,
 			Status:            "paid",

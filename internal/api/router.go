@@ -184,14 +184,18 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	// Shop Module Endpoints
 	mux.HandleFunc("GET /api/v1/shop/catalog", modH.handleShopCatalog)
 	mux.HandleFunc("POST /api/v1/shop/orders", modH.handleShopCreateOrder)
+	mux.HandleFunc("GET /api/v1/shop/orders", modH.handleShopUserOrders)
 	mux.HandleFunc("POST /api/v1/shop/orders/{id}/simulate", modH.handleShopSimulate)
 
 	// Reception Module Endpoints
 	mux.HandleFunc("GET /api/v1/reception/slots", modH.handleReceptionSlots)
 	mux.HandleFunc("POST /api/v1/reception/book", modH.handleReceptionBook)
+	mux.HandleFunc("GET /api/v1/reception/bookings", modH.handleReceptionUserBookings)
 	mux.HandleFunc("GET /api/v1/reception/events", modH.handleReceptionEvents)
 	mux.HandleFunc("POST /api/v1/reception/events/{id}/register", modH.handleReceptionRegisterEvent)
+	mux.HandleFunc("GET /api/v1/reception/registrations", modH.handleReceptionUserRegistrations)
 	mux.HandleFunc("POST /api/v1/reception/onboarding", modH.handleReceptionOnboarding)
+	mux.HandleFunc("GET /api/v1/reception/onboarding", modH.handleReceptionGetOnboarding)
 
 	// Support Module Endpoints
 	mux.HandleFunc("POST /api/v1/support/ask", modH.handleSupportAsk)

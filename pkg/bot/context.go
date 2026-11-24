@@ -802,7 +802,7 @@ func (c *Context) AnswerCallbackAlert(alert string) error {
 	return c.AnswerNotification(alert)
 }
 
-// SendChatAction sends a presence indicator (e.g. typing_on) to the active chat.
+// SendChatAction sends a presence indicator (e.g. typing_on) to the active chat and/or user.
 func (c *Context) SendChatAction(action string) error {
 	if c.client == nil {
 		return nil
@@ -811,7 +811,17 @@ func (c *Context) SendChatAction(action string) error {
 	if err != nil {
 		return err
 	}
-	return c.client.SendChatAction(c.Ctx(), rec.ID(), action)
+	err = c.client.SendChatAction(c.Ctx(), rec.ID(), action)
+
+	// In 1-on-1 private dialogues, also dispatch to both chat_id and user_id to ensure
+	// presence status displays across all MAX mobile and desktop client implementations.
+	if sender := c.Sender(); sender != nil && sender.UserID != 0 && sender.UserID != rec.ID() {
+		_ = c.client.SendChatAction(c.Ctx(), sender.UserID, action)
+	}
+	if c.Update != nil && c.Update.ChatID != 0 && c.Update.ChatID != rec.ID() {
+		_ = c.client.SendChatAction(c.Ctx(), c.Update.ChatID, action)
+	}
+	return err
 }
 
 // Typing sends the "typing_on" action to display the typing indicator.

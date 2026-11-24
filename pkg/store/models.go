@@ -177,13 +177,14 @@ type TimeSlot struct {
 
 // Booking represents a confirmed service booking.
 type Booking struct {
-	ID        string    `json:"id"`
-	UserID    int64     `json:"user_id"`
-	ServiceID string    `json:"service_id"`
-	SlotTime  time.Time `json:"slot_time"`
-	Status    string    `json:"status"` // "confirmed", "cancelled"
-	Notes     string    `json:"notes,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	UserID       int64     `json:"user_id"`
+	ServiceID    string    `json:"service_id"`
+	ServiceTitle string    `json:"service_title,omitempty"`
+	SlotTime     time.Time `json:"slot_time"`
+	Status       string    `json:"status"` // "confirmed", "cancelled"
+	Notes        string    `json:"notes,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // Event represents an event in the Reception module.
@@ -199,6 +200,8 @@ type Event struct {
 type EventRegistration struct {
 	ID           string    `json:"id"`
 	EventID      string    `json:"event_id"`
+	EventTitle   string    `json:"event_title,omitempty"`
+	EventTime    time.Time `json:"event_time,omitempty"`
 	UserID       int64     `json:"user_id"`
 	TicketQR     string    `json:"ticket_qr"`
 	RegisteredAt time.Time `json:"registered_at"`

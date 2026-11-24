@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/littfed/max-bot-api-client/internal/modules/shop"
 	"github.com/littfed/max-bot-api-client/pkg/store"
 )
 
@@ -94,6 +95,31 @@ func (h *modulesHandler) handleShopSimulate(w http.ResponseWriter, r *http.Reque
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"result": result,
+	})
+}
+
+func (h *modulesHandler) handleShopUserOrders(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.cfg.ShopModule == nil {
+		writeError(w, http.StatusServiceUnavailable, "shop module not available")
+		return
+	}
+
+	orders, err := h.cfg.ShopModule.GetUserOrders(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get user orders: %v", err))
+		return
+	}
+	if orders == nil {
+		orders = []*shop.Order{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"orders": orders,
 	})
 }
 
@@ -247,6 +273,78 @@ func (h *modulesHandler) handleReceptionOnboarding(w http.ResponseWriter, r *htt
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
+	})
+}
+
+func (h *modulesHandler) handleReceptionUserBookings(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.cfg.ReceptionModule == nil {
+		writeError(w, http.StatusServiceUnavailable, "reception module not available")
+		return
+	}
+
+	bookings, err := h.cfg.ReceptionModule.GetUserBookings(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get user bookings: %v", err))
+		return
+	}
+	if bookings == nil {
+		bookings = []store.Booking{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"bookings": bookings,
+	})
+}
+
+func (h *modulesHandler) handleReceptionUserRegistrations(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.cfg.ReceptionModule == nil {
+		writeError(w, http.StatusServiceUnavailable, "reception module not available")
+		return
+	}
+
+	regs, err := h.cfg.ReceptionModule.GetUserRegistrations(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get user registrations: %v", err))
+		return
+	}
+	if regs == nil {
+		regs = []*store.EventRegistration{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"registrations": regs,
+	})
+}
+
+func (h *modulesHandler) handleReceptionGetOnboarding(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.cfg.ReceptionModule == nil {
+		writeError(w, http.StatusServiceUnavailable, "reception module not available")
+		return
+	}
+
+	sub, err := h.cfg.ReceptionModule.GetUserOnboarding(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get user onboarding: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"submission": sub,
 	})
 }
 
@@ -554,3 +652,4 @@ func (h *modulesHandler) handleChatClear(w http.ResponseWriter, r *http.Request)
 		"success": true,
 	})
 }
+

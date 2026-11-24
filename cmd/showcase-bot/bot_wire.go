@@ -138,10 +138,12 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 		if event == nil {
 			return nil
 		}
-		_ = c.Typing()
+		if errTyping := c.Typing(); errTyping != nil {
+			logger.Debug("initial typing dispatch note", slog.Any("error", errTyping))
+		}
 		stopTyping := make(chan struct{})
 		go func() {
-			ticker := time.NewTicker(4 * time.Second)
+			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
@@ -162,7 +164,8 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 		return sendDomainResponse(c, resp)
 	}
 
-	// Commands routed to Orchestrator
+	// Launch and global commands routed to Orchestrator
+	b.OnStart(dispatchHandler)
 	b.OnCommand("mode", dispatchHandler)
 	b.OnCommand("lead", dispatchHandler)
 	b.OnCommand("hub", dispatchHandler)
@@ -192,10 +195,12 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 			return nil
 		}
 
-		_ = c.Typing()
+		if errTyping := c.Typing(); errTyping != nil {
+			logger.Debug("initial typing dispatch note", slog.Any("error", errTyping))
+		}
 		stopTyping := make(chan struct{})
 		go func() {
-			ticker := time.NewTicker(4 * time.Second)
+			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {

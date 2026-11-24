@@ -53,8 +53,11 @@ export interface ShopOrder {
   id: string;
   user_id: number;
   product_id: string;
+  product_title?: string;
+  price?: number;
   status: 'pending' | 'paid' | 'abandoned';
   qr_code: string;
+  delivery_payload?: string;
   created_at: string;
 }
 
@@ -83,6 +86,17 @@ export interface TimeSlot {
   booked_by_user_id?: number;
 }
 
+export interface Booking {
+  id: string;
+  user_id: number;
+  service_id: string;
+  service_title?: string;
+  slot_time: string;
+  status: string;
+  notes?: string;
+  created_at: string;
+}
+
 export interface ReceptionEvent {
   id: string;
   title: string;
@@ -95,9 +109,19 @@ export interface EventRegistration {
   registration_id?: string;
   id?: string;
   event_id: string;
+  event_title?: string;
+  event_time?: string;
   user_id: number;
   ticket_qr: string;
   registered_at?: string;
+  created_at?: string;
+}
+
+export interface OnboardingSubmission {
+  id: number;
+  user_id: number;
+  answers: Record<string, string>;
+  created_at: string;
 }
 
 // Support
