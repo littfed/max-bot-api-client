@@ -1,7 +1,9 @@
 package main
 
 import (
+	"compress/gzip"
 	"fmt"
+	"io"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -10,6 +12,26 @@ import (
 
 	"github.com/littfed/max-bot-api-client/web"
 )
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	writer     io.Writer
+	headerSent bool
+}
+
+func (g *gzipResponseWriter) Write(b []byte) (int, error) {
+	if !g.headerSent {
+		g.Header().Del("Content-Length")
+		g.headerSent = true
+	}
+	return g.writer.Write(b)
+}
+
+func (g *gzipResponseWriter) WriteHeader(statusCode int) {
+	g.Header().Del("Content-Length")
+	g.headerSent = true
+	g.ResponseWriter.WriteHeader(statusCode)
+}
 
 // RegisterWebSPA mounts the embedded React 18 SPA static file server and client-side routing fallback.
 func RegisterWebSPA(mux *http.ServeMux) error {
@@ -34,6 +56,16 @@ func RegisterWebSPA(mux *http.ServeMux) error {
 			return
 		}
 
+		// Enable transparent gzip compression if supported by client
+		var outWriter http.ResponseWriter = w
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			gz := gzip.NewWriter(w)
+			defer gz.Close()
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Vary", "Accept-Encoding")
+			outWriter = &gzipResponseWriter{ResponseWriter: w, writer: gz}
+		}
+
 		cleanPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
 		if cleanPath == "." || cleanPath == "" || cleanPath == "index.html" ||
 			cleanPath == "maxapp" || cleanPath == "webapp" ||
@@ -43,9 +75,16 @@ func RegisterWebSPA(mux *http.ServeMux) error {
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
 			w.Header().Set("Expires", "0")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(indexHTML)
+			outWriter.WriteHeader(http.StatusOK)
+			_, _ = outWriter.Write(indexHTML)
 			return
+		}
+
+		// Set aggressive caching for content-hashed assets and vendored SDKs
+		if strings.HasPrefix(cleanPath, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else if cleanPath == "max-web-app.js" || cleanPath == "telegram-web-app.js" {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
 		}
 
 		// Check if file exists in distFS and is a regular file (prevent directory listing)
@@ -63,7 +102,7 @@ func RegisterWebSPA(mux *http.ServeMux) error {
 				if mimeType := mime.TypeByExtension(ext); mimeType != "" {
 					w.Header().Set("Content-Type", mimeType)
 				}
-				fileServer.ServeHTTP(w, r)
+				fileServer.ServeHTTP(outWriter, r)
 				return
 			}
 		}
@@ -79,8 +118,8 @@ func RegisterWebSPA(mux *http.ServeMux) error {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(indexHTML)
+		outWriter.WriteHeader(http.StatusOK)
+		_, _ = outWriter.Write(indexHTML)
 	}
 
 	mux.HandleFunc("/", serveSPA)

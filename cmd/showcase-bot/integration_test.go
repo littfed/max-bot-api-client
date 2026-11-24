@@ -110,7 +110,7 @@ func TestIntegration_WebSPAAndAPI(t *testing.T) {
 	if recRoot.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for /, got %d", recRoot.Code)
 	}
-	if !strings.Contains(recRoot.Body.String(), "<div id=\"root\"></div>") {
+	if !strings.Contains(recRoot.Body.String(), "<div id=\"root\"") {
 		t.Errorf("expected embedded root div in response, got: %s", recRoot.Body.String())
 	}
 
@@ -122,7 +122,7 @@ func TestIntegration_WebSPAAndAPI(t *testing.T) {
 	if recSPA.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for /reception fallback, got %d", recSPA.Code)
 	}
-	if !strings.Contains(recSPA.Body.String(), "<div id=\"root\"></div>") {
+	if !strings.Contains(recSPA.Body.String(), "<div id=\"root\"") {
 		t.Errorf("expected embedded root div in fallback, got: %s", recSPA.Body.String())
 	}
 

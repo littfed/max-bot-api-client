@@ -80,4 +80,29 @@ func TestRegisterWebSPA(t *testing.T) {
 			t.Errorf("expected 404 for directory request %s, got %d", dirPath, recDir.Code)
 		}
 	}
+
+	// 7. Test Gzip compression on index.html
+	reqGzip := httptest.NewRequest(http.MethodGet, "/maxapp", nil)
+	reqGzip.Header.Set("Accept-Encoding", "gzip")
+	recGzip := httptest.NewRecorder()
+	mux.ServeHTTP(recGzip, reqGzip)
+
+	if recGzip.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /maxapp with gzip, got %d", recGzip.Code)
+	}
+	if recGzip.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("expected Content-Encoding: gzip, got: %s", recGzip.Header().Get("Content-Encoding"))
+	}
+
+	// 8. Test vendored SDK serving and caching
+	reqSDK := httptest.NewRequest(http.MethodGet, "/max-web-app.js", nil)
+	recSDK := httptest.NewRecorder()
+	mux.ServeHTTP(recSDK, reqSDK)
+
+	if recSDK.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /max-web-app.js, got %d", recSDK.Code)
+	}
+	if !strings.Contains(recSDK.Header().Get("Cache-Control"), "public, max-age=") {
+		t.Errorf("expected Cache-Control on SDK, got: %s", recSDK.Header().Get("Cache-Control"))
+	}
 }

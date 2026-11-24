@@ -34,10 +34,15 @@ export const BottomBar: React.FC<BottomBarProps> = ({
 
     // If already in chat, close the webapp window to return to MAX messenger
     if (typeof window !== 'undefined') {
-      if (window.Telegram?.WebApp?.close) {
-        window.Telegram.WebApp.close();
-      } else if ((window as any).max?.close) {
-        (window as any).max.close();
+      const win = window as any;
+      if (typeof win.WebApp?.close === 'function') {
+        win.WebApp.close();
+      } else if (win.Telegram?.WebApp?.close) {
+        win.Telegram.WebApp.close();
+      } else if (typeof win.max?.close === 'function') {
+        win.max.close();
+      } else if (typeof win.close === 'function') {
+        win.close();
       }
     }
   };
