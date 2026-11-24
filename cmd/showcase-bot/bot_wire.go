@@ -138,7 +138,23 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 		if event == nil {
 			return nil
 		}
+		_ = c.Typing()
+		stopTyping := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(4 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopTyping:
+					return
+				case <-ticker.C:
+					_ = c.Typing()
+				}
+			}
+		}()
+
 		resp, err := orchestrator.ProcessEvent(ctx, event)
+		close(stopTyping)
 		if err != nil {
 			logger.Error("orchestrator: error processing event", slog.Any("error", err))
 			return err
@@ -176,7 +192,23 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 			return nil
 		}
 
+		_ = c.Typing()
+		stopTyping := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(4 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopTyping:
+					return
+				case <-ticker.C:
+					_ = c.Typing()
+				}
+			}
+		}()
+
 		resp, err := orchestrator.ProcessEvent(ctx, event)
+		close(stopTyping)
 		if err != nil {
 			logger.Error("orchestrator: error processing plain text message", slog.Any("error", err))
 			return err
