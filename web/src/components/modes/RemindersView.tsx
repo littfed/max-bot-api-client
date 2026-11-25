@@ -73,16 +73,21 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     return () => clearTimeout(timer);
   }, [simCountdown]);
 
+  const formatLocalDateTimeInput = (date: Date): string => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
   const handleApplyPreset = (minutes: number) => {
     const target = new Date(Date.now() + minutes * 60 * 1000);
-    setRemindAtInput(target.toISOString().slice(0, 16));
+    setRemindAtInput(formatLocalDateTimeInput(target));
   };
 
   const handleApplyTomorrow = (hour: number, minute: number) => {
     const target = new Date();
     target.setDate(target.getDate() + 1);
     target.setHours(hour, minute, 0, 0);
-    setRemindAtInput(target.toISOString().slice(0, 16));
+    setRemindAtInput(formatLocalDateTimeInput(target));
   };
 
   const handleCreateReminder = async (e: React.FormEvent) => {
