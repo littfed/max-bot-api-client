@@ -197,21 +197,27 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 	}
 
 	// 6. Module Dispatch: delegate event to registered virtual bot module
+	// Route cross-mode reminder notification callbacks ("rmd:") directly to reminders module.
+	targetMode := activeMode
+	if event.Callback != nil && strings.HasPrefix(event.Callback.Data, "rmd:") {
+		targetMode = "reminders"
+	}
+
 	o.mu.RLock()
-	module, exists := o.modules[activeMode]
+	module, exists := o.modules[targetMode]
 	o.mu.RUnlock()
 
 	if !exists {
 		return &DomainResponse{
 			UserID:       user.ID,
 			ActiveModeID: activeMode,
-			Text:         fmt.Sprintf("Режим '%s' временно недоступен", activeMode),
+			Text:         fmt.Sprintf("Режим '%s' временно недоступен", targetMode),
 			Handled:      false,
 		}, nil
 	}
 
-	// Load composite FSM state for (user.ID, activeMode)
-	state, err := o.fsm.Get(ctx, user.ID, activeMode)
+	// Load composite FSM state for (user.ID, targetMode)
+	state, err := o.fsm.Get(ctx, user.ID, targetMode)
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator: failed to get fsm state: %w", err)
 	}
@@ -224,7 +230,7 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("orchestrator: module %s handler error: %w", activeMode, err)
+		return nil, fmt.Errorf("orchestrator: module %s handler error: %w", targetMode, err)
 	}
 
 	if modResult == nil {

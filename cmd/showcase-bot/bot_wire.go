@@ -179,6 +179,7 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 	b.OnCallbackPrefix("support:", dispatchHandler)
 	b.OnCallbackPrefix("chat:", dispatchHandler)
 	b.OnCallbackPrefix("lead:", dispatchHandler)
+	b.OnCallbackPrefix("rmd:", dispatchHandler)
 
 	// Plain text messages in active conversational modes (Reception, Support, Chat, etc.)
 	b.OnIdleMessage(func(c *bot.Context) error {

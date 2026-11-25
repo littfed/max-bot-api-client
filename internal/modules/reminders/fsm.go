@@ -289,8 +289,14 @@ func (m *Module) handleCallbackFSM(ctx context.Context, u *store.User, state *co
 
 	case strings.HasPrefix(data, "rmd:done:"):
 		idStr := strings.TrimPrefix(data, "rmd:done:")
-		id, _ := strconv.ParseInt(idStr, 10, 64)
-		_, nextRem, err := m.service.CompleteReminder(ctx, id, loc)
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			return &core.ModuleResult{
+				Text:    "❌ Некорректный идентификатор напоминания.",
+				Handled: true,
+			}, nil
+		}
+		_, nextRem, err := m.service.CompleteReminderForUser(ctx, id, u.ID, loc)
 		if err != nil {
 			return &core.ModuleResult{
 				Text:    fmt.Sprintf("❌ Ошибка при выполнении задачи: %v", err),
@@ -315,9 +321,15 @@ func (m *Module) handleCallbackFSM(ctx context.Context, u *store.User, state *co
 		// rmd:snz:<mins>:<id>
 		parts := strings.Split(data, ":")
 		if len(parts) >= 4 {
-			mins, _ := strconv.Atoi(parts[2])
-			id, _ := strconv.ParseInt(parts[3], 10, 64)
-			rem, err := m.service.SnoozeReminder(ctx, id, mins)
+			mins, minsErr := strconv.Atoi(parts[2])
+			id, idErr := strconv.ParseInt(parts[3], 10, 64)
+			if minsErr != nil || idErr != nil || id <= 0 {
+				return &core.ModuleResult{
+					Text:    "❌ Некорректные параметры откладывания.",
+					Handled: true,
+				}, nil
+			}
+			rem, err := m.service.SnoozeReminderForUser(ctx, id, u.ID, mins)
 			if err != nil {
 				return &core.ModuleResult{
 					Text:    fmt.Sprintf("❌ Ошибка: %v", err),
@@ -335,8 +347,14 @@ func (m *Module) handleCallbackFSM(ctx context.Context, u *store.User, state *co
 
 	case strings.HasPrefix(data, "rmd:del:"):
 		idStr := strings.TrimPrefix(data, "rmd:del:")
-		id, _ := strconv.ParseInt(idStr, 10, 64)
-		if err := m.service.CancelReminder(ctx, id); err != nil {
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			return &core.ModuleResult{
+				Text:    "❌ Некорректный идентификатор напоминания.",
+				Handled: true,
+			}, nil
+		}
+		if err := m.service.CancelReminderForUser(ctx, id, u.ID); err != nil {
 			return &core.ModuleResult{
 				Text:    fmt.Sprintf("❌ Ошибка при удалении: %v", err),
 				Handled: true,
