@@ -59,6 +59,9 @@ VALUES (
     'Привет! 👋 Напоминаем о вашей записи на {service_title} ({slot_time}). Мастер уже готовится к встрече!'
 ) ON CONFLICT (id) DO NOTHING;
 
+-- Активируем режим Напоминания в mode_configs
+UPDATE mode_configs SET is_active = 1, maintenance_message = '' WHERE mode_id = 'reminders';
+
 -- +goose Down
 DROP TABLE IF EXISTS notification_events;
 DROP TABLE IF EXISTS notification_templates;

@@ -213,3 +213,31 @@ export interface ToastMessage {
   type: 'info' | 'success' | 'warning' | 'error';
   text: string;
 }
+
+// Reminders
+export interface ReminderItem {
+  id: number;
+  user_id: number;
+  title: string;
+  description: string;
+  remind_at: string;
+  recurrence_rule: 'none' | 'daily' | 'weekdays' | 'weekly';
+  status: 'pending' | 'sent' | 'completed' | 'cancelled';
+  source_type: 'user' | 'reception' | 'demo_simulation';
+  source_ref_id?: string;
+  template_id?: string;
+  ab_variant?: string;
+  last_sent_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationABStat {
+  template_id: string;
+  variant: string;
+  sent_count: number;
+  completed_count: number;
+  snoozed_count: number;
+  cancelled_count: number;
+  conversion_rate: number;
+}

@@ -17,6 +17,8 @@ import {
   Lead,
   AdminAuditLog,
   ModeItem,
+  ReminderItem,
+  NotificationABStat,
 } from '../types';
 
 declare global {
@@ -393,6 +395,51 @@ export const apiClient = {
     const res = await api.get<{ audit_logs: AdminAuditLog[] }>('/admin/audit-logs', {
       params: limit ? { limit } : undefined,
     });
+    return res.data;
+  },
+
+  // Reminders Endpoints
+  async getReminders(status?: string): Promise<{ reminders: ReminderItem[] }> {
+    const res = await api.get<{ reminders: ReminderItem[] }>('/reminders', {
+      params: status ? { status } : undefined,
+    });
+    return res.data;
+  },
+
+  async createReminder(data: {
+    title: string;
+    description?: string;
+    remind_at: string;
+    recurrence_rule?: string;
+  }): Promise<{ reminder: ReminderItem }> {
+    const res = await api.post<{ reminder: ReminderItem }>('/reminders', data);
+    return res.data;
+  },
+
+  async reminderAction(
+    id: number,
+    action: 'complete' | 'snooze' | 'cancel',
+    minutes?: number
+  ): Promise<{ success: boolean; completed?: ReminderItem; next?: ReminderItem; snoozed?: ReminderItem }> {
+    const res = await api.patch<{ success: boolean; completed?: ReminderItem; next?: ReminderItem; snoozed?: ReminderItem }>(
+      `/reminders/${id}/action`,
+      { action, minutes }
+    );
+    return res.data;
+  },
+
+  async deleteReminder(id: number): Promise<{ success: boolean }> {
+    const res = await api.delete<{ success: boolean }>(`/reminders/${id}`);
+    return res.data;
+  },
+
+  async simulateReminder(): Promise<{ success: boolean; reminder: ReminderItem }> {
+    const res = await api.post<{ success: boolean; reminder: ReminderItem }>('/reminders/simulate');
+    return res.data;
+  },
+
+  async getAdminNotificationABStats(): Promise<{ stats: NotificationABStat[] }> {
+    const res = await api.get<{ stats: NotificationABStat[] }>('/admin/notifications/ab-stats');
     return res.data;
   },
 };

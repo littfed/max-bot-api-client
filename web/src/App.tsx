@@ -9,6 +9,7 @@ import { ShopView } from './components/modes/ShopView';
 import { ReceptionView } from './components/modes/ReceptionView';
 import { SupportView } from './components/modes/SupportView';
 import { ChatView } from './components/modes/ChatView';
+import { RemindersView } from './components/modes/RemindersView';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { apiClient } from './api/client';
 import {
@@ -26,8 +27,7 @@ const initial8Modes: ModeItem[] = [
   {
     id: 'reminders',
     title: 'Напоминания',
-    is_active: false,
-    maintenance_message: 'Модуль «Напоминания» временно отключён администратором для обновления. Скоро вернётся в работу!',
+    is_active: true,
     daily_quota: 100,
   },
   {
@@ -248,6 +248,14 @@ export const App: React.FC = () => {
 
         {currentView === 'chat' && (
           <ChatView
+            onBack={() => setCurrentView('hub')}
+            onSuccessToast={(msg) => addToast('success', msg)}
+            onErrorToast={(msg) => addToast('error', msg)}
+          />
+        )}
+
+        {currentView === 'reminders' && (
+          <RemindersView
             onBack={() => setCurrentView('hub')}
             onSuccessToast={(msg) => addToast('success', msg)}
             onErrorToast={(msg) => addToast('error', msg)}
