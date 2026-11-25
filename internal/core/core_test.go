@@ -147,16 +147,16 @@ func TestMaintenanceGuard_StatusAndInvalidation(t *testing.T) {
 		t.Errorf("Expected shop to be active")
 	}
 
-	// Mode 3 (reminders) is in maintenance (inactive) by default in migration 00002
-	activeReminders, maintMsg, err := guard.IsActive(ctx, "reminders")
+	// Mode 4 (channels) is in maintenance (inactive) by default in migration 00002
+	activeChannels, maintMsg, err := guard.IsActive(ctx, "channels")
 	if err != nil {
-		t.Fatalf("IsActive reminders failed: %v", err)
+		t.Fatalf("IsActive channels failed: %v", err)
 	}
-	if activeReminders {
-		t.Errorf("Expected reminders to be inactive/maintenance")
+	if activeChannels {
+		t.Errorf("Expected channels to be inactive/maintenance")
 	}
 	if maintMsg == "" {
-		t.Errorf("Expected maintenance message for reminders")
+		t.Errorf("Expected maintenance message for channels")
 	}
 
 	// Toggle shop to inactive
@@ -241,30 +241,30 @@ func TestOrchestrator_MaintenanceRejection(t *testing.T) {
 	guard := core.NewMaintenanceGuard(s, nil)
 	orch := core.NewOrchestrator(s, fsm, lockMgr, guard)
 
-	remindersMod := &mockModule{
-		id:    "reminders",
-		title: "Напоминания",
+	channelsMod := &mockModule{
+		id:    "channels",
+		title: "Каналы",
 	}
-	orch.RegisterModule(remindersMod)
+	orch.RegisterModule(channelsMod)
 
-	// Resolve user identity and set active mode to reminders
-	u, err := s.ResolveUserIdentity(ctx, "max", "user_reminders", "test", "User", "")
+	// Resolve user identity and set active mode to channels
+	u, err := s.ResolveUserIdentity(ctx, "max", "user_channels", "test", "User", "")
 	if err != nil {
 		t.Fatalf("ResolveUserIdentity failed: %v", err)
 	}
-	if err := s.SetUserActiveMode(ctx, u.ID, "reminders"); err != nil {
+	if err := s.SetUserActiveMode(ctx, u.ID, "channels"); err != nil {
 		t.Fatalf("SetUserActiveMode failed: %v", err)
 	}
 
 	event := &core.DomainEvent{
 		Type:           core.EventTypeMessage,
 		Platform:       "max",
-		PlatformUserID: "user_reminders",
+		PlatformUserID: "user_channels",
 		Message: &core.IncomingMessage{
 			ID:             "msg_2",
 			ChatID:         888,
 			Platform:       "max",
-			PlatformUserID: "user_reminders",
+			PlatformUserID: "user_channels",
 			Text:           "Создай напоминание",
 			CreatedAt:      time.Now(),
 		},
@@ -277,7 +277,7 @@ func TestOrchestrator_MaintenanceRejection(t *testing.T) {
 	if !resp.IsMaintenance {
 		t.Errorf("Expected IsMaintenance true, got false")
 	}
-	if remindersMod.handledMsg != nil {
+	if channelsMod.handledMsg != nil {
 		t.Errorf("Module should NOT have received event during maintenance!")
 	}
 }
