@@ -160,3 +160,97 @@ func TestRemindersAPI_Lifecycle(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", adminResp.StatusCode)
 	}
 }
+
+func TestRemindersAPI_AuthzAndValidation(t *testing.T) {
+	ts := setupTestAPIServer(t)
+	client := ts.Client()
+
+	// 1. Invalid payload -> 400
+	badReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/reminders", bytes.NewReader([]byte(`{"title":""}`)))
+	badReq.Header.Set("Content-Type", "application/json")
+	badReq.Header.Set("X-Init-Data", validMAXInitData)
+	badResp, err := client.Do(badReq)
+	if err != nil {
+		t.Fatalf("POST invalid failed: %v", err)
+	}
+	badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty title, got %d", badResp.StatusCode)
+	}
+
+	// 2. Create reminder as validMAXInitData
+	createBody, _ := json.Marshal(map[string]any{
+		"title":     "Owner check",
+		"remind_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+	})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/reminders", bytes.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Init-Data", validMAXInitData)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST create failed: %v", err)
+	}
+	var created struct {
+		Reminder struct {
+			ID int64 `json:"id"`
+		} `json:"reminder"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+
+	// 3. Cross-user action & delete -> 403 Forbidden
+	actBody, _ := json.Marshal(map[string]any{"action": "complete"})
+	idorPatch, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/v1/reminders/%d/action", ts.URL, created.Reminder.ID), bytes.NewReader(actBody))
+	idorPatch.Header.Set("Content-Type", "application/json")
+	idorPatch.Header.Set("X-Init-Data", validAdminInitData)
+	idorPatchResp, err := client.Do(idorPatch)
+	if err != nil {
+		t.Fatalf("PATCH IDOR failed: %v", err)
+	}
+	idorPatchResp.Body.Close()
+	if idorPatchResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden on cross-user PATCH, got %d", idorPatchResp.StatusCode)
+	}
+
+	idorDel, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/reminders/%d", ts.URL, created.Reminder.ID), nil)
+	idorDel.Header.Set("X-Init-Data", validAdminInitData)
+	idorDelResp, err := client.Do(idorDel)
+	if err != nil {
+		t.Fatalf("DELETE IDOR failed: %v", err)
+	}
+	idorDelResp.Body.Close()
+	if idorDelResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden on cross-user DELETE, got %d", idorDelResp.StatusCode)
+	}
+
+	// 4. Non-existent ID -> 404 Not Found
+	notFoundDel, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/reminders/999999", nil)
+	notFoundDel.Header.Set("X-Init-Data", validMAXInitData)
+	nfResp, err := client.Do(notFoundDel)
+	if err != nil {
+		t.Fatalf("DELETE 404 failed: %v", err)
+	}
+	nfResp.Body.Close()
+	if nfResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found, got %d", nfResp.StatusCode)
+	}
+
+	// 5. Repeated completion -> 409 Conflict
+	comp1, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/v1/reminders/%d/action", ts.URL, created.Reminder.ID), bytes.NewReader(actBody))
+	comp1.Header.Set("Content-Type", "application/json")
+	comp1.Header.Set("X-Init-Data", validMAXInitData)
+	r1, _ := client.Do(comp1)
+	r1.Body.Close()
+	if r1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on first complete, got %d", r1.StatusCode)
+	}
+
+	comp2, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/v1/reminders/%d/action", ts.URL, created.Reminder.ID), bytes.NewReader(actBody))
+	comp2.Header.Set("Content-Type", "application/json")
+	comp2.Header.Set("X-Init-Data", validMAXInitData)
+	r2, _ := client.Do(comp2)
+	r2.Body.Close()
+	if r2.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict on repeated complete, got %d", r2.StatusCode)
+	}
+}

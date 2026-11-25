@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -144,9 +145,9 @@ func (h *remindersHandler) handleReminderAction(w http.ResponseWriter, r *http.R
 
 	switch req.Action {
 	case "complete":
-		completed, next, err := svc.CompleteReminder(r.Context(), id, loc)
+		completed, next, err := svc.CompleteReminderForUser(r.Context(), id, user.ID, loc)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to complete reminder: %v", err))
+			writeReminderServiceError(w, "failed to complete reminder", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -160,9 +161,9 @@ func (h *remindersHandler) handleReminderAction(w http.ResponseWriter, r *http.R
 		if mins <= 0 {
 			mins = 15
 		}
-		snoozed, err := svc.SnoozeReminder(r.Context(), id, mins)
+		snoozed, err := svc.SnoozeReminderForUser(r.Context(), id, user.ID, mins)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to snooze reminder: %v", err))
+			writeReminderServiceError(w, "failed to snooze reminder", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -171,8 +172,8 @@ func (h *remindersHandler) handleReminderAction(w http.ResponseWriter, r *http.R
 		})
 
 	case "cancel":
-		if err := svc.CancelReminder(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to cancel reminder: %v", err))
+		if err := svc.CancelReminderForUser(r.Context(), id, user.ID); err != nil {
+			writeReminderServiceError(w, "failed to cancel reminder", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -203,14 +204,27 @@ func (h *remindersHandler) handleDeleteReminder(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := svc.CancelReminder(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to delete reminder: %v", err))
+	if err := svc.CancelReminderForUser(r.Context(), id, user.ID); err != nil {
+		writeReminderServiceError(w, "failed to delete reminder", err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 	})
+}
+
+func writeReminderServiceError(w http.ResponseWriter, prefix string, err error) {
+	switch {
+	case errors.Is(err, reminders.ErrReminderForbidden):
+		writeError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, reminders.ErrReminderNotFound):
+		writeError(w, http.StatusNotFound, "reminder not found")
+	case errors.Is(err, reminders.ErrReminderNotActionable):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("%s: %v", prefix, err))
+	}
 }
 
 func (h *remindersHandler) handleSimulateReminder(w http.ResponseWriter, r *http.Request) {
