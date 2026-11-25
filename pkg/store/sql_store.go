@@ -1538,6 +1538,378 @@ func (s *SQLStore) GetUserIdentity(ctx context.Context, userID int64, platform s
 	return &ident, nil
 }
 
+// CreateReminder inserts a new reminder into the database.
+func (s *SQLStore) CreateReminder(ctx context.Context, rem *Reminder) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if rem == nil {
+		return 0, errors.New("reminder cannot be nil")
+	}
+	if rem.Status == "" {
+		rem.Status = "pending"
+	}
+	if rem.RecurrenceRule == "" {
+		rem.RecurrenceRule = "none"
+	}
+	if rem.SourceType == "" {
+		rem.SourceType = "user"
+	}
+	if rem.ABVariant == "" {
+		rem.ABVariant = "A"
+	}
+	now := time.Now().UTC()
+	if rem.CreatedAt.IsZero() {
+		rem.CreatedAt = now
+	}
+	if rem.UpdatedAt.IsZero() {
+		rem.UpdatedAt = now
+	}
+
+	var templateID sql.NullString
+	if rem.TemplateID != "" {
+		templateID = sql.NullString{String: rem.TemplateID, Valid: true}
+	}
+
+	if s.dialect == "postgres" {
+		query := `INSERT INTO reminders (user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id;`
+		err := s.db.QueryRowContext(ctx, query,
+			rem.UserID, rem.Title, rem.Description, rem.RemindAt.UTC(), rem.RecurrenceRule, rem.Status,
+			rem.SourceType, rem.SourceRefID, templateID, rem.ABVariant, rem.CreatedAt, rem.UpdatedAt,
+		).Scan(&rem.ID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create reminder in postgres: %w", err)
+		}
+	} else {
+		query := `INSERT INTO reminders (user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
+		res, err := s.db.ExecContext(ctx, query,
+			rem.UserID, rem.Title, rem.Description, rem.RemindAt.UTC(), rem.RecurrenceRule, rem.Status,
+			rem.SourceType, rem.SourceRefID, templateID, rem.ABVariant, rem.CreatedAt, rem.UpdatedAt,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create reminder in sqlite: %w", err)
+		}
+		rem.ID, err = res.LastInsertId()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get reminder last insert id: %w", err)
+		}
+	}
+	return rem.ID, nil
+}
+
+// GetRemindersByUser returns all reminders for a given user, optionally filtered by status.
+func (s *SQLStore) GetRemindersByUser(ctx context.Context, userID int64, statusFilter string) ([]Reminder, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var query string
+	var args []any
+
+	paramPlaceholder := func(idx int) string {
+		if s.dialect == "postgres" {
+			return fmt.Sprintf("$%d", idx)
+		}
+		return "?"
+	}
+
+	if statusFilter == "" || statusFilter == "all" {
+		query = fmt.Sprintf(`SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
+FROM reminders WHERE user_id = %s ORDER BY remind_at ASC;`, paramPlaceholder(1))
+		args = append(args, userID)
+	} else if statusFilter == "active" {
+		query = fmt.Sprintf(`SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
+FROM reminders WHERE user_id = %s AND status IN ('pending', 'sent') ORDER BY remind_at ASC;`, paramPlaceholder(1))
+		args = append(args, userID)
+	} else {
+		query = fmt.Sprintf(`SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
+FROM reminders WHERE user_id = %s AND status = %s ORDER BY remind_at ASC;`, paramPlaceholder(1), paramPlaceholder(2))
+		args = append(args, userID, statusFilter)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query reminders: %w", err)
+	}
+	defer rows.Close()
+
+	var results []Reminder
+	for rows.Next() {
+		var rem Reminder
+		var templateID sql.NullString
+		var lastSentAt sql.NullTime
+		if err := rows.Scan(
+			&rem.ID, &rem.UserID, &rem.Title, &rem.Description, &rem.RemindAt,
+			&rem.RecurrenceRule, &rem.Status, &rem.SourceType, &rem.SourceRefID,
+			&templateID, &rem.ABVariant, &lastSentAt, &rem.CreatedAt, &rem.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan reminder row: %w", err)
+		}
+		if templateID.Valid {
+			rem.TemplateID = templateID.String
+		}
+		if lastSentAt.Valid {
+			t := lastSentAt.Time
+			rem.LastSentAt = &t
+		}
+		results = append(results, rem)
+	}
+	return results, rows.Err()
+}
+
+// GetReminderByID fetches a single reminder by ID.
+func (s *SQLStore) GetReminderByID(ctx context.Context, id int64) (*Reminder, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	param := "?"
+	if s.dialect == "postgres" {
+		param = "$1"
+	}
+	query := fmt.Sprintf(`SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
+FROM reminders WHERE id = %s;`, param)
+
+	row := s.db.QueryRowContext(ctx, query, id)
+	var rem Reminder
+	var templateID sql.NullString
+	var lastSentAt sql.NullTime
+	if err := row.Scan(
+		&rem.ID, &rem.UserID, &rem.Title, &rem.Description, &rem.RemindAt,
+		&rem.RecurrenceRule, &rem.Status, &rem.SourceType, &rem.SourceRefID,
+		&templateID, &rem.ABVariant, &lastSentAt, &rem.CreatedAt, &rem.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("reminder not found: %w", sql.ErrNoRows)
+		}
+		return nil, fmt.Errorf("failed to scan reminder: %w", err)
+	}
+	if templateID.Valid {
+		rem.TemplateID = templateID.String
+	}
+	if lastSentAt.Valid {
+		t := lastSentAt.Time
+		rem.LastSentAt = &t
+	}
+	return &rem, nil
+}
+
+// UpdateReminderStatus updates the status and updated_at of a reminder.
+func (s *SQLStore) UpdateReminderStatus(ctx context.Context, id int64, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	var query string
+	if s.dialect == "postgres" {
+		query = `UPDATE reminders SET status = $1, updated_at = $2, last_sent_at = CASE WHEN $1 = 'sent' THEN $2 ELSE last_sent_at END WHERE id = $3;`
+	} else {
+		query = `UPDATE reminders SET status = ?, updated_at = ?, last_sent_at = CASE WHEN ? = 'sent' THEN ? ELSE last_sent_at END WHERE id = ?;`
+	}
+
+	var err error
+	if s.dialect == "postgres" {
+		_, err = s.db.ExecContext(ctx, query, status, now, id)
+	} else {
+		_, err = s.db.ExecContext(ctx, query, status, now, status, now, id)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to update reminder status: %w", err)
+	}
+	return nil
+}
+
+// SnoozeReminderInStore shifts the remind_at time and resets status to 'pending'.
+func (s *SQLStore) SnoozeReminderInStore(ctx context.Context, id int64, newRemindAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	var query string
+	if s.dialect == "postgres" {
+		query = `UPDATE reminders SET remind_at = $1, status = 'pending', updated_at = $2 WHERE id = $3;`
+	} else {
+		query = `UPDATE reminders SET remind_at = ?, status = 'pending', updated_at = ? WHERE id = ?;`
+	}
+	_, err := s.db.ExecContext(ctx, query, newRemindAt.UTC(), now, id)
+	if err != nil {
+		return fmt.Errorf("failed to snooze reminder: %w", err)
+	}
+	return nil
+}
+
+// CancelReminderBySourceRef cancels pending reminders linked to a specific source reference.
+func (s *SQLStore) CancelReminderBySourceRef(ctx context.Context, sourceType, refID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	var query string
+	if s.dialect == "postgres" {
+		query = `UPDATE reminders SET status = 'cancelled', updated_at = $1 WHERE source_type = $2 AND source_ref_id = $3 AND status != 'cancelled';`
+	} else {
+		query = `UPDATE reminders SET status = 'cancelled', updated_at = ? WHERE source_type = ? AND source_ref_id = ? AND status != 'cancelled';`
+	}
+	_, err := s.db.ExecContext(ctx, query, now, sourceType, refID)
+	if err != nil {
+		return fmt.Errorf("failed to cancel reminder by source ref: %w", err)
+	}
+	return nil
+}
+
+// GetPendingRemindersForUpdate retrieves a batch of pending reminders due for delivery.
+func (s *SQLStore) GetPendingRemindersForUpdate(ctx context.Context, limit int) ([]Reminder, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var query string
+	if s.dialect == "postgres" {
+		query = `SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
+FROM reminders
+WHERE status = 'pending' AND remind_at <= $1
+ORDER BY remind_at ASC
+LIMIT $2
+FOR UPDATE SKIP LOCKED;`
+	} else {
+		query = `SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
+FROM reminders
+WHERE status = 'pending' AND remind_at <= ?
+ORDER BY remind_at ASC
+LIMIT ?;`
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending reminders: %w", err)
+	}
+	defer rows.Close()
+
+	var results []Reminder
+	for rows.Next() {
+		var rem Reminder
+		var templateID sql.NullString
+		var lastSentAt sql.NullTime
+		if err := rows.Scan(
+			&rem.ID, &rem.UserID, &rem.Title, &rem.Description, &rem.RemindAt,
+			&rem.RecurrenceRule, &rem.Status, &rem.SourceType, &rem.SourceRefID,
+			&templateID, &rem.ABVariant, &lastSentAt, &rem.CreatedAt, &rem.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan pending reminder row: %w", err)
+		}
+		if templateID.Valid {
+			rem.TemplateID = templateID.String
+		}
+		if lastSentAt.Valid {
+			t := lastSentAt.Time
+			rem.LastSentAt = &t
+		}
+		results = append(results, rem)
+	}
+	return results, rows.Err()
+}
+
+// RecordNotificationEvent records an interaction or delivery event for A/B testing analytics.
+func (s *SQLStore) RecordNotificationEvent(ctx context.Context, ev *NotificationEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if ev == nil {
+		return errors.New("notification event cannot be nil")
+	}
+	if ev.CreatedAt.IsZero() {
+		ev.CreatedAt = time.Now().UTC()
+	}
+	if ev.Variant == "" {
+		ev.Variant = "A"
+	}
+
+	var templateID sql.NullString
+	if ev.TemplateID != "" {
+		templateID = sql.NullString{String: ev.TemplateID, Valid: true}
+	}
+
+	var query string
+	if s.dialect == "postgres" {
+		query = `INSERT INTO notification_events (reminder_id, template_id, user_id, variant, event_type, created_at)
+VALUES ($1, $2, $3, $4, $5, $6);`
+	} else {
+		query = `INSERT INTO notification_events (reminder_id, template_id, user_id, variant, event_type, created_at)
+VALUES (?, ?, ?, ?, ?, ?);`
+	}
+
+	_, err := s.db.ExecContext(ctx, query, ev.ReminderID, templateID, ev.UserID, ev.Variant, ev.EventType, ev.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to insert notification event: %w", err)
+	}
+	return nil
+}
+
+// GetNotificationTemplate fetches a notification template by ID.
+func (s *SQLStore) GetNotificationTemplate(ctx context.Context, id string) (*NotificationTemplate, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	param := "?"
+	if s.dialect == "postgres" {
+		param = "$1"
+	}
+	query := fmt.Sprintf(`SELECT id, title, description, is_ab_test_active, variant_a_text, variant_a_buttons, variant_b_text, variant_b_buttons, split_ratio_percent, created_at, updated_at
+FROM notification_templates WHERE id = %s;`, param)
+
+	row := s.db.QueryRowContext(ctx, query, id)
+	var tmpl NotificationTemplate
+	if err := row.Scan(
+		&tmpl.ID, &tmpl.Title, &tmpl.Description, &tmpl.IsABTestActive,
+		&tmpl.VariantAText, &tmpl.VariantAButtons, &tmpl.VariantBText,
+		&tmpl.VariantBButtons, &tmpl.SplitRatioPercent, &tmpl.CreatedAt, &tmpl.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("notification template not found: %w", sql.ErrNoRows)
+		}
+		return nil, fmt.Errorf("failed to scan notification template: %w", err)
+	}
+	return &tmpl, nil
+}
+
+// GetNotificationABStats aggregates delivery and conversion events grouped by template and variant.
+func (s *SQLStore) GetNotificationABStats(ctx context.Context) ([]NotificationABStat, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := `SELECT COALESCE(template_id, 'custom') AS template_id, variant,
+SUM(CASE WHEN event_type = 'sent' THEN 1 ELSE 0 END) AS sent_count,
+SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+SUM(CASE WHEN event_type = 'snoozed' THEN 1 ELSE 0 END) AS snoozed_count,
+SUM(CASE WHEN event_type = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count
+FROM notification_events
+GROUP BY template_id, variant
+ORDER BY template_id, variant;`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query notification AB stats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []NotificationABStat
+	for rows.Next() {
+		var st NotificationABStat
+		if err := rows.Scan(&st.TemplateID, &st.Variant, &st.SentCount, &st.CompletedCount, &st.SnoozedCount, &st.CancelledCount); err != nil {
+			return nil, fmt.Errorf("failed to scan AB stat row: %w", err)
+		}
+		if st.SentCount > 0 {
+			st.ConversionRate = (float64(st.CompletedCount) / float64(st.SentCount)) * 100.0
+		}
+		stats = append(stats, st)
+	}
+	return stats, rows.Err()
+}
+
 func (s *SQLStore) Close() error {
 	return s.db.Close()
 }

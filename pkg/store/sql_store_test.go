@@ -467,3 +467,122 @@ func TestSQLStore_AdminAndSupportOperations(t *testing.T) {
 		t.Fatalf("GetAdminAuditLogs failed: %v, got %+v", err, logs)
 	}
 }
+
+func TestSQLStore_RemindersCRUD(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_reminders.db")
+
+	s, err := NewFromEnv("file:"+dbPath, "")
+	if err != nil {
+		t.Fatalf("failed to create SQL store: %v", err)
+	}
+	defer s.Close()
+
+	sqlStore := s.SQL()
+	ctx := context.Background()
+
+	user, err := sqlStore.ResolveUserIdentity(ctx, "max", "user_reminders_test_1", "remtester", "RemindersTester", "+79991112233")
+	if err != nil {
+		t.Fatalf("failed to resolve user identity: %v", err)
+	}
+
+	// 1. Create reminder
+	rem := &Reminder{
+		UserID:         user.ID,
+		Title:          "Купить билет на поезд",
+		Description:    "Купе, нижняя полка",
+		RemindAt:       time.Now().UTC().Add(-5 * time.Minute), // already due for testing worker
+		RecurrenceRule: "daily",
+		Status:         "pending",
+		SourceType:     "user",
+		TemplateID:     "booking_reminder",
+		ABVariant:      "B",
+	}
+
+	remID, err := sqlStore.CreateReminder(ctx, rem)
+	if err != nil {
+		t.Fatalf("CreateReminder failed: %v", err)
+	}
+	if remID == 0 {
+		t.Fatalf("expected non-zero reminder ID")
+	}
+
+	// 2. GetReminderByID
+	fetched, err := sqlStore.GetReminderByID(ctx, remID)
+	if err != nil {
+		t.Fatalf("GetReminderByID failed: %v", err)
+	}
+	if fetched.Title != "Купить билет на поезд" || fetched.ABVariant != "B" || fetched.TemplateID != "booking_reminder" {
+		t.Fatalf("unexpected fetched reminder: %+v", fetched)
+	}
+
+	// 3. GetPendingRemindersForUpdate
+	pending, err := sqlStore.GetPendingRemindersForUpdate(ctx, 10)
+	if err != nil {
+		t.Fatalf("GetPendingRemindersForUpdate failed: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != remID {
+		t.Fatalf("expected 1 pending reminder with ID %d, got %+v", remID, pending)
+	}
+
+	// 4. UpdateReminderStatus (sent)
+	if err := sqlStore.UpdateReminderStatus(ctx, remID, "sent"); err != nil {
+		t.Fatalf("UpdateReminderStatus(sent) failed: %v", err)
+	}
+	activeList, err := sqlStore.GetRemindersByUser(ctx, user.ID, "active")
+	if err != nil || len(activeList) != 1 || activeList[0].Status != "sent" {
+		t.Fatalf("expected active list with 1 sent reminder, got %+v", activeList)
+	}
+
+	// 5. SnoozeReminderInStore
+	newTime := time.Now().UTC().Add(15 * time.Minute)
+	if err := sqlStore.SnoozeReminderInStore(ctx, remID, newTime); err != nil {
+		t.Fatalf("SnoozeReminderInStore failed: %v", err)
+	}
+	snoozed, err := sqlStore.GetReminderByID(ctx, remID)
+	if err != nil || snoozed.Status != "pending" {
+		t.Fatalf("expected status 'pending' after snooze, got %s", snoozed.Status)
+	}
+
+	// 6. RecordNotificationEvent & AB stats
+	ev := &NotificationEvent{
+		ReminderID: &remID,
+		TemplateID: "booking_reminder",
+		UserID:     user.ID,
+		Variant:    "B",
+		EventType:  "sent",
+	}
+	if err := sqlStore.RecordNotificationEvent(ctx, ev); err != nil {
+		t.Fatalf("RecordNotificationEvent(sent) failed: %v", err)
+	}
+	ev2 := &NotificationEvent{
+		ReminderID: &remID,
+		TemplateID: "booking_reminder",
+		UserID:     user.ID,
+		Variant:    "B",
+		EventType:  "completed",
+	}
+	if err := sqlStore.RecordNotificationEvent(ctx, ev2); err != nil {
+		t.Fatalf("RecordNotificationEvent(completed) failed: %v", err)
+	}
+
+	stats, err := sqlStore.GetNotificationABStats(ctx)
+	if err != nil {
+		t.Fatalf("GetNotificationABStats failed: %v", err)
+	}
+	if len(stats) == 0 || stats[0].SentCount != 1 || stats[0].CompletedCount != 1 {
+		t.Fatalf("unexpected AB stats: %+v", stats)
+	}
+	if stats[0].ConversionRate != 100.0 {
+		t.Fatalf("expected conversion rate 100.0, got %f", stats[0].ConversionRate)
+	}
+
+	// 7. GetNotificationTemplate
+	tmpl, err := sqlStore.GetNotificationTemplate(ctx, "booking_reminder")
+	if err != nil {
+		t.Fatalf("GetNotificationTemplate failed: %v", err)
+	}
+	if tmpl.ID != "booking_reminder" || tmpl.Title == "" {
+		t.Fatalf("unexpected template: %+v", tmpl)
+	}
+}

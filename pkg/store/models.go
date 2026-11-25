@@ -266,4 +266,59 @@ type AdminAuditLog struct {
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
+// Reminder represents a scheduled or completed reminder task.
+type Reminder struct {
+	ID             int64      `json:"id"`
+	UserID         int64      `json:"user_id"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description"`
+	RemindAt       time.Time  `json:"remind_at"`
+	RecurrenceRule string     `json:"recurrence_rule"` // "none", "daily", "weekdays", "weekly"
+	Status         string     `json:"status"`          // "pending", "sent", "completed", "cancelled"
+	SourceType     string     `json:"source_type"`     // "user", "reception", "demo_simulation"
+	SourceRefID    string     `json:"source_ref_id"`
+	TemplateID     string     `json:"template_id,omitempty"`
+	ABVariant      string     `json:"ab_variant"`
+	LastSentAt     *time.Time `json:"last_sent_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// NotificationTemplate represents a message template for system triggers and A/B testing.
+type NotificationTemplate struct {
+	ID                string    `json:"id"`
+	Title             string    `json:"title"`
+	Description       string    `json:"description"`
+	IsABTestActive    bool      `json:"is_ab_test_active"`
+	VariantAText      string    `json:"variant_a_text"`
+	VariantAButtons   string    `json:"variant_a_buttons"`
+	VariantBText      string    `json:"variant_b_text"`
+	VariantBButtons   string    `json:"variant_b_buttons"`
+	SplitRatioPercent int       `json:"split_ratio_percent"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// NotificationEvent represents an audit / conversion event for delivery & interactions.
+type NotificationEvent struct {
+	ID         int64     `json:"id"`
+	ReminderID *int64    `json:"reminder_id,omitempty"`
+	TemplateID string    `json:"template_id,omitempty"`
+	UserID     int64     `json:"user_id"`
+	Variant    string    `json:"variant"`
+	EventType  string    `json:"event_type"` // "sent", "viewed", "completed", "snoozed", "cancelled"
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// NotificationABStat represents aggregated conversion metrics for an A/B template variant.
+type NotificationABStat struct {
+	TemplateID     string  `json:"template_id"`
+	Variant        string  `json:"variant"`
+	SentCount      int     `json:"sent_count"`
+	CompletedCount int     `json:"completed_count"`
+	SnoozedCount   int     `json:"snoozed_count"`
+	CancelledCount int     `json:"cancelled_count"`
+	ConversionRate float64 `json:"conversion_rate"`
+}
+
 
