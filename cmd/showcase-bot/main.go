@@ -23,8 +23,10 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/modules/chat"
 	"github.com/littfed/max-bot-api-client/internal/modules/reception"
+	"github.com/littfed/max-bot-api-client/internal/modules/reminders"
 	"github.com/littfed/max-bot-api-client/internal/modules/shop"
 	"github.com/littfed/max-bot-api-client/internal/modules/support"
+	"github.com/littfed/max-bot-api-client/internal/platform"
 	"github.com/littfed/max-bot-api-client/internal/platform/max"
 	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
@@ -272,11 +274,20 @@ func main() {
 	receptionMod := reception.New(sqlStore, lockManager)
 	supportMod := support.New(sqlStore)
 	chatMod := chat.New(sqlStore, aiClient, chatModel)
+	remindersService := reminders.NewService(sqlStore)
+	remindersMod := reminders.New(remindersService, sqlStore)
 
 	orchestrator.RegisterModule(shopMod)
 	orchestrator.RegisterModule(receptionMod)
 	orchestrator.RegisterModule(supportMod)
 	orchestrator.RegisterModule(chatMod)
+	orchestrator.RegisterModule(remindersMod)
+
+	adapters := map[string]platform.PlatformAdapter{
+		"max": maxAdapter,
+	}
+	remindersWorker := reminders.NewWorker(remindersService, sqlStore, adapters, 10*time.Second, 25)
+	go remindersWorker.Start(ctx)
 
 	jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	if jwtSecret == "" {
