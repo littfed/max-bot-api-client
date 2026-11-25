@@ -649,8 +649,8 @@ func TestAPI_CORS(t *testing.T) {
 func TestAPI_UserMode_MaintenanceGuard(t *testing.T) {
 	ts := setupTestAPIServer(t)
 
-	// Attempting to switch to "reminders" (seeded as inactive in DB)
-	switchBody := bytes.NewBufferString(`{"mode_id":"reminders"}`)
+	// Attempting to switch to "channels" (seeded as inactive in DB)
+	switchBody := bytes.NewBufferString(`{"mode_id":"channels"}`)
 	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/user/mode", switchBody)
 	req.Header.Set("X-Init-Data", validMAXInitData)
 	req.Header.Set("Content-Type", "application/json")
