@@ -2,6 +2,7 @@ package reminders
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ type mockPlatformAdapter struct {
 	mu           sync.Mutex
 	platform     string
 	sentMessages []mockSent
+	sendErr      error
 }
 
 type mockSent struct {
@@ -37,6 +39,9 @@ func (m *mockPlatformAdapter) Platform() string {
 func (m *mockPlatformAdapter) SendMessage(ctx context.Context, recipientID string, body *platform.OutMessage) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.sendErr != nil {
+		return "", m.sendErr
+	}
 	m.sentMessages = append(m.sentMessages, mockSent{
 		RecipientID: recipientID,
 		Msg:         body,
@@ -149,5 +154,70 @@ func TestWorker_ProcessPending(t *testing.T) {
 	}
 	if secondRun != 0 {
 		t.Errorf("expected 0 processed on second run, got %d", secondRun)
+	}
+}
+
+type testRetryAfterErr struct {
+	wait time.Duration
+}
+
+func (e testRetryAfterErr) Error() string             { return "429 too many requests" }
+func (e testRetryAfterErr) RetryAfter() time.Duration { return e.wait }
+
+func TestWorker_RetryCapAndRateLimit(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "worker_retry.db")
+
+	s, err := store.NewFromEnv("file:"+dbPath, "")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	sqlStore := s.SQL()
+	ctx := context.Background()
+	user, err := sqlStore.ResolveUserIdentity(ctx, "max", "user_worker_retry", "wrk_retry", "WorkerRetry", "+79990000001")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity failed: %v", err)
+	}
+
+	service := NewService(sqlStore)
+	mockAdapter := newMockPlatformAdapter("max")
+	worker := NewWorker(service, sqlStore, map[string]platform.PlatformAdapter{"max": mockAdapter}, 100*time.Millisecond, 50)
+
+	remID, err := sqlStore.CreateReminder(ctx, &store.Reminder{
+		UserID:     user.ID,
+		Title:      "Retry test",
+		RemindAt:   time.Now().UTC().Add(-time.Minute),
+		Status:     "pending",
+		SourceType: "user",
+		ABVariant:  "A",
+	})
+	if err != nil {
+		t.Fatalf("CreateReminder failed: %v", err)
+	}
+
+	// 1. 429 RetryAfterError should keep reminder pending without burning permanent retry cap
+	mockAdapter.sendErr = testRetryAfterErr{wait: 5 * time.Millisecond}
+	for i := 0; i < 4; i++ {
+		if _, err := worker.ProcessPendingOnce(ctx); err != nil {
+			t.Fatalf("ProcessPendingOnce (429) failed: %v", err)
+		}
+	}
+	rem, err := sqlStore.GetReminderByID(ctx, remID)
+	if err != nil || rem.Status != "pending" {
+		t.Fatalf("expected status 'pending' after 429, got %+v (err=%v)", rem, err)
+	}
+
+	// 2. Permanent error should transition reminder to 'failed' after maxRetries (3)
+	mockAdapter.sendErr = errors.New("bot blocked by user")
+	for i := 0; i < 3; i++ {
+		if _, err := worker.ProcessPendingOnce(ctx); err != nil {
+			t.Fatalf("ProcessPendingOnce (perm) failed: %v", err)
+		}
+	}
+	rem, err = sqlStore.GetReminderByID(ctx, remID)
+	if err != nil || rem.Status != "failed" {
+		t.Fatalf("expected status 'failed' after maxRetries, got %+v (err=%v)", rem, err)
 	}
 }

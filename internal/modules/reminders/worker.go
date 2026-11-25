@@ -2,9 +2,11 @@ package reminders
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -13,13 +15,24 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/store"
 )
 
+// RetryAfterError may be implemented by platform errors carrying a Retry-After backoff duration.
+type RetryAfterError interface {
+	error
+	RetryAfter() time.Duration
+}
+
+const defaultMaxDeliveryRetries = 3
+
 // Worker periodically checks and delivers due reminders to users across messaging platforms.
 type Worker struct {
-	service  *Service
-	sqlStore *store.SQLStore
-	adapters map[string]platform.PlatformAdapter
-	limiter  *rate.Limiter
-	interval time.Duration
+	service     *Service
+	sqlStore    *store.SQLStore
+	adapters    map[string]platform.PlatformAdapter
+	limiter     *rate.Limiter
+	interval    time.Duration
+	maxRetries  int
+	retryMu     sync.Mutex
+	retryCounts map[int64]int
 }
 
 // NewWorker constructs a background delivery worker.
@@ -35,11 +48,13 @@ func NewWorker(service *Service, sqlStore *store.SQLStore, adapters map[string]p
 	}
 
 	return &Worker{
-		service:  service,
-		sqlStore: sqlStore,
-		adapters: adapters,
-		limiter:  rate.NewLimiter(rate.Limit(rps), 1),
-		interval: interval,
+		service:     service,
+		sqlStore:    sqlStore,
+		adapters:    adapters,
+		limiter:     rate.NewLimiter(rate.Limit(rps), 1),
+		interval:    interval,
+		maxRetries:  defaultMaxDeliveryRetries,
+		retryCounts: make(map[int64]int),
 	}
 }
 
@@ -89,12 +104,68 @@ func (w *Worker) ProcessPendingOnce(ctx context.Context) (int, error) {
 	for _, rem := range reminders {
 		if err := w.deliverReminder(ctx, &rem); err != nil {
 			log.Printf("[RemindersWorker] Failed to deliver reminder %d (user %d): %v", rem.ID, rem.UserID, err)
+			w.handleDeliveryFailure(ctx, rem.ID, err)
 			continue
 		}
+		w.clearRetryCount(rem.ID)
 		processed++
 	}
 
 	return processed, nil
+}
+
+func (w *Worker) clearRetryCount(id int64) {
+	w.retryMu.Lock()
+	delete(w.retryCounts, id)
+	w.retryMu.Unlock()
+}
+
+func (w *Worker) handleDeliveryFailure(ctx context.Context, id int64, err error) {
+	var retryErr RetryAfterError
+	if errors.As(err, &retryErr) {
+		wait := retryErr.RetryAfter()
+		if wait > 0 {
+			if wait > 30*time.Second {
+				wait = 30 * time.Second
+			}
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				_ = w.sqlStore.UpdateReminderStatus(context.Background(), id, "pending")
+				return
+			case <-timer.C:
+			}
+		}
+		_ = w.sqlStore.UpdateReminderStatus(ctx, id, "pending")
+		return
+	}
+
+	if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate limit") {
+		_ = w.sqlStore.UpdateReminderStatus(ctx, id, "pending")
+		return
+	}
+
+	w.retryMu.Lock()
+	if w.retryCounts == nil {
+		w.retryCounts = make(map[int64]int)
+	}
+	w.retryCounts[id]++
+	attempts := w.retryCounts[id]
+	maxRetries := w.maxRetries
+	if maxRetries <= 0 {
+		maxRetries = defaultMaxDeliveryRetries
+	}
+	if attempts >= maxRetries {
+		delete(w.retryCounts, id)
+		w.retryMu.Unlock()
+		log.Printf("[RemindersWorker] Reminder %d exceeded %d delivery attempts; marking as failed", id, maxRetries)
+		_ = w.sqlStore.UpdateReminderStatus(ctx, id, "failed")
+		return
+	}
+	w.retryMu.Unlock()
+
+	_ = w.sqlStore.UpdateReminderStatus(ctx, id, "pending")
 }
 
 func (w *Worker) deliverReminder(ctx context.Context, rem *store.Reminder) error {
