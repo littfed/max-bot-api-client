@@ -339,6 +339,20 @@ func (s *Service) ScheduleBookingReminder(ctx context.Context, params ScheduleBo
 	return rem, nil
 }
 
+// ScheduleBookingReminderSimple is a convenience method matching standard scheduler interfaces.
+func (s *Service) ScheduleBookingReminderSimple(ctx context.Context, userID int64, bookingID, serviceTitle string, slotTime time.Time) error {
+	remindAt := slotTime.Add(-2 * time.Hour)
+	_, err := s.ScheduleBookingReminder(ctx, ScheduleBookingParams{
+		UserID:       userID,
+		BookingID:    bookingID,
+		ServiceTitle: serviceTitle,
+		SlotTime:     slotTime,
+		RemindAt:     remindAt,
+		TemplateID:   "booking_reminder",
+	})
+	return err
+}
+
 // CancelBookingReminder cancels any active reminder linked to the booking ID.
 func (s *Service) CancelBookingReminder(ctx context.Context, bookingID string) error {
 	if s.sqlStore == nil {

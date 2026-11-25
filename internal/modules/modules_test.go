@@ -307,3 +307,44 @@ func TestChatModule_SlidingWindowAndRoles(t *testing.T) {
 		t.Errorf("Expected empty session after reset, got %d messages", len(sessionAfter.Messages))
 	}
 }
+
+type testReminderRecorder struct {
+	scheduled []string
+	cancelled []string
+}
+
+func (r *testReminderRecorder) ScheduleBookingReminder(ctx context.Context, userID int64, bookingID, serviceTitle string, slotTime time.Time) error {
+	r.scheduled = append(r.scheduled, bookingID)
+	return nil
+}
+
+func (r *testReminderRecorder) CancelBookingReminder(ctx context.Context, bookingID string) error {
+	r.cancelled = append(r.cancelled, bookingID)
+	return nil
+}
+
+func TestReceptionModule_LinkedReminder(t *testing.T) {
+	receptionMod := setupTestReceptionModule(t)
+	rec := &testReminderRecorder{}
+	receptionMod.SetReminderScheduler(rec)
+
+	ctx := context.Background()
+	slotTime := time.Now().Add(24 * time.Hour).Truncate(time.Hour)
+
+	if err := receptionMod.BookSlot(ctx, 101, "srv_consultation", slotTime); err != nil {
+		t.Fatalf("BookSlot failed: %v", err)
+	}
+
+	if len(rec.scheduled) != 1 {
+		t.Fatalf("expected 1 scheduled reminder, got %d", len(rec.scheduled))
+	}
+
+	bookingID := rec.scheduled[0]
+	if err := receptionMod.CancelBooking(ctx, bookingID); err != nil {
+		t.Fatalf("CancelBooking failed: %v", err)
+	}
+
+	if len(rec.cancelled) != 1 || rec.cancelled[0] != bookingID {
+		t.Fatalf("expected cancelled reminder for booking %s, got %+v", bookingID, rec.cancelled)
+	}
+}

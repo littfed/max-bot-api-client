@@ -23,6 +23,12 @@ type EventRegistrationResult struct {
 	TicketQR       string `json:"ticket_qr"`
 }
 
+// ReminderScheduler schedules and cancels booking reminders.
+type ReminderScheduler interface {
+	ScheduleBookingReminder(ctx context.Context, userID int64, bookingID, serviceTitle string, slotTime time.Time) error
+	CancelBookingReminder(ctx context.Context, bookingID string) error
+}
+
 // Module implements the BotModule interface for the Reception mode.
 type Module struct {
 	lockManager   *core.LockManager
@@ -33,6 +39,7 @@ type Module struct {
 	registrations map[string]*store.EventRegistration
 	submissionsMu sync.Mutex
 	submissions   []store.OnboardingSubmission
+	reminderSched ReminderScheduler
 }
 
 // New creates a new Reception module instance.
@@ -103,6 +110,13 @@ func slotKey(serviceID string, slotTime time.Time) string {
 	return fmt.Sprintf("%s:%d", serviceID, slotTime.Unix())
 }
 
+// SetReminderScheduler configures the automated reminder scheduler.
+func (m *Module) SetReminderScheduler(sched ReminderScheduler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reminderSched = sched
+}
+
 // BookSlot reserves a time slot with distributed anti-overbooking check using LockManager.
 func (m *Module) BookSlot(ctx context.Context, userID int64, serviceID string, slotTime time.Time) error {
 	lockKey := fmt.Sprintf("lock:reception:slot:%s:%d", serviceID, slotTime.Unix())
@@ -142,7 +156,31 @@ func (m *Module) BookSlot(ctx context.Context, userID int64, serviceID string, s
 		CreatedAt:    time.Now(),
 	}
 
+	if m.reminderSched != nil {
+		_ = m.reminderSched.ScheduleBookingReminder(ctx, userID, bookingID, srvTitle, slotTime)
+	}
+
 	return nil
+}
+
+// CancelBooking cancels a confirmed booking and any associated automated reminders.
+func (m *Module) CancelBooking(ctx context.Context, bookingID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for k, b := range m.bookedSlots {
+		if b.ID == bookingID {
+			b.Status = "cancelled"
+			m.bookedSlots[k] = b
+			delete(m.bookedSlots, k)
+
+			if m.reminderSched != nil {
+				_ = m.reminderSched.CancelBookingReminder(ctx, bookingID)
+			}
+			return nil
+		}
+	}
+	return errors.New("booking not found")
 }
 
 // RegisterEvent reserves a seat for an event and generates a QR ticket.

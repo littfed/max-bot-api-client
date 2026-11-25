@@ -276,6 +276,7 @@ func main() {
 	chatMod := chat.New(sqlStore, aiClient, chatModel)
 	remindersService := reminders.NewService(sqlStore)
 	remindersMod := reminders.New(remindersService, sqlStore)
+	receptionMod.SetReminderScheduler(&receptionReminderScheduler{svc: remindersService})
 
 	orchestrator.RegisterModule(shopMod)
 	orchestrator.RegisterModule(receptionMod)
@@ -506,4 +507,16 @@ func loadDotEnv() {
 		}
 		_ = file.Close()
 	}
+}
+
+type receptionReminderScheduler struct {
+	svc *reminders.Service
+}
+
+func (r *receptionReminderScheduler) ScheduleBookingReminder(ctx context.Context, userID int64, bookingID, serviceTitle string, slotTime time.Time) error {
+	return r.svc.ScheduleBookingReminderSimple(ctx, userID, bookingID, serviceTitle, slotTime)
+}
+
+func (r *receptionReminderScheduler) CancelBookingReminder(ctx context.Context, bookingID string) error {
+	return r.svc.CancelBookingReminder(ctx, bookingID)
 }
