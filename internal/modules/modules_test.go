@@ -11,6 +11,7 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/modules"
 	"github.com/littfed/max-bot-api-client/internal/modules/chat"
 	"github.com/littfed/max-bot-api-client/internal/modules/reception"
+	"github.com/littfed/max-bot-api-client/internal/modules/reminders"
 	"github.com/littfed/max-bot-api-client/internal/modules/shop"
 	"github.com/littfed/max-bot-api-client/internal/modules/support"
 	"github.com/littfed/max-bot-api-client/pkg/store"
@@ -346,5 +347,57 @@ func TestReceptionModule_LinkedReminder(t *testing.T) {
 
 	if len(rec.cancelled) != 1 || rec.cancelled[0] != bookingID {
 		t.Fatalf("expected cancelled reminder for booking %s, got %+v", bookingID, rec.cancelled)
+	}
+}
+
+type testReceptionScheduler struct {
+	svc *reminders.Service
+}
+
+func (a *testReceptionScheduler) ScheduleBookingReminder(ctx context.Context, userID int64, bookingID, serviceTitle string, slotTime time.Time) error {
+	return a.svc.ScheduleBookingReminderSimple(ctx, userID, bookingID, serviceTitle, slotTime)
+}
+
+func (a *testReceptionScheduler) CancelBookingReminder(ctx context.Context, bookingID string) error {
+	return a.svc.CancelBookingReminder(ctx, bookingID)
+}
+
+func TestReceptionModule_LinkedReminder_Integration(t *testing.T) {
+	s, err := store.NewFromEnv("file:"+t.TempDir()+"/reception_rem.db", "")
+	if err != nil {
+		t.Fatalf("store.NewFromEnv failed: %v", err)
+	}
+	defer s.Close()
+
+	sqlStore := s.SQL()
+	ctx := context.Background()
+	user, err := sqlStore.ResolveUserIdentity(ctx, "max", "rec_int_1", "rec_user", "RecUser", "+79991112233")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity failed: %v", err)
+	}
+
+	remSvc := reminders.NewService(sqlStore)
+	receptionMod := reception.New(sqlStore, core.NewLockManager(nil))
+	receptionMod.SetReminderScheduler(&testReceptionScheduler{svc: remSvc})
+
+	slotTime := time.Now().Add(24 * time.Hour).Truncate(time.Hour)
+	if err := receptionMod.BookSlot(ctx, user.ID, "srv_consultation", slotTime); err != nil {
+		t.Fatalf("BookSlot failed: %v", err)
+	}
+
+	list, err := remSvc.GetReminders(ctx, user.ID, "pending")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("expected 1 pending reminder in DB, got %d (err=%v)", len(list), err)
+	}
+	if list[0].SourceType != "reception" || list[0].SourceRefID == "" {
+		t.Fatalf("unexpected reminder metadata: %+v", list[0])
+	}
+
+	if err := receptionMod.CancelBooking(ctx, list[0].SourceRefID); err != nil {
+		t.Fatalf("CancelBooking failed: %v", err)
+	}
+	updated, err := remSvc.GetReminder(ctx, list[0].ID)
+	if err != nil || updated.Status != "cancelled" {
+		t.Fatalf("expected cancelled reminder in DB, got %+v (err=%v)", updated, err)
 	}
 }

@@ -133,10 +133,10 @@ func (m *Module) BookSlot(ctx context.Context, userID int64, serviceID string, s
 	}()
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	k := slotKey(serviceID, slotTime)
 	if _, exists := m.bookedSlots[k]; exists {
+		m.mu.Unlock()
 		return errors.New("slot already booked: anti-overbooking triggered")
 	}
 
@@ -155,9 +155,11 @@ func (m *Module) BookSlot(ctx context.Context, userID int64, serviceID string, s
 		Status:       "confirmed",
 		CreatedAt:    time.Now(),
 	}
+	sched := m.reminderSched
+	m.mu.Unlock()
 
-	if m.reminderSched != nil {
-		_ = m.reminderSched.ScheduleBookingReminder(ctx, userID, bookingID, srvTitle, slotTime)
+	if sched != nil {
+		_ = sched.ScheduleBookingReminder(ctx, userID, bookingID, srvTitle, slotTime)
 	}
 
 	return nil
@@ -166,21 +168,27 @@ func (m *Module) BookSlot(ctx context.Context, userID int64, serviceID string, s
 // CancelBooking cancels a confirmed booking and any associated automated reminders.
 func (m *Module) CancelBooking(ctx context.Context, bookingID string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	var sched ReminderScheduler
+	found := false
 	for k, b := range m.bookedSlots {
 		if b.ID == bookingID {
 			b.Status = "cancelled"
 			m.bookedSlots[k] = b
 			delete(m.bookedSlots, k)
-
-			if m.reminderSched != nil {
-				_ = m.reminderSched.CancelBookingReminder(ctx, bookingID)
-			}
-			return nil
+			sched = m.reminderSched
+			found = true
+			break
 		}
 	}
-	return errors.New("booking not found")
+	m.mu.Unlock()
+
+	if !found {
+		return errors.New("booking not found")
+	}
+	if sched != nil {
+		_ = sched.CancelBookingReminder(ctx, bookingID)
+	}
+	return nil
 }
 
 // RegisterEvent reserves a seat for an event and generates a QR ticket.
