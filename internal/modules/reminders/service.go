@@ -2,6 +2,7 @@ package reminders
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -11,6 +12,15 @@ import (
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/store"
+)
+
+var (
+	// ErrReminderNotFound indicates the requested reminder does not exist.
+	ErrReminderNotFound = errors.New("reminder not found")
+	// ErrReminderForbidden indicates the reminder belongs to another user.
+	ErrReminderForbidden = errors.New("reminder belongs to another user")
+	// ErrReminderNotActionable indicates the reminder is already completed or cancelled.
+	ErrReminderNotActionable = errors.New("reminder is already completed or cancelled")
 )
 
 var (
@@ -84,6 +94,9 @@ func ParseTimeInput(input string, now time.Time, loc *time.Location) (time.Time,
 	if m := zavtraRegex.FindStringSubmatch(trimmed); len(m) == 3 {
 		hour, _ := strconv.Atoi(m[1])
 		min, _ := strconv.Atoi(m[2])
+		if err := validateHourMinute(hour, min); err != nil {
+			return time.Time{}, err
+		}
 		target := time.Date(base.Year(), base.Month(), base.Day(), hour, min, 0, 0, loc)
 		if strings.HasPrefix(trimmed, "завтра") {
 			target = target.AddDate(0, 0, 1)
@@ -95,6 +108,9 @@ func ParseTimeInput(input string, now time.Time, loc *time.Location) (time.Time,
 	if m := timeOnlyRegex.FindStringSubmatch(trimmed); len(m) == 3 {
 		hour, _ := strconv.Atoi(m[1])
 		min, _ := strconv.Atoi(m[2])
+		if err := validateHourMinute(hour, min); err != nil {
+			return time.Time{}, err
+		}
 		target := time.Date(base.Year(), base.Month(), base.Day(), hour, min, 0, 0, loc)
 		if !target.After(base) {
 			// If already passed today, assume tomorrow
@@ -109,6 +125,9 @@ func ParseTimeInput(input string, now time.Time, loc *time.Location) (time.Time,
 		month, _ := strconv.Atoi(m[2])
 		hour, _ := strconv.Atoi(m[3])
 		min, _ := strconv.Atoi(m[4])
+		if err := validateHourMinute(hour, min); err != nil {
+			return time.Time{}, err
+		}
 		target := time.Date(base.Year(), time.Month(month), day, hour, min, 0, 0, loc)
 		if !target.After(base) {
 			target = target.AddDate(1, 0, 0)
@@ -123,6 +142,9 @@ func ParseTimeInput(input string, now time.Time, loc *time.Location) (time.Time,
 		year, _ := strconv.Atoi(m[3])
 		hour, _ := strconv.Atoi(m[4])
 		min, _ := strconv.Atoi(m[5])
+		if err := validateHourMinute(hour, min); err != nil {
+			return time.Time{}, err
+		}
 		return time.Date(year, time.Month(month), day, hour, min, 0, 0, loc), nil
 	}
 
@@ -203,18 +225,35 @@ func (s *Service) GetReminder(ctx context.Context, id int64) (*store.Reminder, e
 	return s.sqlStore.GetReminderByID(ctx, id)
 }
 
+func validateHourMinute(hour, min int) error {
+	if hour < 0 || hour > 23 || min < 0 || min > 59 {
+		return fmt.Errorf("некорректное время: %02d:%02d", hour, min)
+	}
+	return nil
+}
+
 // CompleteReminder marks a reminder as completed and spawns the next occurrence if recurring.
 func (s *Service) CompleteReminder(ctx context.Context, id int64, loc *time.Location) (*store.Reminder, *store.Reminder, error) {
+	return s.CompleteReminderForUser(ctx, id, 0, loc)
+}
+
+// CompleteReminderForUser marks a reminder as completed after verifying ownership (when userID > 0)
+// and atomically guarding against repeated completion, then spawns the next occurrence if recurring.
+func (s *Service) CompleteReminderForUser(ctx context.Context, id, userID int64, loc *time.Location) (*store.Reminder, *store.Reminder, error) {
 	if s.sqlStore == nil {
 		return nil, nil, errors.New("sqlStore is nil")
 	}
-	rem, err := s.sqlStore.GetReminderByID(ctx, id)
+	rem, err := s.getOwnedReminder(ctx, id, userID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to find reminder: %w", err)
+		return nil, nil, err
 	}
 
-	if err := s.sqlStore.UpdateReminderStatus(ctx, id, "completed"); err != nil {
+	updated, err := s.sqlStore.TryUpdateReminderStatus(ctx, id, "completed", "pending", "sent", "processing")
+	if err != nil {
 		return nil, nil, fmt.Errorf("failed to complete reminder: %w", err)
+	}
+	if !updated {
+		return nil, nil, ErrReminderNotActionable
 	}
 	rem.Status = "completed"
 
@@ -256,8 +295,20 @@ func (s *Service) CompleteReminder(ctx context.Context, id int64, loc *time.Loca
 
 // SnoozeReminder defers a reminder by specified minutes and resets status to 'pending'.
 func (s *Service) SnoozeReminder(ctx context.Context, id int64, minutes int) (*store.Reminder, error) {
+	return s.SnoozeReminderForUser(ctx, id, 0, minutes)
+}
+
+// SnoozeReminderForUser defers a reminder by specified minutes after verifying ownership (when userID > 0).
+func (s *Service) SnoozeReminderForUser(ctx context.Context, id, userID int64, minutes int) (*store.Reminder, error) {
 	if s.sqlStore == nil {
 		return nil, errors.New("sqlStore is nil")
+	}
+	rem, err := s.getOwnedReminder(ctx, id, userID)
+	if err != nil {
+		return nil, err
+	}
+	if rem.Status == "completed" || rem.Status == "cancelled" {
+		return nil, ErrReminderNotActionable
 	}
 	if minutes <= 0 {
 		minutes = 15
@@ -267,7 +318,7 @@ func (s *Service) SnoozeReminder(ctx context.Context, id int64, minutes int) (*s
 		return nil, fmt.Errorf("failed to snooze reminder: %w", err)
 	}
 
-	rem, err := s.sqlStore.GetReminderByID(ctx, id)
+	rem, err = s.sqlStore.GetReminderByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -286,10 +337,15 @@ func (s *Service) SnoozeReminder(ctx context.Context, id int64, minutes int) (*s
 
 // CancelReminder marks a reminder as cancelled.
 func (s *Service) CancelReminder(ctx context.Context, id int64) error {
+	return s.CancelReminderForUser(ctx, id, 0)
+}
+
+// CancelReminderForUser marks a reminder as cancelled after verifying ownership (when userID > 0).
+func (s *Service) CancelReminderForUser(ctx context.Context, id, userID int64) error {
 	if s.sqlStore == nil {
 		return errors.New("sqlStore is nil")
 	}
-	rem, err := s.sqlStore.GetReminderByID(ctx, id)
+	rem, err := s.getOwnedReminder(ctx, id, userID)
 	if err != nil {
 		return err
 	}
@@ -307,6 +363,20 @@ func (s *Service) CancelReminder(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (s *Service) getOwnedReminder(ctx context.Context, id, userID int64) (*store.Reminder, error) {
+	rem, err := s.sqlStore.GetReminderByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrReminderNotFound
+		}
+		return nil, fmt.Errorf("failed to find reminder: %w", err)
+	}
+	if userID > 0 && rem.UserID != userID {
+		return nil, ErrReminderForbidden
+	}
+	return rem, nil
+}
+
 // ScheduleBookingReminder schedules a reminder for Reception mode booking.
 func (s *Service) ScheduleBookingReminder(ctx context.Context, params ScheduleBookingParams) (*store.Reminder, error) {
 	if s.sqlStore == nil {
@@ -314,14 +384,30 @@ func (s *Service) ScheduleBookingReminder(ctx context.Context, params ScheduleBo
 	}
 
 	abVariant := "A"
-	if rand.Intn(100) >= 50 {
-		abVariant = "B"
+	if params.TemplateID != "" {
+		if tmpl, err := s.sqlStore.GetNotificationTemplate(ctx, params.TemplateID); err == nil && tmpl != nil && tmpl.IsABTestActive {
+			split := tmpl.SplitRatioPercent
+			if split <= 0 || split >= 100 {
+				split = 50
+			}
+			if rand.Intn(100) >= split {
+				abVariant = "B"
+			}
+		}
 	}
+
+	loc, _ := time.LoadLocation("Europe/Moscow")
+	if u, err := s.sqlStore.GetUser(ctx, params.UserID); err == nil && u != nil && u.Timezone != "" {
+		if l, err := time.LoadLocation(u.Timezone); err == nil {
+			loc = l
+		}
+	}
+	slotFormatted := params.SlotTime.In(loc).Format("02.01.2006 15:04")
 
 	rem := &store.Reminder{
 		UserID:         params.UserID,
 		Title:          fmt.Sprintf("Визит: %s", params.ServiceTitle),
-		Description:    fmt.Sprintf("Бронь на %s", params.SlotTime.Format("02.01.2006 15:04")),
+		Description:    fmt.Sprintf("Бронь на %s", slotFormatted),
 		RemindAt:       params.RemindAt.UTC(),
 		RecurrenceRule: "none",
 		Status:         "pending",

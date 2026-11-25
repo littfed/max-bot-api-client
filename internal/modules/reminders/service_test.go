@@ -177,4 +177,32 @@ func TestService_Lifecycle(t *testing.T) {
 	if err != nil || cancelled.Status != "cancelled" {
 		t.Fatalf("expected cancelled reminder, got %+v", cancelled)
 	}
+
+	// 5. Repeated completion of already-completed reminder should fail with ErrReminderNotActionable
+	if _, _, err := service.CompleteReminder(ctx, rem.ID, loc); err != ErrReminderNotActionable {
+		t.Fatalf("expected ErrReminderNotActionable on repeated CompleteReminder, got %v", err)
+	}
+
+	// 6. Ownership checks for *ForUser methods
+	otherUser, err := sqlStore.ResolveUserIdentity(ctx, "max", "user_service_2", "srv_user_2", "Other", "+79990001122")
+	if err != nil {
+		t.Fatalf("ResolveUserIdentity otherUser failed: %v", err)
+	}
+	if _, _, err := service.CompleteReminderForUser(ctx, next.ID, otherUser.ID, loc); err != ErrReminderForbidden {
+		t.Fatalf("expected ErrReminderForbidden, got %v", err)
+	}
+	if err := service.CancelReminderForUser(ctx, 999999, user.ID); err != ErrReminderNotFound {
+		t.Fatalf("expected ErrReminderNotFound, got %v", err)
+	}
+}
+
+func TestParseTimeInput_InvalidHourMinute(t *testing.T) {
+	loc, _ := time.LoadLocation("Europe/Moscow")
+	baseTime := time.Date(2026, 11, 25, 12, 0, 0, 0, loc)
+
+	for _, bad := range []string{"25:99", "24:00", "12:60", "завтра 25:00"} {
+		if _, err := ParseTimeInput(bad, baseTime, loc); err == nil {
+			t.Errorf("expected error for invalid time %q, got nil", bad)
+		}
+	}
 }
