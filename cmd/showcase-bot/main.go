@@ -321,6 +321,7 @@ func main() {
 		ReceptionModule: receptionMod,
 		SupportModule:   supportMod,
 		ChatModule:      chatMod,
+		RemindersModule: remindersMod,
 		BotToken:        token,
 		JWTSecret:       jwtSecret,
 		PlatformAdapter: maxAdapter,

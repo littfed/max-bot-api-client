@@ -19,6 +19,7 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/modules/chat"
 	"github.com/littfed/max-bot-api-client/internal/modules/reception"
+	"github.com/littfed/max-bot-api-client/internal/modules/reminders"
 	"github.com/littfed/max-bot-api-client/internal/modules/shop"
 	"github.com/littfed/max-bot-api-client/internal/modules/support"
 	"github.com/littfed/max-bot-api-client/internal/platform"
@@ -44,6 +45,7 @@ type RouterConfig struct {
 	ReceptionModule *reception.Module
 	SupportModule   *support.Module
 	ChatModule      *chat.Module
+	RemindersModule *reminders.Module
 	BotToken        string
 	JWTSecret       string
 	PlatformAdapter platform.PlatformAdapter
@@ -174,6 +176,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	hubH := newHubHandler(cfg)
 	modH := newModulesHandler(cfg)
 	admH := newAdminHandler(cfg)
+	remH := newRemindersHandler(cfg)
 
 	// Hub Endpoints
 	mux.HandleFunc("GET /api/v1/bootstrap", hubH.handleBootstrap)
@@ -208,6 +211,14 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/chat/settings", modH.handleChatSettings)
 	mux.HandleFunc("POST /api/v1/chat/message", modH.handleChatMessage)
 	mux.HandleFunc("POST /api/v1/chat/clear", modH.handleChatClear)
+
+	// Reminders Module Endpoints
+	mux.HandleFunc("GET /api/v1/reminders", remH.handleListReminders)
+	mux.HandleFunc("POST /api/v1/reminders", remH.handleCreateReminder)
+	mux.HandleFunc("PATCH /api/v1/reminders/{id}/action", remH.handleReminderAction)
+	mux.HandleFunc("DELETE /api/v1/reminders/{id}", remH.handleDeleteReminder)
+	mux.HandleFunc("POST /api/v1/reminders/simulate", remH.handleSimulateReminder)
+	mux.HandleFunc("GET /api/v1/admin/notifications/ab-stats", requireAdmin(remH.handleAdminABStats))
 
 	// Admin Endpoints (protected by requireAdmin middleware)
 	mux.HandleFunc("GET /api/v1/admin/modes", requireAdmin(admH.handleAdminModes))

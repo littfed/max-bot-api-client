@@ -17,6 +17,7 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/modules/chat"
 	"github.com/littfed/max-bot-api-client/internal/modules/reception"
+	"github.com/littfed/max-bot-api-client/internal/modules/reminders"
 	"github.com/littfed/max-bot-api-client/internal/modules/shop"
 	"github.com/littfed/max-bot-api-client/internal/modules/support"
 	"github.com/littfed/max-bot-api-client/internal/platform"
@@ -112,12 +113,15 @@ func setupTestAPIServer(t *testing.T) *httptest.Server {
 	receptionMod := reception.New(sqlStore, lockManager)
 	supportMod := support.New(sqlStore)
 	chatMod := chat.New(sqlStore, nil)
+	remindersSvc := reminders.NewService(sqlStore)
+	remindersMod := reminders.New(remindersSvc, sqlStore)
 
 	orch := core.NewOrchestrator(sqlStore, fsm, lockManager, guard)
 	orch.RegisterModule(shopMod)
 	orch.RegisterModule(receptionMod)
 	orch.RegisterModule(supportMod)
 	orch.RegisterModule(chatMod)
+	orch.RegisterModule(remindersMod)
 
 	router := api.NewRouter(api.RouterConfig{
 		Store:           sqlStore,
@@ -129,6 +133,7 @@ func setupTestAPIServer(t *testing.T) *httptest.Server {
 		ReceptionModule: receptionMod,
 		SupportModule:   supportMod,
 		ChatModule:      chatMod,
+		RemindersModule: remindersMod,
 		BotToken:        testBotToken,
 		JWTSecret:       testJWTSecret,
 		PlatformAdapter: adapter,
