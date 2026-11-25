@@ -70,3 +70,65 @@ func TestPrometheusExporterWithCollector(t *testing.T) {
 		t.Errorf("collector failed to pipe event to PrometheusExporter: %s", metrics)
 	}
 }
+
+func TestPrometheusExporterProtectedHandler(t *testing.T) {
+	t.Parallel()
+	exp := NewPrometheusExporter()
+
+	tests := []struct {
+		name       string
+		token      string
+		remoteAddr string
+		authHeader string
+		wantCode   int
+	}{
+		{
+			name:       "loopback_without_token_allowed",
+			token:      "",
+			remoteAddr: "127.0.0.1:54321",
+			wantCode:   http.StatusOK,
+		},
+		{
+			name:       "non_loopback_without_token_forbidden",
+			token:      "",
+			remoteAddr: "198.51.100.10:54321",
+			wantCode:   http.StatusForbidden,
+		},
+		{
+			name:       "token_required_missing_unauthorized",
+			token:      "secret-metrics-token",
+			remoteAddr: "127.0.0.1:54321",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "token_required_wrong_unauthorized",
+			token:      "secret-metrics-token",
+			remoteAddr: "127.0.0.1:54321",
+			authHeader: "Bearer wrong",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "token_required_valid_allowed",
+			token:      "secret-metrics-token",
+			remoteAddr: "198.51.100.10:54321",
+			authHeader: "Bearer secret-metrics-token",
+			wantCode:   http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+			req.RemoteAddr = tc.remoteAddr
+			if tc.authHeader != "" {
+				req.Header.Set("Authorization", tc.authHeader)
+			}
+			w := httptest.NewRecorder()
+			exp.ProtectedHandler(tc.token)(w, req)
+			if w.Code != tc.wantCode {
+				t.Fatalf("got status %d, want %d", w.Code, tc.wantCode)
+			}
+		})
+	}
+}

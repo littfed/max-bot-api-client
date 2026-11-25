@@ -9,6 +9,9 @@ import (
 )
 
 func TestSQLStoreOperations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping SQLite integration test in -short mode")
+	}
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test_store.db")
 
@@ -182,6 +185,9 @@ func TestSQLStoreOperations(t *testing.T) {
 }
 
 func TestStoreFallbackToJSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping SQLite integration test in -short mode")
+	}
 	tempDir := t.TempDir()
 	jsonPath := filepath.Join(tempDir, "fallback.json")
 
@@ -222,17 +228,20 @@ func setupTestStore(t *testing.T) *SQLStore {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
+	t.Cleanup(func() {
+		db.Close()
+	})
 	s, err := NewSQLStore(db, "sqlite")
 	if err != nil {
 		t.Fatalf("failed to create SQLStore: %v", err)
 	}
-	t.Cleanup(func() {
-		db.Close()
-	})
 	return s
 }
 
 func TestBotHubStore_UserAndModeState(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping SQLite integration test in -short mode")
+	}
 	ctx := context.Background()
 	store := setupTestStore(t)
 
@@ -363,6 +372,9 @@ func TestBotHubStore_UserAndModeState(t *testing.T) {
 }
 
 func TestSQLStore_AdminAndSupportOperations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping SQLite integration test in -short mode")
+	}
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test_admin_support.db")
 
@@ -469,6 +481,9 @@ func TestSQLStore_AdminAndSupportOperations(t *testing.T) {
 }
 
 func TestSQLStore_RemindersCRUD(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping SQLite integration test in -short mode")
+	}
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test_reminders.db")
 

@@ -748,13 +748,15 @@ func TestSmartIntentDrawingAndWebLinks(t *testing.T) {
 	}
 
 	for _, tc := range drawCases {
-		prompt, isDraw := extractDrawingPrompt(tc.input)
-		if isDraw != tc.expDraw {
-			t.Errorf("input %q: expected isDraw=%v, got %v", tc.input, tc.expDraw, isDraw)
-		}
-		if isDraw && prompt != tc.expPrompt {
-			t.Errorf("input %q: expected prompt %q, got %q", tc.input, tc.expPrompt, prompt)
-		}
+		t.Run(tc.input, func(t *testing.T) {
+			prompt, isDraw := extractDrawingPrompt(tc.input)
+			if isDraw != tc.expDraw {
+				t.Errorf("input %q: expected isDraw=%v, got %v", tc.input, tc.expDraw, isDraw)
+			}
+			if isDraw && prompt != tc.expPrompt {
+				t.Errorf("input %q: expected prompt %q, got %q", tc.input, tc.expPrompt, prompt)
+			}
+		})
 	}
 
 	// 2. Test extractURL heuristics
@@ -770,13 +772,15 @@ func TestSmartIntentDrawingAndWebLinks(t *testing.T) {
 	}
 
 	for _, tc := range urlCases {
-		rawURL, query, ok := extractURL(tc.input)
-		if ok != tc.expOk {
-			t.Errorf("input %q: expected ok=%v, got %v", tc.input, tc.expOk, ok)
-		}
-		if ok && (rawURL != tc.expURL || query != tc.expQuery) {
-			t.Errorf("input %q: expected (%q, %q), got (%q, %q)", tc.input, tc.expURL, tc.expQuery, rawURL, query)
-		}
+		t.Run(tc.input, func(t *testing.T) {
+			rawURL, query, ok := extractURL(tc.input)
+			if ok != tc.expOk {
+				t.Errorf("input %q: expected ok=%v, got %v", tc.input, tc.expOk, ok)
+			}
+			if ok && (rawURL != tc.expURL || query != tc.expQuery) {
+				t.Errorf("input %q: expected (%q, %q), got (%q, %q)", tc.input, tc.expURL, tc.expQuery, rawURL, query)
+			}
+		})
 	}
 
 	// 3. Test fetchAndExtractWebPageText with local test server
@@ -1436,6 +1440,15 @@ func TestTTS_SanitizeAndChunkText(t *testing.T) {
 }
 
 func TestTTS_SpeakClickedMessage(t *testing.T) {
+	mockTTS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte(strings.Repeat("ID3", 100)))
+	}))
+	defer mockTTS.Close()
+	origTTS := ttsBaseURL
+	ttsBaseURL = mockTTS.URL
+	defer func() { ttsBaseURL = origTTS }()
+
 	storage := fsm.NewMemoryStorage(10 * time.Minute)
 	defer storage.Close()
 

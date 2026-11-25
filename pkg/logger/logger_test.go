@@ -4,52 +4,61 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
-	"os"
 	"strings"
 	"testing"
 )
 
 func TestParseLevel(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
+		name     string
 		input    string
 		fallback slog.Level
 		expected slog.Level
 	}{
-		{"DEBUG", slog.LevelInfo, slog.LevelDebug},
-		{"debug", slog.LevelInfo, slog.LevelDebug},
-		{"INFO", slog.LevelDebug, slog.LevelInfo},
-		{"warn", slog.LevelInfo, slog.LevelWarn},
-		{"warning", slog.LevelInfo, slog.LevelWarn},
-		{"error", slog.LevelInfo, slog.LevelError},
-		{"unknown", slog.LevelDebug, slog.LevelDebug},
-		{"", slog.LevelWarn, slog.LevelWarn},
+		{"upper_debug", "DEBUG", slog.LevelInfo, slog.LevelDebug},
+		{"lower_debug", "debug", slog.LevelInfo, slog.LevelDebug},
+		{"upper_info", "INFO", slog.LevelDebug, slog.LevelInfo},
+		{"lower_warn", "warn", slog.LevelInfo, slog.LevelWarn},
+		{"warning_alias", "warning", slog.LevelInfo, slog.LevelWarn},
+		{"lower_error", "error", slog.LevelInfo, slog.LevelError},
+		{"unknown_fallback", "unknown", slog.LevelDebug, slog.LevelDebug},
+		{"empty_fallback", "", slog.LevelWarn, slog.LevelWarn},
 	}
 
 	for _, tt := range tests {
-		got := ParseLevel(tt.input, tt.fallback)
-		if got != tt.expected {
-			t.Errorf("ParseLevel(%q, %v) = %v, want %v", tt.input, tt.fallback, got, tt.expected)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := ParseLevel(tt.input, tt.fallback)
+			if got != tt.expected {
+				t.Errorf("ParseLevel(%q, %v) = %v, want %v", tt.input, tt.fallback, got, tt.expected)
+			}
+		})
 	}
 }
 
 func TestMaskSecret(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
+		name     string
 		input    string
 		expected string
 	}{
-		{"", ""},
-		{"12345", "***"},
-		{"12345678", "12***78"},
-		{"sk-1234567890abcdef", "sk-1***def"},
-		{"536754869:AAFn_abc123xyz_987", "5367***987"},
+		{"empty", "", ""},
+		{"short", "12345", "***"},
+		{"exact_8", "12345678", "12***78"},
+		{"api_key", "sk-1234567890abcdef", "sk-1***def"},
+		{"bot_token", "536754869:AAFn_abc123xyz_987", "5367***987"},
 	}
 
 	for _, tt := range tests {
-		got := MaskSecret(tt.input)
-		if got != tt.expected {
-			t.Errorf("MaskSecret(%q) = %q, want %q", tt.input, got, tt.expected)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := MaskSecret(tt.input)
+			if got != tt.expected {
+				t.Errorf("MaskSecret(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
 	}
 }
 
@@ -132,10 +141,7 @@ func TestLoggerJSONOutputAndMasking(t *testing.T) {
 }
 
 func TestLoggerEnvLogLevel(t *testing.T) {
-	orig := os.Getenv("LOG_LEVEL")
-	defer os.Setenv("LOG_LEVEL", orig)
-
-	os.Setenv("LOG_LEVEL", "warn")
+	t.Setenv("LOG_LEVEL", "warn")
 	var buf bytes.Buffer
 	l := New(WithOutput(&buf))
 

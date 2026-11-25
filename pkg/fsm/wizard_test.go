@@ -3,6 +3,7 @@ package fsm
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/bot"
@@ -133,54 +134,57 @@ func TestWizardLifecycleAndNavigation(t *testing.T) {
 }
 
 func TestWizardTimeoutExpiry(t *testing.T) {
-	storage := NewMemoryStorage(10 * time.Minute)
-	defer storage.Close()
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		storage := NewMemoryStorage(10 * time.Minute)
+		defer storage.Close()
 
-	var timedOut bool
-	wizard := NewWizard("expiring_wizard",
-		WithTimeout(20*time.Millisecond),
-		WithOnTimeout(func(c *bot.Context) error {
-			timedOut = true
+		var timedOut bool
+		wizard := NewWizard("expiring_wizard",
+			WithTimeout(20*time.Millisecond),
+			WithOnTimeout(func(c *bot.Context) error {
+				timedOut = true
+				return nil
+			}),
+		)
+		wizard.Step("STEP_ONE", func(c *bot.Context) error {
 			return nil
-		}),
-	)
-	wizard.Step("STEP_ONE", func(c *bot.Context) error {
-		return nil
-	})
-
-	router := bot.NewRouter()
-	router.Use(Middleware(storage))
-	wizard.Register(router)
-
-	makeCtx := func() *bot.Context {
-		return bot.NewContext(context.Background(), nil, &maxbot.Update{
-			UpdateType: maxbot.UpdateTypeMessageCreated,
-			Message: &maxbot.Message{
-				Sender:    &maxbot.User{UserID: 555},
-				Recipient: &maxbot.MessageRecipient{ChatID: 666},
-				Body:      maxbot.MessageBody{Text: "anything"},
-			},
 		})
-	}
 
-	// Start wizard
-	c := makeCtx()
-	mw := Middleware(storage)
-	_ = mw(func(ctx *bot.Context) error {
-		return wizard.Start(ctx)
-	})(c)
+		router := bot.NewRouter()
+		router.Use(Middleware(storage))
+		wizard.Register(router)
 
-	if !wizard.IsActive(c) {
-		t.Fatalf("expected wizard to be active")
-	}
+		makeCtx := func() *bot.Context {
+			return bot.NewContext(context.Background(), nil, &maxbot.Update{
+				UpdateType: maxbot.UpdateTypeMessageCreated,
+				Message: &maxbot.Message{
+					Sender:    &maxbot.User{UserID: 555},
+					Recipient: &maxbot.MessageRecipient{ChatID: 666},
+					Body:      maxbot.MessageBody{Text: "anything"},
+				},
+			})
+		}
 
-	// Sleep past timeout
-	time.Sleep(30 * time.Millisecond)
+		// Start wizard
+		c := makeCtx()
+		mw := Middleware(storage)
+		_ = mw(func(ctx *bot.Context) error {
+			return wizard.Start(ctx)
+		})(c)
 
-	// Dispatch update
-	_ = router.Handle(makeCtx())
+		if !wizard.IsActive(c) {
+			t.Fatalf("expected wizard to be active")
+		}
 
-	if !timedOut {
-		t.Fatalf("expected timeout handler to be triggered after inactivity")
-	}
+		// Sleep past timeout
+		time.Sleep(30 * time.Millisecond)
+
+		// Dispatch update
+		_ = router.Handle(makeCtx())
+
+		if !timedOut {
+			t.Fatalf("expected timeout handler to be triggered after inactivity")
+		}
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/internal/core"
@@ -142,8 +143,12 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 			logger.Debug("initial typing dispatch note", slog.Any("error", errTyping))
 		}
 		stopTyping := make(chan struct{})
+		var typingWG sync.WaitGroup
+		typingWG.Add(1)
+		defer typingWG.Wait()
 		defer close(stopTyping)
 		go func() {
+			defer typingWG.Done()
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for {
@@ -202,8 +207,12 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 			logger.Debug("initial typing dispatch note", slog.Any("error", errTyping))
 		}
 		stopTyping := make(chan struct{})
+		var typingWG sync.WaitGroup
+		typingWG.Add(1)
+		defer typingWG.Wait()
 		defer close(stopTyping)
 		go func() {
+			defer typingWG.Done()
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for {

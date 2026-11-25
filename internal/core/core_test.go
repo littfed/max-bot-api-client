@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/internal/core"
@@ -392,28 +393,31 @@ func TestCompositeFSM_RedisCaching(t *testing.T) {
 }
 
 func TestRedisLock_Expiration(t *testing.T) {
-	ctx := context.Background()
-	lockMgr := core.NewLockManager(nil)
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		lockMgr := core.NewLockManager(nil)
 
-	key := "lock:expire:test"
-	acquired, err := lockMgr.Acquire(ctx, key, 50*time.Millisecond)
-	if err != nil || !acquired {
-		t.Fatalf("First lock should succeed")
-	}
+		key := "lock:expire:test"
+		acquired, err := lockMgr.Acquire(ctx, key, 50*time.Millisecond)
+		if err != nil || !acquired {
+			t.Fatalf("First lock should succeed")
+		}
 
-	// Immediately re-acquire fails
-	acquired2, _ := lockMgr.Acquire(ctx, key, 50*time.Millisecond)
-	if acquired2 {
-		t.Fatalf("Immediate second lock should fail")
-	}
+		// Immediately re-acquire fails
+		acquired2, _ := lockMgr.Acquire(ctx, key, 50*time.Millisecond)
+		if acquired2 {
+			t.Fatalf("Immediate second lock should fail")
+		}
 
-	// Wait for expiration
-	time.Sleep(70 * time.Millisecond)
+		// Wait for expiration
+		time.Sleep(70 * time.Millisecond)
 
-	acquired3, err := lockMgr.Acquire(ctx, key, 50*time.Millisecond)
-	if err != nil || !acquired3 {
-		t.Fatalf("Lock re-acquire should succeed after TTL expiration")
-	}
+		acquired3, err := lockMgr.Acquire(ctx, key, 50*time.Millisecond)
+		if err != nil || !acquired3 {
+			t.Fatalf("Lock re-acquire should succeed after TTL expiration")
+		}
+	})
 }
 
 func TestLockManager_WithMockRedis(t *testing.T) {

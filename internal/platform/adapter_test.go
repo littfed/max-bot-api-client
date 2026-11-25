@@ -133,34 +133,38 @@ func TestMAXAdapter_SendMessage(t *testing.T) {
 }
 
 func TestMAXAdapter_RecipientTypes(t *testing.T) {
-	mockClient := &mockMaxBotClient{}
-	adapter := max.NewAdapter(mockClient)
-
+	t.Parallel()
 	testCases := []struct {
+		name        string
 		recipientID string
 		isUser      bool
 		expectedID  int64
 	}{
-		{"user_100", true, 100},
-		{"user:200", true, 200},
-		{"300", true, 300},
-		{"chat_400", false, 400},
-		{"chat:500", false, 500},
-		{"-600", false, -600},
+		{"user_underscore", "user_100", true, 100},
+		{"user_colon", "user:200", true, 200},
+		{"numeric_user", "300", true, 300},
+		{"chat_underscore", "chat_400", false, 400},
+		{"chat_colon", "chat:500", false, 500},
+		{"negative_chat", "-600", false, -600},
 	}
 
 	for _, tc := range testCases {
-		_, err := adapter.SendMessage(context.Background(), tc.recipientID, &platform.OutMessage{Text: "test"})
-		if err != nil {
-			t.Fatalf("SendMessage(%s) failed: %v", tc.recipientID, err)
-		}
-		lastRec := mockClient.sentRecipients[len(mockClient.sentRecipients)-1]
-		if lastRec.IsUser() != tc.isUser {
-			t.Errorf("[%s] Expected isUser=%v, got %v", tc.recipientID, tc.isUser, lastRec.IsUser())
-		}
-		if lastRec.ID() != tc.expectedID {
-			t.Errorf("[%s] Expected ID=%d, got %d", tc.recipientID, tc.expectedID, lastRec.ID())
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mockClient := &mockMaxBotClient{}
+			adapter := max.NewAdapter(mockClient)
+			_, err := adapter.SendMessage(context.Background(), tc.recipientID, &platform.OutMessage{Text: "test"})
+			if err != nil {
+				t.Fatalf("SendMessage(%s) failed: %v", tc.recipientID, err)
+			}
+			lastRec := mockClient.sentRecipients[len(mockClient.sentRecipients)-1]
+			if lastRec.IsUser() != tc.isUser {
+				t.Errorf("[%s] Expected isUser=%v, got %v", tc.recipientID, tc.isUser, lastRec.IsUser())
+			}
+			if lastRec.ID() != tc.expectedID {
+				t.Errorf("[%s] Expected ID=%d, got %d", tc.recipientID, tc.expectedID, lastRec.ID())
+			}
+		})
 	}
 }
 

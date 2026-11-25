@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -663,10 +662,9 @@ func (s *SQLStore) DrawGiveawayWinnersContext(ctx context.Context, id string, co
 		uids = append(uids, uid)
 	}
 
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	r.Shuffle(len(uids), func(i, j int) {
-		uids[i], uids[j] = uids[j], uids[i]
-	})
+	if err := cryptoShuffle(uids); err != nil {
+		return nil, fmt.Errorf("failed to shuffle giveaway participants: %w", err)
+	}
 
 	if count > len(uids) {
 		count = len(uids)

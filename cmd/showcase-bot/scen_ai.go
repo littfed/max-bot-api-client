@@ -2192,6 +2192,8 @@ func chunkTextForSpeech(text string, maxRunes int) []string {
 	return chunks
 }
 
+var ttsBaseURL = "https://translate.google.com"
+
 // synthesizeSpeech converts Russian/multilingual text into MP3 audio bytes using neural TTS.
 // It handles text cleaning, chunking for Google Translate TTS 200-char limits,
 // and concatenates MP3 audio chunks into a seamless audio stream.
@@ -2214,7 +2216,7 @@ func synthesizeSpeech(ctx context.Context, text string) ([]byte, error) {
 
 		// Retry each chunk up to 2 times
 		for attempt := 0; attempt < 2; attempt++ {
-			ttsURL := fmt.Sprintf("https://translate.google.com/translate_tts?ie=UTF-8&q=%s&tl=ru&client=tw-ob", url.QueryEscape(chunk))
+			ttsURL := fmt.Sprintf("%s/translate_tts?ie=UTF-8&q=%s&tl=ru&client=tw-ob", ttsBaseURL, url.QueryEscape(chunk))
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ttsURL, nil)
 			if err != nil {
 				lastErr = err

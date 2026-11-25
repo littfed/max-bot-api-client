@@ -20,7 +20,6 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/modules/support"
 	"github.com/littfed/max-bot-api-client/internal/platform"
 	"github.com/littfed/max-bot-api-client/pkg/store"
-	"github.com/littfed/max-bot-api-client/pkg/webapp"
 )
 
 type recordingPlatformAdapter struct {
@@ -118,8 +117,6 @@ func setupTestAPIServerWithAdapter(t *testing.T, adapter platform.PlatformAdapte
 		AllowDevHeaders: true,
 	})
 
-	validMAXInitData = webapp.SignInitData(testBotToken, 9999, "TestUser", "testuser")
-
 	ts := httptest.NewServer(router)
 	t.Cleanup(func() {
 		ts.Close()
@@ -135,13 +132,16 @@ func TestBug_DuplicateModeSwitchNotification(t *testing.T) {
 	// Set initial user mode to "chat"
 	switchBody := bytes.NewBufferString(`{"mode_id":"chat"}`)
 	req1, _ := http.NewRequest("POST", ts.URL+"/api/v1/user/mode", switchBody)
-	req1.Header.Set("X-Init-Data", validMAXInitData)
+	req1.Header.Set("X-Init-Data", testMAXInitData())
 	req1.Header.Set("Content-Type", "application/json")
 	resp1, err := http.DefaultClient.Do(req1)
-	if err != nil || resp1.StatusCode != http.StatusOK {
-		t.Fatalf("First switch to chat failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", resp1.StatusCode)
+	}
 
 	initialCount := len(recorder.messages)
 	if initialCount == 0 {
@@ -151,13 +151,16 @@ func TestBug_DuplicateModeSwitchNotification(t *testing.T) {
 	// User clicks Chat in MiniApp again (mode is ALREADY "chat")
 	switchBody2 := bytes.NewBufferString(`{"mode_id":"chat"}`)
 	req2, _ := http.NewRequest("POST", ts.URL+"/api/v1/user/mode", switchBody2)
-	req2.Header.Set("X-Init-Data", validMAXInitData)
+	req2.Header.Set("X-Init-Data", testMAXInitData())
 	req2.Header.Set("Content-Type", "application/json")
 	resp2, err := http.DefaultClient.Do(req2)
-	if err != nil || resp2.StatusCode != http.StatusOK {
-		t.Fatalf("Second switch to chat failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", resp2.StatusCode)
+	}
 
 	// Assert: When mode is already chat, it MUST NOT send another switch notification!
 	if len(recorder.messages) > initialCount {
@@ -174,7 +177,7 @@ func TestBug_ChatSyncBetweenMiniAppAndBot(t *testing.T) {
 	// In Mini-App: User sets settings or sends message with Role 3 (Маркетолог) and Tone 4 (Юмористический)
 	settingsBody := bytes.NewBufferString(`{"role_id": 3, "tone_id": 4}`)
 	reqSettings, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/settings", settingsBody)
-	reqSettings.Header.Set("X-Init-Data", validMAXInitData)
+	reqSettings.Header.Set("X-Init-Data", testMAXInitData())
 	reqSettings.Header.Set("Content-Type", "application/json")
 	respSettings, err := http.DefaultClient.Do(reqSettings)
 	if err != nil {
@@ -188,17 +191,20 @@ func TestBug_ChatSyncBetweenMiniAppAndBot(t *testing.T) {
 	// User sends a message in Mini-App
 	msgBody := bytes.NewBufferString(`{"role_id": 3, "tone_id": 4, "message": "Придумай слоган"}`)
 	reqMsg, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/message", msgBody)
-	reqMsg.Header.Set("X-Init-Data", validMAXInitData)
+	reqMsg.Header.Set("X-Init-Data", testMAXInitData())
 	reqMsg.Header.Set("Content-Type", "application/json")
 	respMsg, err := http.DefaultClient.Do(reqMsg)
-	if err != nil || respMsg.StatusCode != http.StatusOK {
-		t.Fatalf("Chat message failed: code=%d, err=%v", respMsg.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	respMsg.Body.Close()
+	if respMsg.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respMsg.StatusCode)
+	}
 
 	// 2a. Check if MiniApp can fetch its session state (role, tone, history)
 	reqSession, _ := http.NewRequest("GET", ts.URL+"/api/v1/chat/session", nil)
-	reqSession.Header.Set("X-Init-Data", validMAXInitData)
+	reqSession.Header.Set("X-Init-Data", testMAXInitData())
 	respSession, err := http.DefaultClient.Do(reqSession)
 	if err != nil {
 		t.Fatalf("GET /chat/session request failed: %v", err)
@@ -247,13 +253,16 @@ func TestBug_ChatHistoryPersistsAcrossRestart(t *testing.T) {
 	// Send a chat message via Mini App
 	msgBody := bytes.NewBufferString(`{"role_id": 2, "tone_id": 3, "message": "Какая у нас юнит-экономика?"}`)
 	reqMsg, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/message", msgBody)
-	reqMsg.Header.Set("X-Init-Data", validMAXInitData)
+	reqMsg.Header.Set("X-Init-Data", testMAXInitData())
 	reqMsg.Header.Set("Content-Type", "application/json")
 	respMsg, err := http.DefaultClient.Do(reqMsg)
-	if err != nil || respMsg.StatusCode != http.StatusOK {
-		t.Fatalf("POST /chat/message failed: code=%d, err=%v", respMsg.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	respMsg.Body.Close()
+	if respMsg.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respMsg.StatusCode)
+	}
 
 	// Simulate backend service restart / rebuild:
 	// A new instance of chat.Module and router is initialized against the SAME sqlStore (RAM wiped).
@@ -274,13 +283,16 @@ func TestBug_ChatHistoryPersistsAcrossRestart(t *testing.T) {
 	// 3a. Update settings in Mini App
 	settingsBody := bytes.NewBufferString(`{"role_id": 3, "tone_id": 4}`)
 	reqSettings, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/settings", settingsBody)
-	reqSettings.Header.Set("X-Init-Data", validMAXInitData)
+	reqSettings.Header.Set("X-Init-Data", testMAXInitData())
 	reqSettings.Header.Set("Content-Type", "application/json")
 	respSettings, err := http.DefaultClient.Do(reqSettings)
-	if err != nil || respSettings.StatusCode != http.StatusOK {
-		t.Fatalf("POST /chat/settings failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	respSettings.Body.Close()
+	if respSettings.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respSettings.StatusCode)
+	}
 
 	// Cold restart again: settings changed, messages MUST still persist!
 	restartedChatMod2 := chat.New(sqlStore, nil)
@@ -318,12 +330,15 @@ func TestBug_ChatHistoryPersistsAcrossRestart(t *testing.T) {
 
 	// 3c. Clear chat in Mini App
 	reqClear, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/clear", nil)
-	reqClear.Header.Set("X-Init-Data", validMAXInitData)
+	reqClear.Header.Set("X-Init-Data", testMAXInitData())
 	respClear, err := http.DefaultClient.Do(reqClear)
-	if err != nil || respClear.StatusCode != http.StatusOK {
-		t.Fatalf("POST /chat/clear failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	respClear.Body.Close()
+	if respClear.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respClear.StatusCode)
+	}
 
 	// Cold restart: messages MUST be 0
 	restartedChatMod4 := chat.New(sqlStore, nil)
@@ -335,4 +350,3 @@ func TestBug_ChatHistoryPersistsAcrossRestart(t *testing.T) {
 		t.Errorf("Expected 0 messages after clear, got %d", len(session4.Messages))
 	}
 }
-

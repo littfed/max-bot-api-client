@@ -212,19 +212,22 @@ func TestParseRedisURL(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		addr, opts, err := ParseRedisURL(c.url)
-		if err != nil {
-			t.Fatalf("failed to parse url %s: %v", c.url, err)
-		}
-		if addr != c.wantAddr {
-			t.Errorf("url %s: got addr %s, want %s", c.url, addr, c.wantAddr)
-		}
-		if opts.Password != c.wantPass {
-			t.Errorf("url %s: got pass %s, want %s", c.url, opts.Password, c.wantPass)
-		}
-		if opts.DB != c.wantDB {
-			t.Errorf("url %s: got db %d, want %d", c.url, opts.DB, c.wantDB)
-		}
+		t.Run(c.url, func(t *testing.T) {
+			t.Parallel()
+			addr, opts, err := ParseRedisURL(c.url)
+			if err != nil {
+				t.Fatalf("failed to parse url %s: %v", c.url, err)
+			}
+			if addr != c.wantAddr {
+				t.Errorf("url %s: got addr %s, want %s", c.url, addr, c.wantAddr)
+			}
+			if opts.Password != c.wantPass {
+				t.Errorf("url %s: got pass %s, want %s", c.url, opts.Password, c.wantPass)
+			}
+			if opts.DB != c.wantDB {
+				t.Errorf("url %s: got db %d, want %d", c.url, opts.DB, c.wantDB)
+			}
+		})
 	}
 }
 

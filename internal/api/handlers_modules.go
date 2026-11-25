@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/internal/modules/shop"
@@ -639,8 +640,12 @@ func (h *modulesHandler) handleChatMessage(w http.ResponseWriter, r *http.Reques
 		reqCtx := r.Context()
 		_ = h.cfg.PlatformAdapter.SendChatAction(reqCtx, recipientID, "typing_on")
 		stopTyping := make(chan struct{})
+		var typingWG sync.WaitGroup
+		typingWG.Add(1)
+		defer typingWG.Wait()
 		defer close(stopTyping)
 		go func(ctx context.Context, recID string) {
+			defer typingWG.Done()
 			ticker := time.NewTicker(4 * time.Second)
 			defer ticker.Stop()
 			for {

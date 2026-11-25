@@ -10,10 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/littfed/max-bot-api-client/internal/admin"
 	"github.com/littfed/max-bot-api-client/internal/core"
@@ -51,6 +55,8 @@ type RouterConfig struct {
 	PlatformAdapter platform.PlatformAdapter
 	AllowedOrigins  []string
 	AllowDevHeaders bool
+	RateLimitRPS    float64
+	RateLimitBurst  int
 }
 
 // UserFromContext retrieves the authenticated store.User from the request context.
@@ -229,8 +235,65 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/admin/tickets/{id}/reply", requireAdmin(admH.handleAdminTicketReply))
 	mux.HandleFunc("GET /api/v1/admin/audit-logs", requireAdmin(admH.handleAdminAuditLogs))
 
-	// Middleware chaining: CORS -> MaxBody -> Auth -> Handler
-	return corsMiddleware(cfg, maxBodyMiddleware(1<<20, authMiddleware(cfg, mux)))
+	// Middleware chaining: CORS -> RateLimit -> MaxBody -> Auth -> Handler
+	return corsMiddleware(cfg, rateLimitMiddleware(cfg, maxBodyMiddleware(1<<20, authMiddleware(cfg, mux))))
+}
+
+func rateLimitMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
+	rps := cfg.RateLimitRPS
+	if rps <= 0 {
+		rps = 30
+	}
+	burst := cfg.RateLimitBurst
+	if burst <= 0 {
+		burst = 60
+	}
+
+	type clientEntry struct {
+		limiter  *rate.Limiter
+		lastSeen time.Time
+	}
+	var (
+		mu      sync.Mutex
+		clients = make(map[string]*clientEntry)
+		lastGC  = time.Now()
+	)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || host == "" {
+			host = r.RemoteAddr
+		}
+		if host == "" {
+			host = "unknown"
+		}
+
+		now := time.Now()
+		mu.Lock()
+		if now.Sub(lastGC) > 5*time.Minute {
+			for k, v := range clients {
+				if now.Sub(v.lastSeen) > 5*time.Minute {
+					delete(clients, k)
+				}
+			}
+			lastGC = now
+		}
+		entry, ok := clients[host]
+		if !ok {
+			entry = &clientEntry{limiter: rate.NewLimiter(rate.Limit(rps), burst)}
+			clients[host] = entry
+		}
+		entry.lastSeen = now
+		allowed := entry.limiter.Allow()
+		mu.Unlock()
+
+		if !allowed {
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func maxBodyMiddleware(limit int64, next http.Handler) http.Handler {

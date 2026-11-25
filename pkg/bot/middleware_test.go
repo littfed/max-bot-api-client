@@ -119,3 +119,26 @@ func TestLoggerMiddleware(t *testing.T) {
 		t.Errorf("expected level ERROR, got %v", errLog["level"])
 	}
 }
+
+func TestRecoveryMiddleware(t *testing.T) {
+	t.Parallel()
+	router := NewRouter()
+	router.Use(Recovery(nil))
+
+	router.OnCommand("crash", func(c *Context) error {
+		panic("fatal boom!")
+	})
+
+	c := &Context{
+		Update: &maxbot.Update{
+			Message: &maxbot.Message{
+				Body: maxbot.MessageBody{Text: "/crash"},
+			},
+		},
+	}
+
+	err := router.Handle(c)
+	if err == nil {
+		t.Fatal("expected error from recovered panic, got nil")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/bot"
@@ -67,22 +68,25 @@ func TestMemoryStorageLifecycle(t *testing.T) {
 }
 
 func TestMemoryStorageTTLExpiration(t *testing.T) {
-	// Storage with 50ms TTL
-	storage := NewMemoryStorage(50 * time.Millisecond)
-	defer storage.Close()
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		// Storage with 50ms TTL
+		storage := NewMemoryStorage(50 * time.Millisecond)
+		defer storage.Close()
 
-	ctx := context.Background()
-	key := SessionKey{UserID: 1, ChatID: 1}
+		ctx := context.Background()
+		key := SessionKey{UserID: 1, ChatID: 1}
 
-	_ = storage.SetState(ctx, key, "TEMP_STEP")
-	_ = storage.SetData(ctx, key, map[string]any{"temp": 123})
+		_ = storage.SetState(ctx, key, "TEMP_STEP")
+		_ = storage.SetData(ctx, key, map[string]any{"temp": 123})
 
-	time.Sleep(100 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 
-	st, _ := storage.GetState(ctx, key)
-	if st != DefaultState {
-		t.Fatalf("expected session to expire after TTL, got state %s", st)
-	}
+		st, _ := storage.GetState(ctx, key)
+		if st != DefaultState {
+			t.Fatalf("expected session to expire after TTL, got state %s", st)
+		}
+	})
 }
 
 func TestMemoryStorageConcurrency(t *testing.T) {

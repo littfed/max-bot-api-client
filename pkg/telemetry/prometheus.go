@@ -2,8 +2,11 @@ package telemetry
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -155,10 +158,45 @@ func (pe *PrometheusExporter) Handler() http.HandlerFunc {
 	}
 }
 
+// ProtectedHandler returns an http.HandlerFunc that restricts /metrics access:
+// if token is non-empty, requires Authorization: Bearer <token>;
+// otherwise permits only loopback client addresses.
+func (pe *PrometheusExporter) ProtectedHandler(token string) http.HandlerFunc {
+	inner := pe.Handler()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token != "" {
+			auth := r.Header.Get("Authorization")
+			const prefix = "Bearer "
+			if !strings.HasPrefix(auth, prefix) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			got := auth[len(prefix):]
+			if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			inner(w, r)
+			return
+		}
+
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		ip := net.ParseIP(strings.Trim(host, "[]"))
+		if ip == nil || !ip.IsLoopback() {
+			http.Error(w, "forbidden: metrics available only on loopback or with token", http.StatusForbidden)
+			return
+		}
+		inner(w, r)
+	}
+}
+
 // StartServer starts a dedicated HTTP server listening for Prometheus scraping on addr.
 func (pe *PrometheusExporter) StartServer(addr string) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/metrics", pe.Handler())
+	mux.HandleFunc("/metrics", pe.ProtectedHandler(strings.TrimSpace(os.Getenv("METRICS_TOKEN"))))
 
 	srv := &http.Server{
 		Addr:              addr,

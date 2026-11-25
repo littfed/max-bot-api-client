@@ -28,7 +28,7 @@ func TestRemindersAPI_Lifecycle(t *testing.T) {
 		t.Fatalf("NewRequest failed: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Init-Data", validMAXInitData)
+	req.Header.Set("X-Init-Data", testMAXInitData())
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -56,7 +56,7 @@ func TestRemindersAPI_Lifecycle(t *testing.T) {
 
 	// 2. List reminders (GET /api/v1/reminders)
 	getReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/reminders?status=active", nil)
-	getReq.Header.Set("X-Init-Data", validMAXInitData)
+	getReq.Header.Set("X-Init-Data", testMAXInitData())
 
 	getResp, err := client.Do(getReq)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestRemindersAPI_Lifecycle(t *testing.T) {
 	})
 	patchReq, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/v1/reminders/%d/action", ts.URL, remID), bytes.NewReader(snoozeBody))
 	patchReq.Header.Set("Content-Type", "application/json")
-	patchReq.Header.Set("X-Init-Data", validMAXInitData)
+	patchReq.Header.Set("X-Init-Data", testMAXInitData())
 
 	patchResp, err := client.Do(patchReq)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestRemindersAPI_Lifecycle(t *testing.T) {
 	})
 	compReq, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/v1/reminders/%d/action", ts.URL, remID), bytes.NewReader(completeBody))
 	compReq.Header.Set("Content-Type", "application/json")
-	compReq.Header.Set("X-Init-Data", validMAXInitData)
+	compReq.Header.Set("X-Init-Data", testMAXInitData())
 
 	compResp, err := client.Do(compReq)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestRemindersAPI_Lifecycle(t *testing.T) {
 
 	// 5. Simulate demo reminder (POST /api/v1/reminders/simulate)
 	simReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/reminders/simulate", nil)
-	simReq.Header.Set("X-Init-Data", validMAXInitData)
+	simReq.Header.Set("X-Init-Data", testMAXInitData())
 
 	simResp, err := client.Do(simReq)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestRemindersAPI_Lifecycle(t *testing.T) {
 
 	// 6. Delete reminder (DELETE /api/v1/reminders/{id})
 	delReq, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/reminders/%d", ts.URL, remID), nil)
-	delReq.Header.Set("X-Init-Data", validMAXInitData)
+	delReq.Header.Set("X-Init-Data", testMAXInitData())
 
 	delResp, err := client.Do(delReq)
 	if err != nil {
@@ -148,7 +148,7 @@ func TestRemindersAPI_Lifecycle(t *testing.T) {
 
 	// 7. Admin A/B stats (GET /api/v1/admin/notifications/ab-stats)
 	adminReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/notifications/ab-stats", nil)
-	adminReq.Header.Set("X-Init-Data", validAdminInitData)
+	adminReq.Header.Set("X-Init-Data", testAdminInitData())
 
 	adminResp, err := client.Do(adminReq)
 	if err != nil {
@@ -168,7 +168,7 @@ func TestRemindersAPI_AuthzAndValidation(t *testing.T) {
 	// 1. Invalid payload -> 400
 	badReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/reminders", bytes.NewReader([]byte(`{"title":""}`)))
 	badReq.Header.Set("Content-Type", "application/json")
-	badReq.Header.Set("X-Init-Data", validMAXInitData)
+	badReq.Header.Set("X-Init-Data", testMAXInitData())
 	badResp, err := client.Do(badReq)
 	if err != nil {
 		t.Fatalf("POST invalid failed: %v", err)
@@ -178,14 +178,14 @@ func TestRemindersAPI_AuthzAndValidation(t *testing.T) {
 		t.Fatalf("expected 400 for empty title, got %d", badResp.StatusCode)
 	}
 
-	// 2. Create reminder as validMAXInitData
+	// 2. Create reminder as testMAXInitData()
 	createBody, _ := json.Marshal(map[string]any{
 		"title":     "Owner check",
 		"remind_at": time.Now().Add(time.Hour).Format(time.RFC3339),
 	})
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/reminders", bytes.NewReader(createBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Init-Data", validMAXInitData)
+	req.Header.Set("X-Init-Data", testMAXInitData())
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST create failed: %v", err)
@@ -202,7 +202,7 @@ func TestRemindersAPI_AuthzAndValidation(t *testing.T) {
 	actBody, _ := json.Marshal(map[string]any{"action": "complete"})
 	idorPatch, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/v1/reminders/%d/action", ts.URL, created.Reminder.ID), bytes.NewReader(actBody))
 	idorPatch.Header.Set("Content-Type", "application/json")
-	idorPatch.Header.Set("X-Init-Data", validAdminInitData)
+	idorPatch.Header.Set("X-Init-Data", testAdminInitData())
 	idorPatchResp, err := client.Do(idorPatch)
 	if err != nil {
 		t.Fatalf("PATCH IDOR failed: %v", err)
@@ -213,7 +213,7 @@ func TestRemindersAPI_AuthzAndValidation(t *testing.T) {
 	}
 
 	idorDel, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/reminders/%d", ts.URL, created.Reminder.ID), nil)
-	idorDel.Header.Set("X-Init-Data", validAdminInitData)
+	idorDel.Header.Set("X-Init-Data", testAdminInitData())
 	idorDelResp, err := client.Do(idorDel)
 	if err != nil {
 		t.Fatalf("DELETE IDOR failed: %v", err)
@@ -225,7 +225,7 @@ func TestRemindersAPI_AuthzAndValidation(t *testing.T) {
 
 	// 4. Non-existent ID -> 404 Not Found
 	notFoundDel, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/reminders/999999", nil)
-	notFoundDel.Header.Set("X-Init-Data", validMAXInitData)
+	notFoundDel.Header.Set("X-Init-Data", testMAXInitData())
 	nfResp, err := client.Do(notFoundDel)
 	if err != nil {
 		t.Fatalf("DELETE 404 failed: %v", err)
@@ -238,7 +238,7 @@ func TestRemindersAPI_AuthzAndValidation(t *testing.T) {
 	// 5. Repeated completion -> 409 Conflict
 	comp1, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/v1/reminders/%d/action", ts.URL, created.Reminder.ID), bytes.NewReader(actBody))
 	comp1.Header.Set("Content-Type", "application/json")
-	comp1.Header.Set("X-Init-Data", validMAXInitData)
+	comp1.Header.Set("X-Init-Data", testMAXInitData())
 	r1, _ := client.Do(comp1)
 	r1.Body.Close()
 	if r1.StatusCode != http.StatusOK {
@@ -247,7 +247,7 @@ func TestRemindersAPI_AuthzAndValidation(t *testing.T) {
 
 	comp2, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/v1/reminders/%d/action", ts.URL, created.Reminder.ID), bytes.NewReader(actBody))
 	comp2.Header.Set("Content-Type", "application/json")
-	comp2.Header.Set("X-Init-Data", validMAXInitData)
+	comp2.Header.Set("X-Init-Data", testMAXInitData())
 	r2, _ := client.Do(comp2)
 	r2.Body.Close()
 	if r2.StatusCode != http.StatusConflict {

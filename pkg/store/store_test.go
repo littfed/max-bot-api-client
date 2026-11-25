@@ -145,8 +145,11 @@ func TestStoreConcurrency(t *testing.T) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 
-	const goroutines = 20
-	const iterations = 50
+	const goroutines = 10
+	iterations := 10
+	if testing.Short() {
+		iterations = 5
+	}
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 

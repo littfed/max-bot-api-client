@@ -31,10 +31,13 @@ const (
 	testJWTSecret = "test_jwt_secret_456"
 )
 
-var (
-	validMAXInitData   string
-	validAdminInitData string
-)
+func testMAXInitData() string {
+	return webapp.SignInitData(testBotToken, 9999, "TestUser", "testuser")
+}
+
+func testAdminInitData() string {
+	return webapp.SignInitData(testBotToken, 1001, "AdminUser", "adminuser")
+}
 
 type mockPlatformAdapter struct {
 	platformName string
@@ -141,9 +144,6 @@ func setupTestAPIServer(t *testing.T) *httptest.Server {
 		AllowDevHeaders: true,
 	})
 
-	validMAXInitData = webapp.SignInitData(testBotToken, 9999, "TestUser", "testuser")
-	validAdminInitData = webapp.SignInitData(testBotToken, 1001, "AdminUser", "adminuser")
-
 	ts := httptest.NewServer(router)
 	t.Cleanup(func() {
 		ts.Close()
@@ -156,12 +156,15 @@ func TestAPI_BootstrapAndModeSwitch(t *testing.T) {
 
 	// GET /api/v1/bootstrap
 	req, _ := http.NewRequest("GET", ts.URL+"/api/v1/bootstrap", nil)
-	req.Header.Set("X-Init-Data", validMAXInitData)
+	req.Header.Set("X-Init-Data", testMAXInitData())
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("Bootstrap failed: err=%v, code=%d", err, resp.StatusCode)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", resp.StatusCode)
+	}
 
 	var bootstrapResp struct {
 		ActiveMode string `json:"active_mode"`
@@ -187,13 +190,16 @@ func TestAPI_BootstrapAndModeSwitch(t *testing.T) {
 	// POST /api/v1/user/mode
 	switchBody := bytes.NewBufferString(`{"mode_id":"reception"}`)
 	req2, _ := http.NewRequest("POST", ts.URL+"/api/v1/user/mode", switchBody)
-	req2.Header.Set("X-Init-Data", validMAXInitData)
+	req2.Header.Set("X-Init-Data", testMAXInitData())
 	req2.Header.Set("Content-Type", "application/json")
 	resp2, err := http.DefaultClient.Do(req2)
-	if err != nil || resp2.StatusCode != http.StatusOK {
-		t.Fatalf("Switch mode failed: err=%v, code=%d", err, resp2.StatusCode)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", resp2.StatusCode)
+	}
 
 	var switchResp struct {
 		Success    bool   `json:"success"`
@@ -206,12 +212,15 @@ func TestAPI_BootstrapAndModeSwitch(t *testing.T) {
 
 	// Verify mode changed via second bootstrap call
 	req3, _ := http.NewRequest("GET", ts.URL+"/api/v1/bootstrap", nil)
-	req3.Header.Set("X-Init-Data", validMAXInitData)
+	req3.Header.Set("X-Init-Data", testMAXInitData())
 	resp3, err := http.DefaultClient.Do(req3)
-	if err != nil || resp3.StatusCode != http.StatusOK {
-		t.Fatalf("Second bootstrap failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", resp3.StatusCode)
+	}
 
 	var boot2 struct {
 		ActiveMode string `json:"active_mode"`
@@ -274,10 +283,13 @@ func TestAPI_AuthMiddleware(t *testing.T) {
 	req4, _ := http.NewRequest("GET", ts.URL+"/api/v1/bootstrap", nil)
 	req4.Header.Set("Authorization", "Bearer "+jwtToken)
 	resp4, err := http.DefaultClient.Do(req4)
-	if err != nil || resp4.StatusCode != http.StatusOK {
-		t.Fatalf("Bearer auth failed: err=%v, code=%d", err, resp4.StatusCode)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer resp4.Body.Close()
+	if resp4.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", resp4.StatusCode)
+	}
 
 	// 5. Default router without AllowDevHeaders rejects X-Dev-User-ID
 	prodRouter := api.NewRouter(api.RouterConfig{
@@ -305,12 +317,15 @@ func TestAPI_MascotTapAndLead(t *testing.T) {
 
 	// GET /api/v1/mascot/tap
 	req, _ := http.NewRequest("GET", ts.URL+"/api/v1/mascot/tap", nil)
-	req.Header.Set("X-Init-Data", validMAXInitData)
+	req.Header.Set("X-Init-Data", testMAXInitData())
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("Mascot tap failed: code=%d, err=%v", resp.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", resp.StatusCode)
+	}
 
 	var tapResp struct {
 		Phrase   string `json:"phrase"`
@@ -330,13 +345,16 @@ func TestAPI_MascotTapAndLead(t *testing.T) {
 		"tested_modes": ["shop", "reception"]
 	}`)
 	reqLead, _ := http.NewRequest("POST", ts.URL+"/api/v1/lead", leadBody)
-	reqLead.Header.Set("X-Init-Data", validMAXInitData)
+	reqLead.Header.Set("X-Init-Data", testMAXInitData())
 	reqLead.Header.Set("Content-Type", "application/json")
 	respLead, err := http.DefaultClient.Do(reqLead)
-	if err != nil || respLead.StatusCode != http.StatusOK {
-		t.Fatalf("Save lead failed: code=%d, err=%v", respLead.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respLead.Body.Close()
+	if respLead.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respLead.StatusCode)
+	}
 
 	var leadResp struct {
 		Success bool  `json:"success"`
@@ -353,12 +371,15 @@ func TestAPI_ShopEndpoints(t *testing.T) {
 
 	// GET /api/v1/shop/catalog
 	reqCat, _ := http.NewRequest("GET", ts.URL+"/api/v1/shop/catalog", nil)
-	reqCat.Header.Set("X-Init-Data", validMAXInitData)
+	reqCat.Header.Set("X-Init-Data", testMAXInitData())
 	respCat, err := http.DefaultClient.Do(reqCat)
-	if err != nil || respCat.StatusCode != http.StatusOK {
-		t.Fatalf("Get catalog failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respCat.Body.Close()
+	if respCat.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respCat.StatusCode)
+	}
 
 	var catResp struct {
 		Products []store.Product `json:"products"`
@@ -371,13 +392,16 @@ func TestAPI_ShopEndpoints(t *testing.T) {
 	// POST /api/v1/shop/orders
 	orderBody := bytes.NewBufferString(`{"product_id": "prod_guide"}`)
 	reqOrder, _ := http.NewRequest("POST", ts.URL+"/api/v1/shop/orders", orderBody)
-	reqOrder.Header.Set("X-Init-Data", validMAXInitData)
+	reqOrder.Header.Set("X-Init-Data", testMAXInitData())
 	reqOrder.Header.Set("Content-Type", "application/json")
 	respOrder, err := http.DefaultClient.Do(reqOrder)
-	if err != nil || respOrder.StatusCode != http.StatusOK {
-		t.Fatalf("Create order failed: code=%d, err=%v", respOrder.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respOrder.Body.Close()
+	if respOrder.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respOrder.StatusCode)
+	}
 
 	var orderResp struct {
 		Order shop.Order `json:"order"`
@@ -390,13 +414,16 @@ func TestAPI_ShopEndpoints(t *testing.T) {
 	// POST /api/v1/shop/orders/{id}/simulate
 	simBody := bytes.NewBufferString(`{"action": "paid"}`)
 	reqSim, _ := http.NewRequest("POST", ts.URL+"/api/v1/shop/orders/"+orderResp.Order.ID+"/simulate", simBody)
-	reqSim.Header.Set("X-Init-Data", validMAXInitData)
+	reqSim.Header.Set("X-Init-Data", testMAXInitData())
 	reqSim.Header.Set("Content-Type", "application/json")
 	respSim, err := http.DefaultClient.Do(reqSim)
-	if err != nil || respSim.StatusCode != http.StatusOK {
-		t.Fatalf("Simulate order failed: code=%d, err=%v", respSim.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respSim.Body.Close()
+	if respSim.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respSim.StatusCode)
+	}
 
 	var simResp struct {
 		Result shop.PaymentSimulationResult `json:"result"`
@@ -412,29 +439,35 @@ func TestAPI_ReceptionEndpoints(t *testing.T) {
 
 	// GET /api/v1/reception/slots
 	reqSlots, _ := http.NewRequest("GET", ts.URL+"/api/v1/reception/slots?service_id=srv_consult", nil)
-	reqSlots.Header.Set("X-Init-Data", validMAXInitData)
+	reqSlots.Header.Set("X-Init-Data", testMAXInitData())
 	respSlots, err := http.DefaultClient.Do(reqSlots)
-	if err != nil || respSlots.StatusCode != http.StatusOK {
-		t.Fatalf("Get slots failed: code=%d, err=%v", respSlots.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respSlots.Body.Close()
+	if respSlots.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respSlots.StatusCode)
+	}
 
 	// POST /api/v1/reception/book
 	slotTime := time.Now().Add(24 * time.Hour).Truncate(time.Hour)
 	bookBody := bytes.NewBufferString(fmt.Sprintf(`{"service_id": "srv_consult", "slot_time": "%s"}`, slotTime.Format(time.RFC3339)))
 	reqBook, _ := http.NewRequest("POST", ts.URL+"/api/v1/reception/book", bookBody)
-	reqBook.Header.Set("X-Init-Data", validMAXInitData)
+	reqBook.Header.Set("X-Init-Data", testMAXInitData())
 	reqBook.Header.Set("Content-Type", "application/json")
 	respBook, err := http.DefaultClient.Do(reqBook)
-	if err != nil || respBook.StatusCode != http.StatusOK {
-		t.Fatalf("Book slot failed: code=%d, err=%v", respBook.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respBook.Body.Close()
+	if respBook.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respBook.StatusCode)
+	}
 
 	// Duplicate booking of same slot -> must fail (409 Conflict)
 	bookBody2 := bytes.NewBufferString(fmt.Sprintf(`{"service_id": "srv_consult", "slot_time": "%s"}`, slotTime.Format(time.RFC3339)))
 	reqBook2, _ := http.NewRequest("POST", ts.URL+"/api/v1/reception/book", bookBody2)
-	reqBook2.Header.Set("X-Init-Data", validMAXInitData)
+	reqBook2.Header.Set("X-Init-Data", testMAXInitData())
 	reqBook2.Header.Set("Content-Type", "application/json")
 	respBook2, err := http.DefaultClient.Do(reqBook2)
 	if err != nil {
@@ -447,32 +480,41 @@ func TestAPI_ReceptionEndpoints(t *testing.T) {
 
 	// GET /api/v1/reception/events
 	reqEvt, _ := http.NewRequest("GET", ts.URL+"/api/v1/reception/events", nil)
-	reqEvt.Header.Set("X-Init-Data", validMAXInitData)
+	reqEvt.Header.Set("X-Init-Data", testMAXInitData())
 	respEvt, err := http.DefaultClient.Do(reqEvt)
-	if err != nil || respEvt.StatusCode != http.StatusOK {
-		t.Fatalf("Get events failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respEvt.Body.Close()
+	if respEvt.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respEvt.StatusCode)
+	}
 
 	// POST /api/v1/reception/events/{id}/register
 	reqReg, _ := http.NewRequest("POST", ts.URL+"/api/v1/reception/events/evt_launch/register", nil)
-	reqReg.Header.Set("X-Init-Data", validMAXInitData)
+	reqReg.Header.Set("X-Init-Data", testMAXInitData())
 	respReg, err := http.DefaultClient.Do(reqReg)
-	if err != nil || respReg.StatusCode != http.StatusOK {
-		t.Fatalf("Register event failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respReg.Body.Close()
+	if respReg.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respReg.StatusCode)
+	}
 
 	// POST /api/v1/reception/onboarding
 	onboardBody := bytes.NewBufferString(`{"answers": {"name": "Ivan", "business": "Ecommerce"}}`)
 	reqOnboard, _ := http.NewRequest("POST", ts.URL+"/api/v1/reception/onboarding", onboardBody)
-	reqOnboard.Header.Set("X-Init-Data", validMAXInitData)
+	reqOnboard.Header.Set("X-Init-Data", testMAXInitData())
 	reqOnboard.Header.Set("Content-Type", "application/json")
 	respOnboard, err := http.DefaultClient.Do(reqOnboard)
-	if err != nil || respOnboard.StatusCode != http.StatusOK {
-		t.Fatalf("Onboarding submission failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respOnboard.Body.Close()
+	if respOnboard.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respOnboard.StatusCode)
+	}
 }
 
 func TestAPI_SupportEndpoints(t *testing.T) {
@@ -481,13 +523,16 @@ func TestAPI_SupportEndpoints(t *testing.T) {
 	// POST /api/v1/support/ask
 	askBody := bytes.NewBufferString(`{"question": "Как оформить подписку?", "mode_scope": "shop"}`)
 	reqAsk, _ := http.NewRequest("POST", ts.URL+"/api/v1/support/ask", askBody)
-	reqAsk.Header.Set("X-Init-Data", validMAXInitData)
+	reqAsk.Header.Set("X-Init-Data", testMAXInitData())
 	reqAsk.Header.Set("Content-Type", "application/json")
 	respAsk, err := http.DefaultClient.Do(reqAsk)
-	if err != nil || respAsk.StatusCode != http.StatusOK {
-		t.Fatalf("Support ask failed: code=%d, err=%v", respAsk.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respAsk.Body.Close()
+	if respAsk.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respAsk.StatusCode)
+	}
 
 	var askResp struct {
 		Answer string  `json:"answer"`
@@ -501,22 +546,28 @@ func TestAPI_SupportEndpoints(t *testing.T) {
 	// POST /api/v1/support/tickets
 	ticketBody := bytes.NewBufferString(`{"subject": "Проблема с оплатой", "message": "Не проходит транзакция", "mode_scope": "shop"}`)
 	reqTicket, _ := http.NewRequest("POST", ts.URL+"/api/v1/support/tickets", ticketBody)
-	reqTicket.Header.Set("X-Init-Data", validMAXInitData)
+	reqTicket.Header.Set("X-Init-Data", testMAXInitData())
 	reqTicket.Header.Set("Content-Type", "application/json")
 	respTicket, err := http.DefaultClient.Do(reqTicket)
-	if err != nil || respTicket.StatusCode != http.StatusOK {
-		t.Fatalf("Create ticket failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respTicket.Body.Close()
+	if respTicket.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respTicket.StatusCode)
+	}
 
 	// GET /api/v1/support/tickets
 	reqTickets, _ := http.NewRequest("GET", ts.URL+"/api/v1/support/tickets", nil)
-	reqTickets.Header.Set("X-Init-Data", validMAXInitData)
+	reqTickets.Header.Set("X-Init-Data", testMAXInitData())
 	respTickets, err := http.DefaultClient.Do(reqTickets)
-	if err != nil || respTickets.StatusCode != http.StatusOK {
-		t.Fatalf("Get tickets failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respTickets.Body.Close()
+	if respTickets.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respTickets.StatusCode)
+	}
 }
 
 func TestAPI_ChatEndpoints(t *testing.T) {
@@ -524,12 +575,15 @@ func TestAPI_ChatEndpoints(t *testing.T) {
 
 	// GET /api/v1/chat/config
 	reqCfg, _ := http.NewRequest("GET", ts.URL+"/api/v1/chat/config", nil)
-	reqCfg.Header.Set("X-Init-Data", validMAXInitData)
+	reqCfg.Header.Set("X-Init-Data", testMAXInitData())
 	respCfg, err := http.DefaultClient.Do(reqCfg)
-	if err != nil || respCfg.StatusCode != http.StatusOK {
-		t.Fatalf("Get chat config failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respCfg.Body.Close()
+	if respCfg.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respCfg.StatusCode)
+	}
 
 	var chatCfg struct {
 		Roles []chat.Role `json:"roles"`
@@ -543,22 +597,28 @@ func TestAPI_ChatEndpoints(t *testing.T) {
 	// POST /api/v1/chat/message
 	msgBody := bytes.NewBufferString(`{"role_id": 1, "tone_id": 1, "message": "Привет, расскажи о боте"}`)
 	reqMsg, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/message", msgBody)
-	reqMsg.Header.Set("X-Init-Data", validMAXInitData)
+	reqMsg.Header.Set("X-Init-Data", testMAXInitData())
 	reqMsg.Header.Set("Content-Type", "application/json")
 	respMsg, err := http.DefaultClient.Do(reqMsg)
-	if err != nil || respMsg.StatusCode != http.StatusOK {
-		t.Fatalf("Chat message failed: code=%d, err=%v", respMsg.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respMsg.Body.Close()
+	if respMsg.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respMsg.StatusCode)
+	}
 
 	// POST /api/v1/chat/clear
 	reqClear, _ := http.NewRequest("POST", ts.URL+"/api/v1/chat/clear", nil)
-	reqClear.Header.Set("X-Init-Data", validMAXInitData)
+	reqClear.Header.Set("X-Init-Data", testMAXInitData())
 	respClear, err := http.DefaultClient.Do(reqClear)
-	if err != nil || respClear.StatusCode != http.StatusOK {
-		t.Fatalf("Chat clear failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respClear.Body.Close()
+	if respClear.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respClear.StatusCode)
+	}
 }
 
 func TestAPI_AdminEndpoints_RBAC(t *testing.T) {
@@ -566,7 +626,7 @@ func TestAPI_AdminEndpoints_RBAC(t *testing.T) {
 
 	// 1. Regular user trying to access admin endpoint -> 403 Forbidden
 	req1, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/modes", nil)
-	req1.Header.Set("X-Init-Data", validMAXInitData)
+	req1.Header.Set("X-Init-Data", testMAXInitData())
 	resp1, err := http.DefaultClient.Do(req1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -578,50 +638,65 @@ func TestAPI_AdminEndpoints_RBAC(t *testing.T) {
 
 	// 2. Admin user accessing admin endpoints -> 200 OK
 	reqModes, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/modes", nil)
-	reqModes.Header.Set("X-Init-Data", validAdminInitData)
+	reqModes.Header.Set("X-Init-Data", testAdminInitData())
 	respModes, err := http.DefaultClient.Do(reqModes)
-	if err != nil || respModes.StatusCode != http.StatusOK {
-		t.Fatalf("Admin get modes failed: code=%d, err=%v", respModes.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respModes.Body.Close()
+	if respModes.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respModes.StatusCode)
+	}
 
 	// POST /api/v1/admin/modes/{id}/toggle
 	toggleBody := bytes.NewBufferString(`{"is_active": false, "maintenance_message": "Техработы в магазине"}`)
 	reqToggle, _ := http.NewRequest("POST", ts.URL+"/api/v1/admin/modes/shop/toggle", toggleBody)
-	reqToggle.Header.Set("X-Init-Data", validAdminInitData)
+	reqToggle.Header.Set("X-Init-Data", testAdminInitData())
 	reqToggle.Header.Set("Content-Type", "application/json")
 	respToggle, err := http.DefaultClient.Do(reqToggle)
-	if err != nil || respToggle.StatusCode != http.StatusOK {
-		t.Fatalf("Admin toggle mode failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respToggle.Body.Close()
+	if respToggle.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respToggle.StatusCode)
+	}
 
 	// GET /api/v1/admin/leads
 	reqLeads, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/leads", nil)
-	reqLeads.Header.Set("X-Init-Data", validAdminInitData)
+	reqLeads.Header.Set("X-Init-Data", testAdminInitData())
 	respLeads, err := http.DefaultClient.Do(reqLeads)
-	if err != nil || respLeads.StatusCode != http.StatusOK {
-		t.Fatalf("Admin list leads failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respLeads.Body.Close()
+	if respLeads.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respLeads.StatusCode)
+	}
 
 	// GET /api/v1/admin/tickets
 	reqTickets, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/tickets", nil)
-	reqTickets.Header.Set("X-Init-Data", validAdminInitData)
+	reqTickets.Header.Set("X-Init-Data", testAdminInitData())
 	respTickets, err := http.DefaultClient.Do(reqTickets)
-	if err != nil || respTickets.StatusCode != http.StatusOK {
-		t.Fatalf("Admin list tickets failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respTickets.Body.Close()
+	if respTickets.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respTickets.StatusCode)
+	}
 
 	// GET /api/v1/admin/audit-logs
 	reqAudit, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/audit-logs", nil)
-	reqAudit.Header.Set("X-Init-Data", validAdminInitData)
+	reqAudit.Header.Set("X-Init-Data", testAdminInitData())
 	respAudit, err := http.DefaultClient.Do(reqAudit)
-	if err != nil || respAudit.StatusCode != http.StatusOK {
-		t.Fatalf("Admin audit logs failed: %v", err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respAudit.Body.Close()
+	if respAudit.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respAudit.StatusCode)
+	}
 }
 
 func TestAPI_CORS(t *testing.T) {
@@ -652,7 +727,7 @@ func TestAPI_UserMode_MaintenanceGuard(t *testing.T) {
 	// Attempting to switch to "channels" (seeded as inactive in DB)
 	switchBody := bytes.NewBufferString(`{"mode_id":"channels"}`)
 	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/user/mode", switchBody)
-	req.Header.Set("X-Init-Data", validMAXInitData)
+	req.Header.Set("X-Init-Data", testMAXInitData())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -685,13 +760,16 @@ func TestAPI_Admin_LeadStatusAndTicketReply(t *testing.T) {
 		"tested_modes": ["shop"]
 	}`)
 	reqLead, _ := http.NewRequest("POST", ts.URL+"/api/v1/lead", leadBody)
-	reqLead.Header.Set("X-Init-Data", validMAXInitData)
+	reqLead.Header.Set("X-Init-Data", testMAXInitData())
 	reqLead.Header.Set("Content-Type", "application/json")
 	respLead, err := http.DefaultClient.Do(reqLead)
-	if err != nil || respLead.StatusCode != http.StatusOK {
-		t.Fatalf("Create lead failed: code=%d, err=%v", respLead.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respLead.Body.Close()
+	if respLead.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respLead.StatusCode)
+	}
 
 	var leadResp struct {
 		Success bool  `json:"success"`
@@ -705,13 +783,16 @@ func TestAPI_Admin_LeadStatusAndTicketReply(t *testing.T) {
 	// Admin updates lead status
 	statusBody := bytes.NewBufferString(`{"status": "in_progress"}`)
 	reqStatus, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/admin/leads/%d/status", ts.URL, leadResp.LeadID), statusBody)
-	reqStatus.Header.Set("X-Init-Data", validAdminInitData)
+	reqStatus.Header.Set("X-Init-Data", testAdminInitData())
 	reqStatus.Header.Set("Content-Type", "application/json")
 	respStatus, err := http.DefaultClient.Do(reqStatus)
-	if err != nil || respStatus.StatusCode != http.StatusOK {
-		t.Fatalf("Update lead status failed: code=%d, err=%v", respStatus.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respStatus.Body.Close()
+	if respStatus.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respStatus.StatusCode)
+	}
 
 	// 2. User creates a support ticket
 	ticketBody := bytes.NewBufferString(`{
@@ -720,13 +801,16 @@ func TestAPI_Admin_LeadStatusAndTicketReply(t *testing.T) {
 		"mode_scope": "shop"
 	}`)
 	reqTicket, _ := http.NewRequest("POST", ts.URL+"/api/v1/support/tickets", ticketBody)
-	reqTicket.Header.Set("X-Init-Data", validMAXInitData)
+	reqTicket.Header.Set("X-Init-Data", testMAXInitData())
 	reqTicket.Header.Set("Content-Type", "application/json")
 	respTicket, err := http.DefaultClient.Do(reqTicket)
-	if err != nil || respTicket.StatusCode != http.StatusOK {
-		t.Fatalf("Create ticket failed: code=%d, err=%v", respTicket.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respTicket.Body.Close()
+	if respTicket.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respTicket.StatusCode)
+	}
 
 	var tResp struct {
 		Ticket struct {
@@ -740,32 +824,41 @@ func TestAPI_Admin_LeadStatusAndTicketReply(t *testing.T) {
 
 	// Admin lists tickets and finds it
 	reqList, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/tickets?status=open", nil)
-	reqList.Header.Set("X-Init-Data", validAdminInitData)
+	reqList.Header.Set("X-Init-Data", testAdminInitData())
 	respList, err := http.DefaultClient.Do(reqList)
-	if err != nil || respList.StatusCode != http.StatusOK {
-		t.Fatalf("List tickets failed: code=%d, err=%v", respList.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respList.Body.Close()
+	if respList.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respList.StatusCode)
+	}
 
 	// Admin replies to ticket
 	replyBody := bytes.NewBufferString(`{"message": "Доступ активирован вручную. Приятного пользования!"}`)
 	reqReply, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/admin/tickets/%d/reply", ts.URL, tResp.Ticket.ID), replyBody)
-	reqReply.Header.Set("X-Init-Data", validAdminInitData)
+	reqReply.Header.Set("X-Init-Data", testAdminInitData())
 	reqReply.Header.Set("Content-Type", "application/json")
 	respReply, err := http.DefaultClient.Do(reqReply)
-	if err != nil || respReply.StatusCode != http.StatusOK {
-		t.Fatalf("Reply ticket failed: code=%d, err=%v", respReply.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respReply.Body.Close()
+	if respReply.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respReply.StatusCode)
+	}
 
 	// Verify ticket status became answered
 	reqAnswered, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/tickets?status=answered", nil)
-	reqAnswered.Header.Set("X-Init-Data", validAdminInitData)
+	reqAnswered.Header.Set("X-Init-Data", testAdminInitData())
 	respAnswered, err := http.DefaultClient.Do(reqAnswered)
-	if err != nil || respAnswered.StatusCode != http.StatusOK {
-		t.Fatalf("List answered tickets failed: code=%d, err=%v", respAnswered.StatusCode, err)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
 	defer respAnswered.Body.Close()
+	if respAnswered.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d, want http.StatusOK", respAnswered.StatusCode)
+	}
 
 	var answeredResp struct {
 		Tickets []store.SupportTicket `json:"tickets"`
@@ -782,4 +875,3 @@ func TestAPI_Admin_LeadStatusAndTicketReply(t *testing.T) {
 		t.Errorf("Expected ticket %d to have status 'answered', got: %+v", tResp.Ticket.ID, answeredResp.Tickets)
 	}
 }
-

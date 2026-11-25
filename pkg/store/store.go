@@ -1,11 +1,12 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -646,10 +647,9 @@ func (s *Store) DrawGiveawayWinners(id string, count int) ([]int64, error) {
 		return nil, fmt.Errorf("no participants in giveaway %s", id)
 	}
 
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	r.Shuffle(len(uids), func(i, j int) {
-		uids[i], uids[j] = uids[j], uids[i]
-	})
+	if err := cryptoShuffle(uids); err != nil {
+		return nil, fmt.Errorf("failed to shuffle giveaway participants: %w", err)
+	}
 
 	if count > len(uids) {
 		count = len(uids)
@@ -710,4 +710,17 @@ func (s *Store) ListMediaArtifacts(userID int64, artifactType string, limit int)
 		}
 	}
 	return res, nil
+}
+
+// cryptoShuffle performs an in-place Fisher-Yates shuffle using crypto/rand.
+func cryptoShuffle[T any](s []T) error {
+	for i := len(s) - 1; i > 0; i-- {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return err
+		}
+		j := int(n.Int64())
+		s[i], s[j] = s[j], s[i]
+	}
+	return nil
 }

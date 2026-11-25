@@ -189,7 +189,7 @@ func main() {
 
 	// 6. Setup HTTP Server (Webhooks, Mini App, Metrics)
 	httpMux := http.NewServeMux()
-	httpMux.Handle("/metrics", promExporter.Handler())
+	httpMux.Handle("/metrics", promExporter.ProtectedHandler(strings.TrimSpace(os.Getenv("METRICS_TOKEN"))))
 	httpMux.HandleFunc("/webhook/payments/tbank", paymentRouter.HTTPHandler("tbank"))
 	httpMux.HandleFunc("/webhook/payments/yookassa", paymentRouter.HTTPHandler("yookassa"))
 

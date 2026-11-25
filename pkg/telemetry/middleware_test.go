@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/bot"
@@ -11,52 +12,56 @@ import (
 )
 
 func TestTelemetryMiddlewareCommands(t *testing.T) {
-	collector := NewCollector(WithBufferSize(50))
-	mw := Middleware(collector)
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		collector := NewCollector(WithBufferSize(50))
+		defer collector.Close()
+		mw := Middleware(collector)
 
-	// Command update
-	update := &maxbot.Update{
-		UpdateType: maxbot.UpdateTypeMessageCreated,
-		Message: &maxbot.Message{
-			Sender: &maxbot.User{UserID: 111, Name: "User1"},
-			Recipient: &maxbot.MessageRecipient{
-				ChatID: 222,
+		// Command update
+		update := &maxbot.Update{
+			UpdateType: maxbot.UpdateTypeMessageCreated,
+			Message: &maxbot.Message{
+				Sender: &maxbot.User{UserID: 111, Name: "User1"},
+				Recipient: &maxbot.MessageRecipient{
+					ChatID: 222,
+				},
+				Body: maxbot.MessageBody{
+					Text: "/ping arg",
+				},
 			},
-			Body: maxbot.MessageBody{
-				Text: "/ping arg",
-			},
-		},
-	}
+		}
 
-	c := bot.NewContext(context.Background(), nil, update)
+		c := bot.NewContext(context.Background(), nil, update)
 
-	handlerCalled := false
-	handler := mw(func(ctx *bot.Context) error {
-		handlerCalled = true
-		time.Sleep(5 * time.Millisecond)
-		return nil
+		handlerCalled := false
+		handler := mw(func(ctx *bot.Context) error {
+			handlerCalled = true
+			time.Sleep(5 * time.Millisecond)
+			return nil
+		})
+
+		err := handler(c)
+		if err != nil {
+			t.Fatalf("unexpected handler error: %v", err)
+		}
+		if !handlerCalled {
+			t.Fatalf("handler was not called")
+		}
+
+		events := collector.Events()
+		if len(events) != 1 {
+			t.Fatalf("expected 1 command event, got %d", len(events))
+		}
+
+		cmdEv := events[0]
+		if cmdEv.Type != EventCommand || cmdEv.Action != "/ping" || cmdEv.UserID != 111 || cmdEv.ChatID != 222 {
+			t.Errorf("unexpected command event fields: %+v", cmdEv)
+		}
+		if cmdEv.Duration < 5*time.Millisecond {
+			t.Errorf("expected duration >= 5ms, got %v", cmdEv.Duration)
+		}
 	})
-
-	err := handler(c)
-	if err != nil {
-		t.Fatalf("unexpected handler error: %v", err)
-	}
-	if !handlerCalled {
-		t.Fatalf("handler was not called")
-	}
-
-	events := collector.Events()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 command event, got %d", len(events))
-	}
-
-	cmdEv := events[0]
-	if cmdEv.Type != EventCommand || cmdEv.Action != "/ping" || cmdEv.UserID != 111 || cmdEv.ChatID != 222 {
-		t.Errorf("unexpected command event fields: %+v", cmdEv)
-	}
-	if cmdEv.Duration < 5*time.Millisecond {
-		t.Errorf("expected duration >= 5ms, got %v", cmdEv.Duration)
-	}
 }
 
 func TestTelemetryMiddlewareButtonClick(t *testing.T) {

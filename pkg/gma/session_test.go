@@ -2,6 +2,7 @@ package gma
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -62,16 +63,19 @@ func TestSessionManager_ModelPreferences(t *testing.T) {
 }
 
 func TestSessionManager_TTLExpiration(t *testing.T) {
-	sm := NewSessionManager(5, 10*time.Millisecond)
-	userID := int64(3003)
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		sm := NewSessionManager(5, 10*time.Millisecond)
+		userID := int64(3003)
 
-	sm.AddUserMessage(userID, "hello")
-	if len(sm.GetHistory(userID)) != 1 {
-		t.Fatalf("expected 1 message")
-	}
+		sm.AddUserMessage(userID, "hello")
+		if len(sm.GetHistory(userID)) != 1 {
+			t.Fatalf("expected 1 message")
+		}
 
-	time.Sleep(20 * time.Millisecond)
-	if len(sm.GetHistory(userID)) != 0 {
-		t.Errorf("expected history to expire after TTL")
-	}
+		time.Sleep(20 * time.Millisecond)
+		if len(sm.GetHistory(userID)) != 0 {
+			t.Errorf("expected history to expire after TTL")
+		}
+	})
 }

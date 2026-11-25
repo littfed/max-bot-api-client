@@ -12,8 +12,8 @@ import (
 
 // In-memory SQL driver for testing SQLStorage without CGO or external dependencies
 type mockSQLDriver struct {
-	mu     sync.Mutex
-	tables map[string]map[string]*mockRow
+	mu          sync.Mutex
+	tablesByDSN map[string]map[string]map[string]*mockRow
 }
 
 type mockRow struct {
@@ -25,7 +25,7 @@ type mockRow struct {
 }
 
 var globalMockDriver = &mockSQLDriver{
-	tables: make(map[string]map[string]*mockRow),
+	tablesByDSN: make(map[string]map[string]map[string]*mockRow),
 }
 
 func init() {
@@ -33,11 +33,12 @@ func init() {
 }
 
 func (d *mockSQLDriver) Open(name string) (driver.Conn, error) {
-	return &mockSQLConn{d: d}, nil
+	return &mockSQLConn{d: d, dsn: name}, nil
 }
 
 type mockSQLConn struct {
-	d *mockSQLDriver
+	d   *mockSQLDriver
+	dsn string
 }
 
 func (c *mockSQLConn) Prepare(query string) (driver.Stmt, error) {
@@ -69,9 +70,15 @@ func (s *mockSQLStmt) Exec(args []driver.Value) (driver.Result, error) {
 	s.conn.d.mu.Lock()
 	defer s.conn.d.mu.Unlock()
 
+	tables, ok := s.conn.d.tablesByDSN[s.conn.dsn]
+	if !ok {
+		tables = make(map[string]map[string]*mockRow)
+		s.conn.d.tablesByDSN[s.conn.dsn] = tables
+	}
+
 	table := "fsm_states"
-	if _, ok := s.conn.d.tables[table]; !ok {
-		s.conn.d.tables[table] = make(map[string]*mockRow)
+	if _, ok := tables[table]; !ok {
+		tables[table] = make(map[string]*mockRow)
 	}
 
 	// Simple query parser for testing
@@ -79,7 +86,7 @@ func (s *mockSQLStmt) Exec(args []driver.Value) (driver.Result, error) {
 		uid := args[0].(int64)
 		cid := args[1].(int64)
 		key := fmt.Sprintf("%d:%d", uid, cid)
-		s.conn.d.tables[table][key] = &mockRow{
+		tables[table][key] = &mockRow{
 			userID:    uid,
 			chatID:    cid,
 			state:     args[2].(string),
@@ -96,7 +103,7 @@ func (s *mockSQLStmt) Exec(args []driver.Value) (driver.Result, error) {
 		uid := args[2].(int64)
 		cid := args[3].(int64)
 		key := fmt.Sprintf("%d:%d", uid, cid)
-		row, ok := s.conn.d.tables[table][key]
+		row, ok := tables[table][key]
 		if ok {
 			row.updatedAt = updatedAt
 			if val[0] == '{' { // Data
@@ -112,7 +119,7 @@ func (s *mockSQLStmt) Exec(args []driver.Value) (driver.Result, error) {
 		uid := args[0].(int64)
 		cid := args[1].(int64)
 		key := fmt.Sprintf("%d:%d", uid, cid)
-		delete(s.conn.d.tables[table], key)
+		delete(tables[table], key)
 		return driver.RowsAffected(1), nil
 	}
 
@@ -124,7 +131,7 @@ func (s *mockSQLStmt) Query(args []driver.Value) (driver.Rows, error) {
 	defer s.conn.d.mu.Unlock()
 
 	table := "fsm_states"
-	rowsMap := s.conn.d.tables[table]
+	rowsMap := s.conn.d.tablesByDSN[s.conn.dsn][table]
 
 	if len(args) == 2 {
 		uid := args[0].(int64)
@@ -167,10 +174,14 @@ func (r *mockSQLRows) Next(dest []driver.Value) error {
 }
 
 func TestSQLStorageOperations(t *testing.T) {
-	db, err := sql.Open("fsm_mock", "test.db")
+	t.Parallel()
+	db, err := sql.Open("fsm_mock", t.Name())
 	if err != nil {
 		t.Fatalf("failed to open mock db: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
 
 	storage, err := NewSQLStorage(db)
 	if err != nil {

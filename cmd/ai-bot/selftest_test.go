@@ -37,7 +37,7 @@ func TestLiveSelfTest(t *testing.T) {
 	}
 
 	// 1. Health Probe against Go Model API
-	t.Run("01_GMA_HealthProbe", func(t *testing.T) {
+	t.Run("GMA_HealthProbe", func(t *testing.T) {
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, gmaURL+"/health", nil)
 		if err != nil {
 			t.Fatalf("failed to create health check request: %v", err)
@@ -54,7 +54,7 @@ func TestLiveSelfTest(t *testing.T) {
 
 	// 2. MAX Bot API Identity Verification
 	if token != "" {
-		t.Run("02_MAX_Bot_Identity", func(t *testing.T) {
+		t.Run("MAX_Bot_Identity", func(t *testing.T) {
 			client, err := maxbot.NewClient(token)
 			if err != nil {
 				t.Fatalf("failed to init client: %v", err)
@@ -74,7 +74,7 @@ func TestLiveSelfTest(t *testing.T) {
 	}
 
 	// 3. Live LLM Chat Completion via Go Model API
-	t.Run("03_GMA_LiveChatCompletion", func(t *testing.T) {
+	t.Run("GMA_LiveChatCompletion", func(t *testing.T) {
 		client := gma.NewClient(gmaURL, gmaKey, gma.WithTimeout(30*time.Second))
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
@@ -100,7 +100,7 @@ func TestLiveSelfTest(t *testing.T) {
 	})
 
 	// 4. In-Memory Session & Ring Buffer
-	t.Run("04_SessionManager_RingBuffer", func(t *testing.T) {
+	t.Run("SessionManager_RingBuffer", func(t *testing.T) {
 		sm := gma.NewSessionManager(3, 10*time.Minute)
 		userID := int64(777001)
 
@@ -120,7 +120,7 @@ func TestLiveSelfTest(t *testing.T) {
 	})
 
 	// 5. Bot Router Command & Menu Simulation
-	t.Run("05_BotRouter_CommandSimulation", func(t *testing.T) {
+	t.Run("BotRouter_CommandSimulation", func(t *testing.T) {
 		gmaClient := gma.NewClient(gmaURL, gmaKey)
 		sm := gma.NewSessionManager(10, 10*time.Minute)
 		b := bot.NewWithClient(nil)
