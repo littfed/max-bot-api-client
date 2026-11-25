@@ -31,6 +31,7 @@ type WizardStep struct {
 }
 
 // Wizard manages sequential multi-step forms, dialogs, and checkout flows.
+// Wizard is safe for concurrent use by multiple goroutines.
 type Wizard struct {
 	name       string
 	steps      []WizardStep
@@ -130,7 +131,10 @@ func (w *Wizard) Start(c *bot.Context) error {
 func (w *Wizard) CurrentStep(c *bot.Context) (int, State, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	return w.currentStepLocked(c)
+}
 
+func (w *Wizard) currentStepLocked(c *bot.Context) (int, State, bool) {
 	fsmCtx := FromContext(c)
 	if fsmCtx == nil {
 		return -1, StateEmpty, false
@@ -157,27 +161,30 @@ func (w *Wizard) IsActive(c *bot.Context) bool {
 
 // Next advances the wizard to the next step.
 func (w *Wizard) Next(c *bot.Context) error {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
 	fsmCtx := FromContext(c)
 	if fsmCtx == nil {
 		return ErrWizardNotActive
 	}
 
-	idx, _, active := w.CurrentStep(c)
+	w.mu.RLock()
+	idx, _, active := w.currentStepLocked(c)
 	if !active {
+		w.mu.RUnlock()
 		return ErrWizardNotActive
 	}
 
 	if idx+1 >= len(w.steps) {
-		if w.onComplete != nil {
-			return w.onComplete(c)
+		onComplete := w.onComplete
+		w.mu.RUnlock()
+		if onComplete != nil {
+			return onComplete(c)
 		}
 		return ErrWizardComplete
 	}
 
 	nextStep := w.steps[idx+1]
+	w.mu.RUnlock()
+
 	if err := fsmCtx.SetState(nextStep.State); err != nil {
 		return err
 	}
@@ -190,25 +197,27 @@ func (w *Wizard) Next(c *bot.Context) error {
 
 // Back returns the wizard to the previous step.
 func (w *Wizard) Back(c *bot.Context) error {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
 	fsmCtx := FromContext(c)
 	if fsmCtx == nil {
 		return ErrWizardNotActive
 	}
 
-	idx, _, active := w.CurrentStep(c)
+	w.mu.RLock()
+	idx, _, active := w.currentStepLocked(c)
 	if !active {
+		w.mu.RUnlock()
 		return ErrWizardNotActive
 	}
 
 	if idx <= 0 {
+		w.mu.RUnlock()
 		// Already at the first step
 		return nil
 	}
 
 	prevStep := w.steps[idx-1]
+	w.mu.RUnlock()
+
 	if err := fsmCtx.SetState(prevStep.State); err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,7 +13,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/ai"
@@ -21,6 +21,23 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/store"
 	"github.com/littfed/max-bot-api-client/pkg/webapp"
 )
+
+func authenticateWebappRequest(w http.ResponseWriter, r *http.Request, botToken string) (*webapp.InitData, bool) {
+	initDataStr := r.Header.Get("X-Init-Data")
+	if initDataStr == "" {
+		initDataStr = r.URL.Query().Get("init_data")
+	}
+	initData, err := webapp.ValidateInitData(initDataStr, botToken, 24*time.Hour)
+	if err != nil || initData == nil || initData.User == nil || initData.User.ID == 0 {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": false,
+			"error":   "unauthorized",
+		})
+		return nil, false
+	}
+	return initData, true
+}
 
 // RegisterWebappScenario installs Mini App demonstration routes, WebBridge handler, and technical cards.
 func RegisterWebappScenario(
@@ -35,19 +52,6 @@ func RegisterWebappScenario(
 	chatModel string,
 	skipRoot ...bool,
 ) {
-	const ownerUserID int64 = 396393759
-	var lastActiveUserID int64 = ownerUserID
-
-	// Track last active user so that unparameterized or demo Mini App actions can still route notifications to chat
-	b.Use(func(next bot.HandlerFunc) bot.HandlerFunc {
-		return func(c *bot.Context) error {
-			if c.Sender() != nil && c.Sender().UserID != 0 {
-				atomic.StoreInt64(&lastActiveUserID, c.Sender().UserID)
-			}
-			return next(c)
-		}
-	})
-
 	// 1. Technical cards
 	hood.Register("webapp_open_app", TechCard{
 		Title:       "Кнопка запуска open_app vs Link",
@@ -81,7 +85,7 @@ func RegisterWebappScenario(
 	})
 
 	// 2. Setup WebBridge & HTTP Static Server
-	bridge := webapp.NewBridge(token).SetAllowUnauthenticated(true)
+	bridge := webapp.NewBridge(token)
 	bridge.OnAction("submit_cart", func(ctx context.Context, data *webapp.InitData, payload json.RawMessage) (any, error) {
 		orderID := fmt.Sprintf("WEB-%d", time.Now().Unix()%100000)
 
@@ -115,8 +119,7 @@ func RegisterWebappScenario(
 		}
 
 		if targetUserID == 0 {
-			targetUserID = atomic.LoadInt64(&lastActiveUserID)
-			slog.Info("submit_cart fallback to lastActiveUserID", slog.Int64("user_id", targetUserID))
+			return nil, errors.New("authenticated user required")
 		}
 
 		// Store order in persistence layer
@@ -183,7 +186,7 @@ func RegisterWebappScenario(
 				Format:      "markdown",
 				Attachments: []maxbot.Attachment{kb.ToAttachment()},
 			}
-			_, sendErr := b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUserID), msgReq)
+			_, sendErr := b.Client().SendMessage(ctx, maxbot.ToUser(targetUserID), msgReq)
 			if sendErr != nil {
 				slog.Error("failed to send order confirmation to chat", slog.Int64("user_id", targetUserID), slog.Any("err", sendErr))
 			} else {
@@ -255,8 +258,7 @@ func RegisterWebappScenario(
 		}
 
 		if targetUserID == 0 {
-			targetUserID = atomic.LoadInt64(&lastActiveUserID)
-			slog.Info("book_service fallback to lastActiveUserID", slog.Int64("user_id", targetUserID))
+			return nil, errors.New("authenticated user required")
 		}
 
 		// Store booking in persistence layer
@@ -309,7 +311,7 @@ func RegisterWebappScenario(
 				Format:      "markdown",
 				Attachments: []maxbot.Attachment{kb.ToAttachment()},
 			}
-			_, sendErr := b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUserID), msgReq)
+			_, sendErr := b.Client().SendMessage(ctx, maxbot.ToUser(targetUserID), msgReq)
 			if sendErr != nil {
 				slog.Error("failed to send booking confirmation to chat", slog.Int64("user_id", targetUserID), slog.Any("err", sendErr))
 			} else {
@@ -331,24 +333,15 @@ func RegisterWebappScenario(
 	// Endpoint: GET /api/webapp/orders
 	httpMux.HandleFunc("/api/webapp/orders", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		uidStr := r.URL.Query().Get("user_id")
-		uid, _ := strconv.ParseInt(uidStr, 10, 64)
-		if uid == 0 {
-			uid = atomic.LoadInt64(&lastActiveUserID)
+		initData, ok := authenticateWebappRequest(w, r, token)
+		if !ok {
+			return
 		}
+		uid := initData.User.ID
 
 		orders := make([]store.Order, 0)
 		if appStore != nil {
-			if uid == ownerUserID {
-				orders = appStore.ListAllOrders()
-			} else if uid != 0 {
-				orders = appStore.ListOrdersByUser(uid)
-				if len(orders) == 0 {
-					orders = appStore.ListAllOrders()
-				}
-			} else {
-				orders = appStore.ListAllOrders()
-			}
+			orders = appStore.ListOrdersByUser(uid)
 		}
 		if orders == nil {
 			orders = make([]store.Order, 0)
@@ -363,11 +356,11 @@ func RegisterWebappScenario(
 	// Endpoint: GET /api/webapp/history
 	httpMux.HandleFunc("/api/webapp/history", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		uidStr := r.URL.Query().Get("user_id")
-		uid, _ := strconv.ParseInt(uidStr, 10, 64)
-		if uid == 0 {
-			uid = atomic.LoadInt64(&lastActiveUserID)
+		initData, ok := authenticateWebappRequest(w, r, token)
+		if !ok {
+			return
 		}
+		uid := initData.User.ID
 
 		artifactType := strings.TrimSpace(r.URL.Query().Get("type"))
 		limitStr := r.URL.Query().Get("limit")
@@ -381,10 +374,11 @@ func RegisterWebappScenario(
 			var err error
 			items, err = appStore.ListMediaArtifacts(uid, artifactType, limit)
 			if err != nil {
+				slog.Error("failed to list media artifacts", slog.Int64("user_id", uid), slog.Any("error", err))
 				w.WriteHeader(http.StatusInternalServerError)
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"success": false,
-					"error":   err.Error(),
+					"error":   "failed to load history",
 				})
 				return
 			}
@@ -404,6 +398,9 @@ func RegisterWebappScenario(
 	// Endpoint: POST /api/webapp/spin
 	httpMux.HandleFunc("/api/webapp/spin", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if _, ok := authenticateWebappRequest(w, r, token); !ok {
+			return
+		}
 		codes := []struct {
 			code     string
 			discount int
@@ -428,6 +425,10 @@ func RegisterWebappScenario(
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if _, ok := authenticateWebappRequest(w, r, token); !ok {
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 		var req struct {
 			Prompt string `json:"prompt"`
@@ -440,7 +441,7 @@ func RegisterWebappScenario(
 
 		generatedText := ""
 		if aiClient != nil {
-			aiCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			aiCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 			resp, err := aiClient.Chat(aiCtx, &ai.ChatRequest{
 				Model: chatModel,
 				Messages: []ai.ChatMessage{
@@ -476,11 +477,15 @@ func RegisterWebappScenario(
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		initData, ok := authenticateWebappRequest(w, r, token)
+		if !ok {
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 		var req struct {
 			Prompt     string `json:"prompt"`
 			Style      string `json:"style"`
-			UserID     int64  `json:"user_id"`
 			SendToChat bool   `json:"send_to_chat"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -499,7 +504,7 @@ func RegisterWebappScenario(
 		var imgBytes []byte
 
 		if aiClient != nil {
-			aiCtx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+			aiCtx, cancel := context.WithTimeout(r.Context(), 75*time.Second)
 			imgResp, imgErr := aiClient.GenerateImage(aiCtx, &ai.ImageRequest{
 				Prompt: fullPrompt,
 				Model:  "gemini-2.5-flash-image",
@@ -511,11 +516,13 @@ func RegisterWebappScenario(
 				if len(imgResp.Data) > 0 {
 					imgBytes = imgResp.Data
 				} else if imgResp.URL != "" {
-					fetchReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, imgResp.URL, nil)
-					fetchResp, fetchErr := http.DefaultClient.Do(fetchReq)
-					if fetchErr == nil && fetchResp.StatusCode == http.StatusOK {
-						imgBytes, _ = io.ReadAll(fetchResp.Body)
-						_ = fetchResp.Body.Close()
+					if _, urlErr := validatePublicHTTPURL(imgResp.URL); urlErr == nil {
+						fetchReq, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, imgResp.URL, nil)
+						fetchResp, fetchErr := newSafeHTTPClient(30 * time.Second).Do(fetchReq)
+						if fetchErr == nil && fetchResp.StatusCode == http.StatusOK {
+							imgBytes, _ = io.ReadAll(io.LimitReader(fetchResp.Body, 10<<20))
+							_ = fetchResp.Body.Close()
+						}
 					}
 				}
 			}
@@ -530,74 +537,56 @@ func RegisterWebappScenario(
 
 		sentToChat := false
 		var sendErrMsg string
-		if req.SendToChat && b.Client() != nil && len(imgBytes) > 0 {
-			targetUID := req.UserID
-			if targetUID == 0 {
-				targetUID = atomic.LoadInt64(&lastActiveUserID)
-				slog.Info("generate_image fallback to lastActiveUserID", slog.Int64("user_id", targetUID))
-			}
-			if targetUID != 0 {
-				uploadResp, uploadErr := b.Client().UploadMedia(context.Background(), maxbot.UploadTypeImage, "ai_artwork.png", bytes.NewReader(imgBytes))
-				if uploadErr == nil && uploadResp != nil && uploadResp.Token != "" {
-					att := maxbot.Attachment{
-						Type: maxbot.UploadTypeImage,
-						Payload: map[string]any{
-							"token": uploadResp.Token,
-						},
-					}
-					caption := fmt.Sprintf("🎨 **Ваше сгенерированное изображение:**\n\n«%s»", fullPrompt)
-					kb := maxbot.NewInlineKeyboard().
-						Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
-					_, sendErr := b.Client().SendMessage(context.Background(), maxbot.ToUser(targetUID), &maxbot.SendMessageRequest{
-						Text:        caption,
-						Format:      "markdown",
-						Attachments: []maxbot.Attachment{att, kb.ToAttachment()},
-					})
-					if sendErr == nil {
-						sentToChat = true
-						slog.Info("ai image sent to user chat", slog.Int64("user_id", targetUID))
-					} else {
-						sendErrMsg = sendErr.Error()
-						slog.Error("failed to send ai image to chat", slog.Int64("user_id", targetUID), slog.Any("err", sendErr))
-					}
+		targetUID := initData.User.ID
+		if req.SendToChat && b.Client() != nil && len(imgBytes) > 0 && targetUID != 0 {
+			uploadResp, uploadErr := b.Client().UploadMedia(r.Context(), maxbot.UploadTypeImage, "ai_artwork.png", bytes.NewReader(imgBytes))
+			if uploadErr == nil && uploadResp != nil && uploadResp.Token != "" {
+				att := maxbot.Attachment{
+					Type: maxbot.UploadTypeImage,
+					Payload: map[string]any{
+						"token": uploadResp.Token,
+					},
+				}
+				caption := fmt.Sprintf("🎨 **Ваше сгенерированное изображение:**\n\n«%s»", fullPrompt)
+				kb := maxbot.NewInlineKeyboard().
+					Row(maxbot.NewCallbackButton("◀️ В главное меню", "nav:menu"))
+				_, sendErr := b.Client().SendMessage(r.Context(), maxbot.ToUser(targetUID), &maxbot.SendMessageRequest{
+					Text:        caption,
+					Format:      "markdown",
+					Attachments: []maxbot.Attachment{att, kb.ToAttachment()},
+				})
+				if sendErr == nil {
+					sentToChat = true
+					slog.Info("ai image sent to user chat", slog.Int64("user_id", targetUID))
 				} else {
-					if uploadErr != nil {
-						sendErrMsg = uploadErr.Error()
-					} else {
-						sendErrMsg = "empty upload token"
-					}
-					slog.Error("failed to upload ai image media", slog.Any("err", uploadErr))
+					sendErrMsg = "failed to send image"
+					slog.Error("failed to send ai image to chat", slog.Int64("user_id", targetUID), slog.Any("err", sendErr))
 				}
 			} else {
-				sendErrMsg = "неизвестен ID пользователя"
+				sendErrMsg = "failed to upload image"
+				slog.Error("failed to upload ai image media", slog.Any("err", uploadErr))
 			}
 		}
 
 		// Save generated image to media history
-		if appStore != nil && len(imgBytes) > 0 {
-			targetUID := req.UserID
-			if targetUID == 0 {
-				targetUID = atomic.LoadInt64(&lastActiveUserID)
+		if appStore != nil && len(imgBytes) > 0 && targetUID != 0 {
+			title := "Арт: " + fullPrompt
+			if len([]rune(title)) > 40 {
+				title = string([]rune(title)[:40]) + "…"
 			}
-			if targetUID != 0 {
-				title := "Арт: " + fullPrompt
-				if len([]rune(title)) > 40 {
-					title = string([]rune(title)[:40]) + "…"
-				}
-				_, _ = appStore.SaveMediaArtifact(store.MediaArtifact{
-					UserID:       targetUID,
-					ArtifactType: "image",
-					Title:        title,
-					Prompt:       fullPrompt,
-					MediaURL:     dataURL,
-					Metadata: map[string]any{
-						"style":        req.Style,
-						"size":         len(imgBytes),
-						"sent_to_chat": sentToChat,
-					},
-					CreatedAt: time.Now(),
-				})
-			}
+			_, _ = appStore.SaveMediaArtifact(store.MediaArtifact{
+				UserID:       targetUID,
+				ArtifactType: "image",
+				Title:        title,
+				Prompt:       fullPrompt,
+				MediaURL:     dataURL,
+				Metadata: map[string]any{
+					"style":        req.Style,
+					"size":         len(imgBytes),
+					"sent_to_chat": sentToChat,
+				},
+				CreatedAt: time.Now(),
+			})
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -616,6 +605,10 @@ func RegisterWebappScenario(
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if _, ok := authenticateWebappRequest(w, r, token); !ok {
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 		var req struct {
 			Prompt string `json:"prompt"`
@@ -646,7 +639,7 @@ func RegisterWebappScenario(
 
 		if aiClient != nil {
 			start := time.Now()
-			aiCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			aiCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 			resp, err := aiClient.Chat(aiCtx, &ai.ChatRequest{
 				Model: selectedModel,
 				Messages: []ai.ChatMessage{
@@ -685,24 +678,29 @@ func RegisterWebappScenario(
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		initData, ok := authenticateWebappRequest(w, r, token)
+		if !ok {
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 		var req struct {
 			ChannelID int64  `json:"channel_id"`
-			UserID    int64  `json:"user_id"`
 			Text      string `json:"text"`
 			Pin       bool   `json:"pin"`
 			Reactions bool   `json:"reactions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
 
-		// Security Gating: Only Owner (396393759) or verified admin can publish to live channels
-		if req.UserID != ownerUserID && req.UserID != 0 {
+		// Security Gating: Only verified admin can publish to live channels
+		if !store.IsAdminPlatformUser(strconv.FormatInt(initData.User.ID, 10)) {
+			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"success": false,
-				"error":   "Доступ запрещен: публикация в каналы разрешена только владельцу бота",
+				"error":   "Доступ запрещен: публикация в каналы разрешена только администратору бота",
 			})
 			return
 		}
@@ -727,7 +725,7 @@ func RegisterWebappScenario(
 			)
 		}
 
-		sentMsg, err := client.SendMessage(context.Background(), maxbot.ToChat(req.ChannelID), &maxbot.SendMessageRequest{
+		sentMsg, err := client.SendMessage(r.Context(), maxbot.ToChat(req.ChannelID), &maxbot.SendMessageRequest{
 			Text:        req.Text,
 			Format:      "markdown",
 			Attachments: []maxbot.Attachment{kb.ToAttachment()},
@@ -740,10 +738,11 @@ func RegisterWebappScenario(
 			return
 		}
 
+		postCtx := context.WithoutCancel(r.Context())
 		if sentMsg.MessageID != "" {
 			if req.Reactions {
 				realKb := buildReactionsKeyboard(publicURL, sentMsg.MessageID, map[string]int{"👍": 0, "🔥": 0, "❤️": 0})
-				_, _ = client.EditMessage(context.Background(), sentMsg.MessageID, &maxbot.EditMessageRequest{
+				_, _ = client.EditMessage(postCtx, sentMsg.MessageID, &maxbot.EditMessageRequest{
 					Attachments: []maxbot.Attachment{realKb.ToAttachment()},
 				})
 				if appStore != nil {
@@ -751,7 +750,7 @@ func RegisterWebappScenario(
 				}
 			}
 			if req.Pin {
-				_ = client.PinMessage(context.Background(), req.ChannelID, sentMsg.MessageID, false)
+				_ = client.PinMessage(postCtx, req.ChannelID, sentMsg.MessageID, false)
 			}
 		}
 
@@ -870,7 +869,7 @@ func RegisterWebappScenario(
 			}
 		}
 		if userID == 0 {
-			userID = ownerUserID
+			return c.AnswerNotification("Не удалось определить пользователя")
 		}
 
 		if appStore != nil {

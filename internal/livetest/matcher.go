@@ -61,13 +61,7 @@ func (m *Matcher) WaitFor(ctx context.Context, pred UpdatePredicate) (*maxbot.Up
 		}
 
 		// Poll with 3-second server long poll timeout
-		pollCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-		resp, err := m.client.GetUpdates(pollCtx, &maxbot.GetUpdatesOptions{
-			Marker:  m.marker,
-			Limit:   50,
-			Timeout: 3,
-		})
-		cancel()
+		resp, err := m.pollOnce(ctx)
 
 		if err != nil {
 			// Check if outer context died
@@ -75,9 +69,11 @@ func (m *Matcher) WaitFor(ctx context.Context, pred UpdatePredicate) (*maxbot.Up
 				return nil, time.Since(start), ErrMatcherTimeout
 			}
 			// Transient poll error, pause and retry
+			timer := time.NewTimer(300 * time.Millisecond)
 			select {
-			case <-time.After(300 * time.Millisecond):
+			case <-timer.C:
 			case <-ctx.Done():
+				timer.Stop()
 				return nil, time.Since(start), ErrMatcherTimeout
 			}
 			continue
@@ -126,4 +122,14 @@ func TextMessageMatcher(expectedText string, targetUserID int64) UpdatePredicate
 		}
 		return true
 	}
+}
+
+func (m *Matcher) pollOnce(ctx context.Context) (*maxbot.UpdatesResponse, error) {
+	pollCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	return m.client.GetUpdates(pollCtx, &maxbot.GetUpdatesOptions{
+		Marker:  m.marker,
+		Limit:   50,
+		Timeout: 3,
+	})
 }

@@ -48,8 +48,13 @@ func (c *mockSQLConn) Close() error {
 	return nil
 }
 
+type mockSQLTx struct{}
+
+func (t *mockSQLTx) Commit() error   { return nil }
+func (t *mockSQLTx) Rollback() error { return nil }
+
 func (c *mockSQLConn) Begin() (driver.Tx, error) {
-	return nil, nil
+	return &mockSQLTx{}, nil
 }
 
 type mockSQLStmt struct {
@@ -171,6 +176,7 @@ func TestSQLStorageOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create SQLStorage: %v", err)
 	}
+	defer storage.Close()
 
 	ctx := context.Background()
 	key := SessionKey{UserID: 42, ChatID: 100}

@@ -16,6 +16,7 @@ import (
 type ActionHandler func(ctx context.Context, data *InitData, payload json.RawMessage) (any, error)
 
 // Bridge handles HTTP communication between the client-side Mini App WebView and the bot server.
+// Bridge is safe for concurrent use by multiple goroutines.
 type Bridge struct {
 	botToken             string
 	maxAge               time.Duration
@@ -68,6 +69,7 @@ func (b *Bridge) HTTPHandler() http.HandlerFunc {
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -83,7 +85,7 @@ func (b *Bridge) HTTPHandler() http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(ActionResponse{
 				Success: false,
-				Message: fmt.Sprintf("invalid json body: %v", err),
+				Message: "invalid json body",
 			})
 			return
 		}

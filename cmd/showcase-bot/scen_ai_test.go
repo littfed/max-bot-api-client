@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -795,6 +796,19 @@ func TestSmartIntentDrawingAndWebLinks(t *testing.T) {
 </html>`))
 	}))
 	defer webServer.Close()
+
+	if _, _, ssrfErr := fetchAndExtractWebPageText(context.Background(), "http://169.254.169.254/latest/meta-data/"); ssrfErr == nil {
+		t.Fatalf("expected SSRF check to block metadata IP")
+	}
+
+	origClient := webPageHTTPClient
+	origValidator := webPageURLValidator
+	webPageHTTPClient = webServer.Client()
+	webPageURLValidator = func(raw string) (*url.URL, error) { return url.Parse(raw) }
+	t.Cleanup(func() {
+		webPageHTTPClient = origClient
+		webPageURLValidator = origValidator
+	})
 
 	title, content, err := fetchAndExtractWebPageText(context.Background(), webServer.URL)
 	if err != nil {

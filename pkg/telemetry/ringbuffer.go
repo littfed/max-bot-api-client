@@ -5,6 +5,7 @@ import (
 )
 
 // RingBuffer stores a fixed-capacity circular buffer of telemetry events.
+// RingBuffer is safe for concurrent use by multiple goroutines.
 type RingBuffer struct {
 	mu       sync.RWMutex
 	capacity int

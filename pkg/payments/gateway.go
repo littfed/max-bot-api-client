@@ -9,12 +9,60 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+const maxWebhookBodyBytes = 1 << 20 // 1 MiB
+
+var yooKassaCIDRs = func() []*net.IPNet {
+	cidrs := []string{
+		"185.71.76.0/27",
+		"185.71.77.0/27",
+		"77.75.153.0/25",
+		"77.75.156.11/32",
+		"77.75.156.35/32",
+		"77.75.154.128/25",
+		"2a02:5180::/32",
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, ipNet, err := net.ParseCIDR(c)
+		if err == nil {
+			nets = append(nets, ipNet)
+		}
+	}
+	return nets
+}()
+
+func isYooKassaIP(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			ip = net.ParseIP(strings.TrimSpace(parts[0]))
+		} else if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			ip = net.ParseIP(strings.TrimSpace(xri))
+		}
+	}
+	if ip == nil {
+		return false
+	}
+	for _, n := range yooKassaCIDRs {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 // Gateway defines the interface for verifying and parsing webhook notifications from payment providers.
 type Gateway interface {
@@ -58,10 +106,16 @@ func (g *YooKassaGateway) ParseAndVerify(r *http.Request) (*Payment, error) {
 	if r.Method != http.MethodPost {
 		return nil, fmt.Errorf("payments: expected POST request, got %s", r.Method)
 	}
+	if !isYooKassaIP(r) {
+		return nil, errors.New("payments: untrusted source IP for YooKassa webhook")
+	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("payments: failed to read request body: %w", err)
+	}
+	if len(body) > maxWebhookBodyBytes {
+		return nil, errors.New("payments: request body too large")
 	}
 
 	var notif yooKassaNotification
@@ -167,10 +221,16 @@ func (g *TBankGateway) ParseAndVerify(r *http.Request) (*Payment, error) {
 	if r.Method != http.MethodPost {
 		return nil, fmt.Errorf("payments: expected POST request, got %s", r.Method)
 	}
+	if g.password == "" {
+		return nil, errors.New("payments: T-Bank password is not configured")
+	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("payments: failed to read request body: %w", err)
+	}
+	if len(body) > maxWebhookBodyBytes {
+		return nil, errors.New("payments: request body too large")
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -181,6 +241,13 @@ func (g *TBankGateway) ParseAndVerify(r *http.Request) (*Payment, error) {
 		return nil, fmt.Errorf("payments: invalid json: %w", err)
 	}
 
+	if g.terminalKey != "" {
+		termKey, _ := raw["TerminalKey"].(string)
+		if subtle.ConstantTimeCompare([]byte(termKey), []byte(g.terminalKey)) != 1 {
+			return nil, errors.New("payments: terminal key mismatch in T-Bank notification")
+		}
+	}
+
 	receivedToken, _ := raw["Token"].(string)
 	if receivedToken == "" {
 		return nil, errors.New("payments: missing Token in T-Bank notification")
@@ -188,7 +255,7 @@ func (g *TBankGateway) ParseAndVerify(r *http.Request) (*Payment, error) {
 
 	expectedToken := CalculateTBankToken(raw, g.password)
 	if subtle.ConstantTimeCompare([]byte(receivedToken), []byte(expectedToken)) != 1 {
-		return nil, fmt.Errorf("payments: invalid signature token in T-Bank notification (expected %s, got %s)", expectedToken, receivedToken)
+		return nil, errors.New("payments: invalid signature token in T-Bank notification")
 	}
 
 	orderID, _ := raw["OrderId"].(string)

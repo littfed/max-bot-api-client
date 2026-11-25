@@ -132,6 +132,7 @@ func setupTestAPIServer(t *testing.T) *httptest.Server {
 		BotToken:        testBotToken,
 		JWTSecret:       testJWTSecret,
 		PlatformAdapter: adapter,
+		AllowedOrigins:  []string{"https://combot.littfed.ru"},
 		AllowDevHeaders: true,
 	})
 

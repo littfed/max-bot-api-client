@@ -7,7 +7,7 @@ import (
 )
 
 // Global atomic counter for generating lightweight unique event IDs
-var eventCounter uint64
+var eventCounter atomic.Uint64
 
 // EventType classifies the category of a telemetry event.
 type EventType string
@@ -37,7 +37,7 @@ type Event struct {
 }
 
 func nextEventID() string {
-	val := atomic.AddUint64(&eventCounter, 1)
+	val := eventCounter.Add(1)
 	return fmt.Sprintf("evt_%d_%d", time.Now().UnixNano()%1000000, val)
 }
 

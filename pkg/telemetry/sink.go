@@ -14,6 +14,7 @@ type EventSink interface {
 }
 
 // JSONLogSink outputs newline-delimited JSON events to an io.Writer.
+// JSONLogSink is safe for concurrent use by multiple goroutines.
 type JSONLogSink struct {
 	mu     sync.Mutex
 	writer io.Writer

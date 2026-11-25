@@ -22,6 +22,7 @@ type CaptchaChallenge struct {
 }
 
 // CaptchaGate intercepts new chat members and enforces interactive captcha verification.
+// CaptchaGate is safe for concurrent use by multiple goroutines.
 type CaptchaGate struct {
 	client     *maxbot.Client
 	timeout    time.Duration
@@ -74,15 +75,17 @@ func (g *CaptchaGate) key(chatID, userID int64) string {
 
 // HandleNewMember issues a verification challenge to the new member.
 func (g *CaptchaGate) HandleNewMember(ctx context.Context, chatID, userID int64, userName string) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
 	key := g.key(chatID, userID)
+
+	g.mu.Lock()
 	if existing, ok := g.challenges[key]; ok {
 		if existing.timer != nil {
 			existing.timer.Stop()
 		}
 	}
+	timeout := g.timeout
+	client := g.client
+	g.mu.Unlock()
 
 	payloadVerify := fmt.Sprintf("guard:v:%d:%d", chatID, userID)
 	kb := maxbot.NewInlineKeyboard().Row(
@@ -90,11 +93,11 @@ func (g *CaptchaGate) HandleNewMember(ctx context.Context, chatID, userID int64,
 	)
 
 	text := fmt.Sprintf("👋 Добро пожаловать, %s!\n\nПожалуйста, подтвердите, что вы человек, нажав на кнопку ниже в течение %d сек.",
-		userName, int(g.timeout.Seconds()))
+		userName, int(timeout.Seconds()))
 
 	var mid string
-	if g.client != nil {
-		resp, err := g.client.SendKeyboardMessage(ctx, maxbot.ToChat(chatID), text, kb)
+	if client != nil {
+		resp, err := client.SendKeyboardMessage(ctx, maxbot.ToChat(chatID), text, kb)
 		if err != nil {
 			return fmt.Errorf("guard: failed to send captcha challenge: %w", err)
 		}
@@ -107,15 +110,19 @@ func (g *CaptchaGate) HandleNewMember(ctx context.Context, chatID, userID int64,
 		UserID:         userID,
 		ChatID:         chatID,
 		ChallengeMID:   mid,
-		ExpiresAt:      time.Now().Add(g.timeout),
+		ExpiresAt:      time.Now().Add(timeout),
 		ExpectedAnswer: payloadVerify,
 	}
 
-	challenge.timer = time.AfterFunc(g.timeout, func() {
+	g.mu.Lock()
+	if existing, ok := g.challenges[key]; ok && existing.timer != nil {
+		existing.timer.Stop()
+	}
+	challenge.timer = time.AfterFunc(timeout, func() {
 		g.onTimeout(chatID, userID)
 	})
-
 	g.challenges[key] = challenge
+	g.mu.Unlock()
 	return nil
 }
 

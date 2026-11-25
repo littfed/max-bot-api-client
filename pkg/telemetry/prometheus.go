@@ -11,6 +11,7 @@ import (
 )
 
 // PrometheusExporter aggregates telemetry events into Prometheus text-format metrics.
+// PrometheusExporter is safe for concurrent use by multiple goroutines.
 type PrometheusExporter struct {
 	mu                   sync.RWMutex
 	buttonClicks         map[string]uint64  // "action|screen" -> count
@@ -159,13 +160,22 @@ func (pe *PrometheusExporter) StartServer(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", pe.Handler())
 
-	pe.server = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
+	pe.mu.Lock()
+	pe.server = srv
+	pe.mu.Unlock()
+
 	go func() {
-		if err := pe.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("Prometheus server error: %v\n", err)
 		}
 	}()
@@ -175,12 +185,14 @@ func (pe *PrometheusExporter) StartServer(addr string) error {
 // Close stops the HTTP server if running.
 func (pe *PrometheusExporter) Close() error {
 	pe.mu.Lock()
-	defer pe.mu.Unlock()
+	srv := pe.server
+	pe.server = nil
+	pe.mu.Unlock()
 
-	if pe.server != nil {
+	if srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		return pe.server.Shutdown(ctx)
+		return srv.Shutdown(ctx)
 	}
 	return nil
 }

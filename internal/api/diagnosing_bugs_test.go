@@ -110,6 +110,7 @@ func TestDiagnosingBugs_ChatPersistence(t *testing.T) {
 }
 
 func TestDiagnosingBugs_AdminModeToggleAndTickets(t *testing.T) {
+	t.Setenv("ADMIN_USER_IDS", "396393759")
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
@@ -291,6 +292,7 @@ func TestDiagnosingBugs_BotTypingIndicatorFromMiniApp(t *testing.T) {
 }
 
 func TestDiagnosingBugs_AdminModeToggleAndID(t *testing.T) {
+	t.Setenv("ADMIN_USER_IDS", "396393759")
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)

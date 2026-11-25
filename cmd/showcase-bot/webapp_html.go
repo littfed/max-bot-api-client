@@ -845,6 +845,9 @@ const miniAppHTML = `<!DOCTYPE html>
     const OWNER_ID = 396393759;
     let currentUser = { id: 0, first_name: 'Пользователь', username: '' };
     let rawInitData = '';
+    function getWebappInitData() {
+      return rawInitData || window.location.search.substring(1) || (localStorage.getItem('max_init_data') || '');
+    }
     let discountPercent = 0;
     let activeModalItem = null;
     let selectedStyle = 'Cyberpunk';
@@ -1280,7 +1283,7 @@ const miniAppHTML = `<!DOCTYPE html>
       }
       const res = await fetch('/api/webapp/publish_post', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Init-Data': getWebappInitData() },
         body: JSON.stringify({
           channel_id: parseInt(channelID, 10),
           user_id: currentUser.id,
@@ -1416,8 +1419,9 @@ const miniAppHTML = `<!DOCTYPE html>
       container.innerHTML = '<div style="font-size: 13px; color: var(--muted); text-align: center; padding: 24px;">Загрузка материалов…</div>';
 
       try {
-        const uid = (currentUser && currentUser.id) ? currentUser.id : 0;
-        const res = await fetch('/api/webapp/history?user_id=' + uid + '&limit=50');
+        const res = await fetch('/api/webapp/history?limit=50', {
+          headers: { 'X-Init-Data': getWebappInitData() }
+        });
         const data = await res.json();
         if (data.success && Array.isArray(data.items)) {
           allGalleryItems = data.items;
@@ -1525,10 +1529,9 @@ const miniAppHTML = `<!DOCTYPE html>
         btn.innerText = '⏳ Отправка…';
       }
       try {
-        const uid = (currentUser && currentUser.id) ? currentUser.id : 0;
         const res = await fetch('/api/webapp/generate_image', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Init-Data': getWebappInitData() },
           body: JSON.stringify({
             prompt: prompt,
             user_id: uid,
@@ -1591,7 +1594,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/generate_image', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Init-Data': getWebappInitData() },
           body: JSON.stringify({
             prompt: prompt,
             style: selectedStyle,
@@ -1648,7 +1651,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/ai_chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Init-Data': getWebappInitData() },
           body: JSON.stringify({
             prompt: prompt,
             model: model,
@@ -1677,7 +1680,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/generate_post', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Init-Data': getWebappInitData() },
           body: JSON.stringify({ prompt: prompt, user_id: currentUser.id })
         });
         const data = await res.json();
@@ -1718,7 +1721,7 @@ const miniAppHTML = `<!DOCTYPE html>
 
       const res = await fetch('/api/webapp/publish_post', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Init-Data': getWebappInitData() },
         body: JSON.stringify({
           channel_id: channelID,
           user_id: currentUser.id,
@@ -1744,7 +1747,7 @@ const miniAppHTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/webapp/spin', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Init-Data': getWebappInitData() },
           body: JSON.stringify({ user_id: currentUser.id })
         });
         const data = await res.json();
@@ -1838,7 +1841,9 @@ const miniAppHTML = `<!DOCTYPE html>
       ` + "`" + `;
 
       try {
-        const res = await fetch('/api/webapp/orders?user_id=' + currentUser.id);
+        const res = await fetch('/api/webapp/orders', {
+          headers: { 'X-Init-Data': getWebappInitData() }
+        });
         const data = await res.json();
         if (data.orders && data.orders.length > 0) {
           box.innerHTML = '';

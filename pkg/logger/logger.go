@@ -12,8 +12,9 @@ import (
 
 var (
 	bearerRegex = regexp.MustCompile(`(?i)(bearer\s+)([a-zA-Z0-9_\-\.]{6,})`)
-	skKeyRegex  = regexp.MustCompile(`\b(sk-[a-zA-Z0-9_\-]{6,})\b`)
-	botTokRegex = regexp.MustCompile(`\b(\d{6,}:[a-zA-Z0-9_\-]{10,})\b`)
+	skKeyRegex   = regexp.MustCompile(`\b(sk-[a-zA-Z0-9_\-]{6,})\b`)
+	botTokRegex  = regexp.MustCompile(`\b(\d{6,}:[a-zA-Z0-9_\-]{10,})\b`)
+	urlCredRegex = regexp.MustCompile(`(redis|rediss|postgres|postgresql|mysql|mongodb|amqp)://([^:@/\s]*):([^@/\s]+)@`)
 )
 
 // sensitiveKeySet contains lowercased key names that hold sensitive credentials.
@@ -35,6 +36,8 @@ var sensitiveKeySet = map[string]bool{
 	"auth":          true,
 	"cookie":        true,
 	"set-cookie":    true,
+	"redis_url":     true,
+	"database_url":  true,
 }
 
 // MaskSecret masks sensitive values, preserving edge characters for debugging.
@@ -68,6 +71,7 @@ func SanitizeString(s string) string {
 	s = botTokRegex.ReplaceAllStringFunc(s, func(m string) string {
 		return MaskSecret(m)
 	})
+	s = urlCredRegex.ReplaceAllString(s, "$1://$2:[REDACTED]@")
 	return s
 }
 
@@ -114,9 +118,9 @@ func WithOutput(w io.Writer) Option {
 
 // New creates a new structured JSON slog.Logger.
 func New(opts ...Option) *slog.Logger {
-	defaultLvl := slog.LevelDebug
+	defaultLvl := slog.LevelInfo
 	if envLvl := os.Getenv("LOG_LEVEL"); envLvl != "" {
-		defaultLvl = ParseLevel(envLvl, slog.LevelDebug)
+		defaultLvl = ParseLevel(envLvl, slog.LevelInfo)
 	}
 
 	cfg := Options{

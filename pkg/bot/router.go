@@ -2,7 +2,9 @@ package bot
 
 import (
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 )
@@ -21,7 +23,10 @@ type route struct {
 }
 
 // Router dispatches incoming events to matching handlers.
+// Router is safe for concurrent use; routes and middlewares may be registered
+// before or during event handling.
 type Router struct {
+	mu          sync.RWMutex
 	routes      []route
 	middlewares []MiddlewareFunc
 }
@@ -36,10 +41,14 @@ func NewRouter() *Router {
 
 // Use adds one or more middlewares to the router pipeline.
 func (r *Router) Use(mw ...MiddlewareFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.middlewares = append(r.middlewares, mw...)
 }
 
 func (r *Router) addRoute(matcher matcherFunc, handler HandlerFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.routes = append(r.routes, route{
 		matches: matcher,
 		handler: handler,
@@ -274,8 +283,13 @@ func (r *Router) OnAny(handler HandlerFunc) {
 
 // Handle executes the first matching route handler wrapped with all registered middlewares.
 func (r *Router) Handle(c *Context) error {
+	r.mu.RLock()
+	routes := slices.Clone(r.routes)
+	mws := slices.Clone(r.middlewares)
+	r.mu.RUnlock()
+
 	dispatch := func(ctx *Context) error {
-		for _, rt := range r.routes {
+		for _, rt := range routes {
 			if rt.matches(ctx) {
 				return rt.handler(ctx)
 			}
@@ -284,8 +298,8 @@ func (r *Router) Handle(c *Context) error {
 	}
 
 	handler := dispatch
-	for i := len(r.middlewares) - 1; i >= 0; i-- {
-		handler = r.middlewares[i](handler)
+	for i := len(mws) - 1; i >= 0; i-- {
+		handler = mws[i](handler)
 	}
 	return handler(c)
 }

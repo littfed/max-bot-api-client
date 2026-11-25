@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"slices"
 	"sync"
 )
 
@@ -25,6 +26,7 @@ func WithSink(sink EventSink) Option {
 }
 
 // Collector is the central telemetry orchestrator.
+// Collector is safe for concurrent use by multiple goroutines.
 type Collector struct {
 	mu     sync.RWMutex
 	buffer *RingBuffer
@@ -54,7 +56,7 @@ func (c *Collector) Record(ctx context.Context, e *Event) {
 
 	// 2. Dispatch to sinks
 	c.mu.RLock()
-	sinks := c.sinks
+	sinks := slices.Clone(c.sinks)
 	c.mu.RUnlock()
 
 	for _, s := range sinks {

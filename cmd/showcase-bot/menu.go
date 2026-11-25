@@ -410,9 +410,10 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 		}
 
 		// If AI is available and configured, answer as smart assistant with full conversational context!
-		if (hood.IsAIAvailable() || globalAIDispatcher != nil) && aiCli != nil {
-			if globalAIDispatcher != nil {
-				return globalAIDispatcher(c)
+		aiDispatcher := getGlobalAIDispatcher()
+		if (hood.IsAIAvailable() || aiDispatcher != nil) && aiCli != nil {
+			if aiDispatcher != nil {
+				return aiDispatcher(c)
 			}
 			fsmCtx := fsm.FromContext(c)
 			activeModel := "auto"
@@ -442,12 +443,16 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 
 			_ = c.Typing()
 			stopTyping := make(chan struct{})
+			defer close(stopTyping)
+			typingCtx := c.Ctx()
 			go func() {
 				ticker := time.NewTicker(4 * time.Second)
 				defer ticker.Stop()
 				for {
 					select {
 					case <-stopTyping:
+						return
+					case <-typingCtx.Done():
 						return
 					case <-ticker.C:
 						_ = c.Typing()
@@ -481,7 +486,6 @@ func RegisterMenuRoutes(b *bot.Bot, hood *HoodEngine, aiClient ...*ai.Client) {
 					break
 				}
 			}
-			close(stopTyping)
 
 			if lastErr == nil && chatResp != nil && strings.TrimSpace(chatResp.Content) != "" {
 				history = append(history, ai.ChatMessage{

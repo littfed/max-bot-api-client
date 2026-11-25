@@ -148,7 +148,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			// Generate via Gemini AI Gateway if available
 			if cfg.AIClient != nil && hood.IsAIAvailable() {
 				prompt := "Напиши короткий, яркий, профессиональный пост для Telegram/MAX канала об актуальных трендах искусственного интеллекта за сегодня (2-3 емких пункта, эмодзи, форматирование bold/italic, призыв к действию). До 1000 символов."
-				aiCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				aiCtx, cancel := context.WithTimeout(c.Ctx(), 60*time.Second)
 				resp, aiErr := cfg.AIClient.Chat(aiCtx, &ai.ChatRequest{
 					Model: cfg.ChatModel,
 					Messages: []ai.ChatMessage{
@@ -197,7 +197,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			return c.AnswerNotification("MAX Bot Client не подключен")
 		}
 
-		sentMsg, err := cfg.Client.SendMessage(context.Background(), maxbot.ToChat(targetChatID), &maxbot.SendMessageRequest{
+		sentMsg, err := cfg.Client.SendMessage(c.Ctx(), maxbot.ToChat(targetChatID), &maxbot.SendMessageRequest{
 			Text:        postText,
 			Format:      "markdown",
 			Attachments: []maxbot.Attachment{kb.ToAttachment()},
@@ -212,13 +212,13 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 		postMID := sentMsg.MessageID
 		if postMID != "" {
 			realKb := buildReactionsKeyboard(cfg.MiniAppURL, postMID, map[string]int{"👍": 0, "🔥": 0, "❤️": 0})
-			_, _ = cfg.Client.EditMessage(context.Background(), postMID, &maxbot.EditMessageRequest{
+			_, _ = cfg.Client.EditMessage(c.Ctx(), postMID, &maxbot.EditMessageRequest{
 				Attachments: []maxbot.Attachment{realKb.ToAttachment()},
 			})
 			// Initialize in store
 			_, _ = cfg.Store.ToggleReaction(postMID, targetChatID, 0, "")
 			// Pin message in channel
-			_ = cfg.Client.PinMessage(context.Background(), targetChatID, postMID, false)
+			_ = cfg.Client.PinMessage(c.Ctx(), targetChatID, postMID, false)
 		}
 
 		confirmDM := fmt.Sprintf("✅ **Пост успешно опубликован в канале «%s»!**\n\n"+
@@ -282,7 +282,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 				req.Text = msg.Body.Text
 				req.Format = "markdown"
 			}
-			_, _ = cfg.Client.EditMessage(context.Background(), postMID, req)
+			_, _ = cfg.Client.EditMessage(c.Ctx(), postMID, req)
 		}
 
 		return c.AnswerNotification(fmt.Sprintf("Ваша реакция %s учтена!", emoji))
@@ -327,7 +327,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			return c.AnswerNotification("MAX Bot Client не подключен")
 		}
 
-		sentMsg, err := cfg.Client.SendMessage(context.Background(), maxbot.ToChat(targetChatID), &maxbot.SendMessageRequest{
+		sentMsg, err := cfg.Client.SendMessage(c.Ctx(), maxbot.ToChat(targetChatID), &maxbot.SendMessageRequest{
 			Text:        pollText,
 			Format:      "markdown",
 			Attachments: []maxbot.Attachment{pollKb.ToAttachment()},
@@ -365,10 +365,11 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			return c.AnswerNotification("Опрос завершен")
 		}
 
+		const maxPollOptions = 20
 		pollID := parts[1]
 		optIdx, err := strconv.Atoi(parts[2])
-		if err != nil {
-			return err
+		if err != nil || optIdx < 0 || optIdx >= maxPollOptions {
+			return c.AnswerNotification("Некорректный вариант опроса")
 		}
 
 		userID := int64(0)
@@ -426,7 +427,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 		}
 
 		if cfg.Client != nil && targetMID != "" {
-			_, _ = cfg.Client.EditMessage(context.Background(), targetMID, &maxbot.EditMessageRequest{
+			_, _ = cfg.Client.EditMessage(c.Ctx(), targetMID, &maxbot.EditMessageRequest{
 				Text:        updatedText,
 				Format:      "markdown",
 				Attachments: []maxbot.Attachment{pollKb.ToAttachment()},
@@ -479,7 +480,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			return c.AnswerNotification("MAX Bot Client не подключен")
 		}
 
-		sentMsg, err := cfg.Client.SendMessage(context.Background(), maxbot.ToChat(targetChatID), &maxbot.SendMessageRequest{
+		sentMsg, err := cfg.Client.SendMessage(c.Ctx(), maxbot.ToChat(targetChatID), &maxbot.SendMessageRequest{
 			Text:        gwText,
 			Format:      "markdown",
 			Attachments: []maxbot.Attachment{gwKb.ToAttachment()},
@@ -549,7 +550,7 @@ func RegisterChannelsScenario(b *bot.Bot, hood *HoodEngine, cfg ChannelScenarioC
 			dmKb := maxbot.NewInlineKeyboard().
 				Row(maxbot.NewLinkButton("🛍️ Открыть корзину с промокодом", cfg.MiniAppURL+"?promo="+gw.PromoCode))
 
-			_, _ = cfg.Client.SendMessage(context.Background(), maxbot.ToUser(userID), &maxbot.SendMessageRequest{
+			_, _ = cfg.Client.SendMessage(c.Ctx(), maxbot.ToUser(userID), &maxbot.SendMessageRequest{
 				Text:        dmText,
 				Format:      "markdown",
 				Attachments: []maxbot.Attachment{dmKb.ToAttachment()},

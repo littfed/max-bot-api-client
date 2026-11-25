@@ -783,5 +783,6 @@ func (c *Client) DownloadFile(ctx context.Context, fileURL string) ([]byte, erro
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("unexpected status code %d downloading %s", resp.StatusCode, fileURL)
 	}
-	return io.ReadAll(resp.Body)
+	const maxDownloadBytes = 50 << 20
+	return io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes))
 }

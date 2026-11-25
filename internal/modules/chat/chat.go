@@ -166,49 +166,77 @@ func (m *Module) Title() string {
 	return "Общение"
 }
 
-// GetSession returns or initializes the chat session for a user.
-func (m *Module) GetSession(ctx context.Context, userID int64) (*Session, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func cloneSession(s *Session) *Session {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	if s.Messages != nil {
+		cp.Messages = make([]ChatMessage, len(s.Messages))
+		copy(cp.Messages, s.Messages)
+	}
+	return &cp
+}
 
+func (m *Module) getOrLoadSession(ctx context.Context, userID int64) (*Session, error) {
+	m.mu.RLock()
 	s, exists := m.sessions[userID]
-	if !exists {
-		roleID := 1
-		toneID := 1
-		var messages []ChatMessage
-		if m.store != nil {
-			if dbState, err := m.store.GetUserModeState(ctx, userID, "chat"); err == nil && dbState != nil && len(dbState.Payload) > 0 {
-				var p struct {
-					RoleID   int           `json:"role_id"`
-					ToneID   int           `json:"tone_id"`
-					Messages []ChatMessage `json:"messages"`
+	m.mu.RUnlock()
+	if exists {
+		return s, nil
+	}
+
+	roleID := 1
+	toneID := 1
+	var messages []ChatMessage
+	if m.store != nil {
+		if dbState, err := m.store.GetUserModeState(ctx, userID, "chat"); err == nil && dbState != nil && len(dbState.Payload) > 0 {
+			var p struct {
+				RoleID   int           `json:"role_id"`
+				ToneID   int           `json:"tone_id"`
+				Messages []ChatMessage `json:"messages"`
+			}
+			if err := json.Unmarshal(dbState.Payload, &p); err == nil {
+				if p.RoleID >= 1 && p.RoleID <= 5 {
+					roleID = p.RoleID
 				}
-				if err := json.Unmarshal(dbState.Payload, &p); err == nil {
-					if p.RoleID >= 1 && p.RoleID <= 5 {
-						roleID = p.RoleID
-					}
-					if p.ToneID >= 1 && p.ToneID <= 4 {
-						toneID = p.ToneID
-					}
-					messages = p.Messages
+				if p.ToneID >= 1 && p.ToneID <= 4 {
+					toneID = p.ToneID
 				}
+				messages = p.Messages
 			}
 		}
-
-		if messages == nil {
-			messages = make([]ChatMessage, 0)
-		}
-
-		s = &Session{
-			UserID:    userID,
-			RoleID:    roleID,
-			ToneID:    toneID,
-			Messages:  messages,
-			UpdatedAt: time.Now(),
-		}
-		m.sessions[userID] = s
 	}
+
+	if messages == nil {
+		messages = make([]ChatMessage, 0)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing, ok := m.sessions[userID]; ok {
+		return existing, nil
+	}
+	s = &Session{
+		UserID:    userID,
+		RoleID:    roleID,
+		ToneID:    toneID,
+		Messages:  messages,
+		UpdatedAt: time.Now(),
+	}
+	m.sessions[userID] = s
 	return s, nil
+}
+
+// GetSession returns a thread-safe snapshot of the chat session for a user.
+func (m *Module) GetSession(ctx context.Context, userID int64) (*Session, error) {
+	s, err := m.getOrLoadSession(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return cloneSession(s), nil
 }
 
 // MarshalPayload serializes the session state (role, tone, and full message history) for FSM persistence.
@@ -227,7 +255,7 @@ func (s *Session) MarshalPayload() []byte {
 
 // GetSessionPayload returns the serialized JSON payload of the user's active session.
 func (m *Module) GetSessionPayload(ctx context.Context, userID int64) ([]byte, error) {
-	session, err := m.GetSession(ctx, userID)
+	session, err := m.getOrLoadSession(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +273,7 @@ func (m *Module) SetSessionSettings(ctx context.Context, userID int64, roleID in
 		toneID = 1
 	}
 
-	session, err := m.GetSession(ctx, userID)
+	session, err := m.getOrLoadSession(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -273,20 +301,23 @@ func (m *Module) SetSessionSettings(ctx context.Context, userID int64, roleID in
 // ResetSession clears the conversation sliding window history.
 func (m *Module) ResetSession(ctx context.Context, userID int64) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	var pBytes []byte
 	if s, exists := m.sessions[userID]; exists {
 		s.Messages = make([]ChatMessage, 0)
 		s.UpdatedAt = time.Now()
 		if m.store != nil {
-			pBytes := s.MarshalPayload()
-			_ = m.store.SaveUserModeState(ctx, &store.UserModeState{
-				UserID:    userID,
-				ModeID:    "chat",
-				Payload:   pBytes,
-				UpdatedAt: time.Now(),
-			})
+			pBytes = s.MarshalPayload()
 		}
+	}
+	m.mu.Unlock()
+
+	if m.store != nil && pBytes != nil {
+		_ = m.store.SaveUserModeState(ctx, &store.UserModeState{
+			UserID:    userID,
+			ModeID:    "chat",
+			Payload:   pBytes,
+			UpdatedAt: time.Now(),
+		})
 	}
 	return nil
 }
@@ -304,7 +335,7 @@ func (m *Module) SendMessage(ctx context.Context, userID int64, roleID int, tone
 		return "", err
 	}
 
-	session, err := m.GetSession(ctx, userID)
+	session, err := m.getOrLoadSession(ctx, userID)
 	if err != nil {
 		return "", err
 	}

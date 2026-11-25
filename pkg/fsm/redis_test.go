@@ -13,9 +13,11 @@ import (
 
 // Mini RESP server for testing RedisStorage without an external Redis instance
 type mockRedisServer struct {
-	ln   net.Listener
-	data map[string]string
-	mu   sync.Mutex
+	ln    net.Listener
+	data  map[string]string
+	conns []net.Conn
+	wg    sync.WaitGroup
+	mu    sync.Mutex
 }
 
 func startMockRedis(t *testing.T) *mockRedisServer {
@@ -29,13 +31,22 @@ func startMockRedis(t *testing.T) *mockRedisServer {
 		data: make(map[string]string),
 	}
 
+	srv.wg.Add(1)
 	go func() {
+		defer srv.wg.Done()
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			go srv.handleConn(conn)
+			srv.mu.Lock()
+			srv.conns = append(srv.conns, conn)
+			srv.mu.Unlock()
+			srv.wg.Add(1)
+			go func(c net.Conn) {
+				defer srv.wg.Done()
+				srv.handleConn(c)
+			}(conn)
 		}
 	}()
 
@@ -103,6 +114,12 @@ func (s *mockRedisServer) handleConn(conn net.Conn) {
 
 func (s *mockRedisServer) Close() {
 	_ = s.ln.Close()
+	s.mu.Lock()
+	for _, c := range s.conns {
+		_ = c.Close()
+	}
+	s.mu.Unlock()
+	s.wg.Wait()
 }
 
 func TestRedisStorageOperations(t *testing.T) {
@@ -117,6 +134,7 @@ func TestRedisStorageOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create RedisStorage: %v", err)
 	}
+	defer storage.Close()
 
 	ctx := context.Background()
 	key := SessionKey{UserID: 1234, ChatID: 5678}
@@ -242,4 +260,51 @@ func TestRedisStorageFromURLAndPing(t *testing.T) {
 	if _, ok := fallbackStorage.(*MemoryStorage); !ok {
 		t.Fatalf("expected NewStorageFromEnv to fallback to *MemoryStorage, got %T", fallbackStorage)
 	}
+}
+
+func TestRedisStorageContextCancel(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 256)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Read(buf)
+	}()
+	defer wg.Wait()
+
+	storage, err := NewRedisStorage(ln.Addr().String(), RedisOptions{
+		Prefix:  "test_cancel",
+		Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("failed to create RedisStorage: %v", err)
+	}
+	defer storage.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(30*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err = storage.GetState(ctx, SessionKey{UserID: 1, ChatID: 2})
+	elapsed := time.Since(start)
+
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if elapsed > 1*time.Second {
+		t.Fatalf("expected fast cancellation (<1s), took %v", elapsed)
+	}
+	_ = ln.Close()
 }

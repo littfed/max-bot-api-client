@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
@@ -21,6 +22,12 @@ var sqliteMigrations embed.FS
 // RunMigrations executes embedded Goose migrations for the given database connection and dialect.
 // Accepted dialects: "postgres", "postgresql", "pgx", "sqlite", "sqlite3".
 func RunMigrations(database *sql.DB, dialect string) error {
+	return RunMigrationsContext(context.Background(), database, dialect)
+}
+
+// RunMigrationsContext executes embedded Goose migrations with context support.
+// Accepted dialects: "postgres", "postgresql", "pgx", "sqlite", "sqlite3".
+func RunMigrationsContext(ctx context.Context, database *sql.DB, dialect string) error {
 	normalized := strings.ToLower(strings.TrimSpace(dialect))
 	var subFS fs.FS
 	var gooseDialect string
@@ -48,7 +55,7 @@ func RunMigrations(database *sql.DB, dialect string) error {
 		return fmt.Errorf("db: failed to set goose dialect %q: %w", gooseDialect, err)
 	}
 
-	if err := goose.Up(database, "."); err != nil {
+	if err := goose.UpContext(ctx, database, "."); err != nil {
 		return fmt.Errorf("db: goose up migrations failed: %w", err)
 	}
 

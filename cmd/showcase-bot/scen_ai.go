@@ -15,6 +15,7 @@ import (
 	"image/png"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -22,6 +23,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -37,7 +40,22 @@ import (
 const aiSystemPrompt = "Ты дружелюбный и умный AI-ассистент в мессенджере MAX. Отвечай всегда грамотно, четко, доброжелательно и строго на естественном русском языке. Используй красивую разметку и отвечай по существу."
 
 // globalAIDispatcher is the active AI message router used by idle handlers across the bot.
-var globalAIDispatcher func(c *bot.Context) error
+var globalAIDispatcher atomic.Pointer[func(c *bot.Context) error]
+
+func getGlobalAIDispatcher() func(c *bot.Context) error {
+	if fn := globalAIDispatcher.Load(); fn != nil {
+		return *fn
+	}
+	return nil
+}
+
+func setGlobalAIDispatcher(fn func(c *bot.Context) error) {
+	if fn == nil {
+		globalAIDispatcher.Store(nil)
+		return
+	}
+	globalAIDispatcher.Store(&fn)
+}
 
 // generatePlaceholderImage creates a valid in-memory PNG card showcasing MAX photo attachments.
 func generatePlaceholderImage(prompt string) []byte {
@@ -324,12 +342,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 		_ = c.Typing()
 		stopTyping := make(chan struct{})
+		defer close(stopTyping)
+		typingCtx := c.Ctx()
 		go func() {
 			ticker := time.NewTicker(4 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-stopTyping:
+					return
+				case <-typingCtx.Done():
 					return
 				case <-ticker.C:
 					_ = c.Typing()
@@ -354,7 +376,6 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		)
 
 		if len(imgBytes) == 0 && imgURL == "" {
-			close(stopTyping)
 			c.Logger().Warn("vision: не удалось извлечь ни байты, ни URL картинки", slog.Int64("user_id", userID))
 			_, err := c.Reply("⚠️ Не удалось извлечь изображение из сообщения. Пожалуйста, прикрепите фото или картинку еще раз.")
 			return err
@@ -405,7 +426,6 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				slog.Any("error", lastErr),
 			)
 		}
-		close(stopTyping)
 
 		if visionResp == nil || strings.TrimSpace(visionResp.Content) == "" {
 			errMsg := "не удалось распознать изображение"
@@ -506,12 +526,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		// Send initial typing and run background ticker for continuous indicator
 		_ = c.Typing()
 		stopTyping := make(chan struct{})
+		defer close(stopTyping)
+		typingCtx := c.Ctx()
 		go func() {
 			ticker := time.NewTicker(4 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-stopTyping:
+					return
+				case <-typingCtx.Done():
 					return
 				case <-ticker.C:
 					_ = c.Typing()
@@ -554,7 +578,6 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				break
 			}
 		}
-		close(stopTyping)
 
 		if chatResp == nil || strings.TrimSpace(chatResp.Content) == "" {
 			if lastErr != nil {
@@ -1082,12 +1105,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 
 		stopTyping := make(chan struct{})
+		defer close(stopTyping)
+		typingCtx := c.Ctx()
 		go func() {
 			ticker := time.NewTicker(4 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-stopTyping:
+					return
+				case <-typingCtx.Done():
 					return
 				case <-ticker.C:
 					_ = c.Typing()
@@ -1157,7 +1184,6 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				break
 			}
 		}
-		close(stopTyping)
 
 		if statusMsg != nil && c.Client() != nil {
 			_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
@@ -1268,12 +1294,16 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		}
 
 		stopTyping := make(chan struct{})
+		defer close(stopTyping)
+		typingCtx := c.Ctx()
 		go func() {
 			ticker := time.NewTicker(4 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-stopTyping:
+					return
+				case <-typingCtx.Done():
 					return
 				case <-ticker.C:
 					_ = c.Typing()
@@ -1344,7 +1374,6 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 				break
 			}
 		}
-		close(stopTyping)
 
 		if statusMsg != nil && c.Client() != nil {
 			_ = c.Client().DeleteMessage(c.Ctx(), statusMsg.ID())
@@ -1492,7 +1521,7 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		// 3c. Standard Conversational LLM
 		return processTextConversation(c, userText)
 	}
-	globalAIDispatcher = dispatchAIMessage
+	setGlobalAIDispatcher(dispatchAIMessage)
 
 	// Unified Handler for AI Chat Mode
 	b.OnState("AI_STEP_CHAT", func(c *bot.Context) error {
@@ -1581,7 +1610,13 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 
 				// Retry loop for MAX CDN processing
 				for attempt := 1; attempt <= 6; attempt++ {
-					time.Sleep(1 * time.Second)
+					cdnTimer := time.NewTimer(1 * time.Second)
+					select {
+					case <-c.Ctx().Done():
+						cdnTimer.Stop()
+						return c.Ctx().Err()
+					case <-cdnTimer.C:
+					}
 					_, sendErr := c.ReplyWithAttachments(formatted, att)
 					if sendErr == nil {
 						if statusMsg != nil {
@@ -2047,10 +2082,12 @@ func fetchFluxImage(ctx context.Context, prompt string) ([]byte, error) {
 				}
 				lastErr = fmt.Errorf("pollinations rate limited (status %d, retry after %s)", resp.StatusCode, waitTime)
 				if attempt == 0 {
+					retryTimer := time.NewTimer(waitTime)
 					select {
 					case <-ctx.Done():
+						retryTimer.Stop()
 						return nil, ctx.Err()
-					case <-time.After(waitTime):
+					case <-retryTimer.C:
 						continue // retry same model
 					}
 				}
@@ -2188,14 +2225,26 @@ func synthesizeSpeech(ctx context.Context, text string) ([]byte, error) {
 			resp, err := client.Do(req)
 			if err != nil {
 				lastErr = err
-				time.Sleep(200 * time.Millisecond)
+				t := time.NewTimer(200 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return nil, ctx.Err()
+				case <-t.C:
+				}
 				continue
 			}
 
 			if resp.StatusCode != http.StatusOK {
 				_ = resp.Body.Close()
 				lastErr = fmt.Errorf("tts server returned status %d", resp.StatusCode)
-				time.Sleep(200 * time.Millisecond)
+				t := time.NewTimer(200 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return nil, ctx.Err()
+				case <-t.C:
+				}
 				continue
 			}
 
@@ -2377,8 +2426,81 @@ func extractURL(text string) (rawURL string, userQuery string, ok bool) {
 	return rawURL, query, true
 }
 
+func isPublicIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	return true
+}
+
+func validatePublicHTTPURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported URL scheme %q", u.Scheme)
+	}
+	if u.User != nil {
+		return nil, errors.New("URL userinfo is not allowed")
+	}
+	host := u.Hostname()
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return nil, errors.New("invalid or local host")
+	}
+	if ip := net.ParseIP(host); ip != nil && !isPublicIP(ip) {
+		return nil, errors.New("non-public IP address is not allowed")
+	}
+	return u, nil
+}
+
+func newSafeHTTPClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{
+		Timeout: timeout,
+		Control: func(network, address string, c syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			ip := net.ParseIP(host)
+			if !isPublicIP(ip) {
+				return fmt.Errorf("blocked connection to non-public IP %s", host)
+			}
+			return nil
+		},
+	}
+	transport := &http.Transport{
+		DialContext: dialer.DialContext,
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if _, err := validatePublicHTTPURL(req.URL.String()); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+var (
+	webPageHTTPClient   = newSafeHTTPClient(12 * time.Second)
+	webPageURLValidator = validatePublicHTTPURL
+)
+
 // fetchAndExtractWebPageText downloads a web page and extracts readable clean text without HTML boilerplate.
 func fetchAndExtractWebPageText(ctx context.Context, targetURL string) (title string, cleanContent string, err error) {
+	if _, err := webPageURLValidator(targetURL); err != nil {
+		return "", "", fmt.Errorf("invalid URL: %w", err)
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 
@@ -2390,7 +2512,7 @@ func fetchAndExtractWebPageText(ctx context.Context, targetURL string) (title st
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "ru,en;q=0.9")
 
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := webPageHTTPClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to load page: %w", err)
@@ -2536,9 +2658,10 @@ func extractPDFText(data []byte) (string, error) {
 		if bytes.Contains(header, []byte("/FlateDecode")) {
 			zr, err := zlib.NewReader(bytes.NewReader(streamBytes))
 			if err == nil {
-				decompressed, rErr := io.ReadAll(zr)
+				const maxPDFStreamBytes = 10 << 20
+				decompressed, rErr := io.ReadAll(io.LimitReader(zr, maxPDFStreamBytes+1))
 				_ = zr.Close()
-				if rErr == nil && len(decompressed) > 0 {
+				if rErr == nil && len(decompressed) > 0 && len(decompressed) <= maxPDFStreamBytes {
 					content = decompressed
 				}
 			}
@@ -2629,9 +2752,13 @@ func extractDocxText(data []byte) (string, error) {
 				return "", err
 			}
 			defer rc.Close()
-			xmlBytes, err := io.ReadAll(rc)
+			const maxDocxXMLBytes = 10 << 20
+			xmlBytes, err := io.ReadAll(io.LimitReader(rc, maxDocxXMLBytes+1))
 			if err != nil {
 				return "", err
+			}
+			if len(xmlBytes) > maxDocxXMLBytes {
+				return "", fmt.Errorf("docx document exceeds maximum allowed size")
 			}
 			reBlock := regexp.MustCompile(`(?i)</?(?:w:p|w:tr)[^>]*>`)
 			clean := reBlock.ReplaceAllString(string(xmlBytes), "\n")

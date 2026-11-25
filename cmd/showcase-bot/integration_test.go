@@ -90,7 +90,7 @@ func setupTestServer(t *testing.T) http.Handler {
 	mux.Handle("/api/v1/", apiRouter)
 
 	b := bot.NewWithClient(nil)
-	mux.HandleFunc("/webhook", b.WebhookHandler(""))
+	mux.HandleFunc("/webhook", b.WebhookHandler("test_webhook_secret"))
 
 	if err := RegisterWebSPA(mux); err != nil {
 		t.Fatalf("failed to register Web SPA: %v", err)
@@ -176,6 +176,7 @@ func TestIntegration_WebSPAAndAPI(t *testing.T) {
 	}
 	updBytes, _ := json.Marshal(upd)
 	reqWebhook := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(updBytes))
+	reqWebhook.Header.Set("X-Max-Bot-Api-Secret", "test_webhook_secret")
 	recWebhook := httptest.NewRecorder()
 	handler.ServeHTTP(recWebhook, reqWebhook)
 

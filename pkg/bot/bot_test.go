@@ -139,7 +139,7 @@ func TestRecoveryMiddleware(t *testing.T) {
 }
 
 func TestBotLongPollingCycle(t *testing.T) {
-	var pollCount int32
+	var pollCount atomic.Int32
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -151,7 +151,7 @@ func TestBotLongPollingCycle(t *testing.T) {
 				IsBot:    true,
 			})
 		case "/updates":
-			count := atomic.AddInt32(&pollCount, 1)
+			count := pollCount.Add(1)
 			if count == 1 {
 				_ = json.NewEncoder(w).Encode(maxbot.UpdatesResponse{
 					Marker: 10,
@@ -204,7 +204,9 @@ func TestBotLongPollingCycle(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	pollingDone := make(chan struct{})
 	go func() {
+		defer close(pollingDone)
 		_ = b.StartLongPolling(ctx)
 	}()
 
@@ -212,8 +214,10 @@ func TestBotLongPollingCycle(t *testing.T) {
 	case <-pingReplied:
 		// Ping command was dispatched and replied!
 		cancel()
+		<-pollingDone
 	case <-time.After(3 * time.Second):
 		cancel()
+		<-pollingDone
 		t.Fatal("timed out waiting for ping command to be processed")
 	}
 }

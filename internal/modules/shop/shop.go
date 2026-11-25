@@ -163,7 +163,8 @@ func (m *Module) CreateOrder(ctx context.Context, userID int64, productID string
 	}
 
 	m.orders[orderID] = ord
-	return ord, nil
+	cp := *ord
+	return &cp, nil
 }
 
 // GetOrder fetches an existing order by ID.
@@ -175,7 +176,8 @@ func (m *Module) GetOrder(ctx context.Context, orderID string) (*Order, error) {
 	if !ok {
 		return nil, errors.New("order not found")
 	}
-	return ord, nil
+	cp := *ord
+	return &cp, nil
 }
 
 // GetUserOrders returns all orders placed by a specific user.
@@ -186,16 +188,17 @@ func (m *Module) GetUserOrders(ctx context.Context, userID int64) ([]*Order, err
 	var result []*Order
 	for _, ord := range m.orders {
 		if ord.UserID == userID {
-			if ord.ProductTitle == "" {
-				if p, ok := m.products[ord.ProductID]; ok {
-					ord.ProductTitle = p.Title
-					ord.Price = p.Price
-					if ord.Status == "paid" && ord.DeliveryPayload == "" {
-						ord.DeliveryPayload = p.ContentPayload
+			cp := *ord
+			if cp.ProductTitle == "" {
+				if p, ok := m.products[cp.ProductID]; ok {
+					cp.ProductTitle = p.Title
+					cp.Price = p.Price
+					if cp.Status == "paid" && cp.DeliveryPayload == "" {
+						cp.DeliveryPayload = p.ContentPayload
 					}
 				}
 			}
-			result = append(result, ord)
+			result = append(result, &cp)
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {

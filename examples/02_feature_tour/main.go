@@ -191,9 +191,18 @@ func main() {
 		msgID := msg.ID()
 		logger.Info("сообщение для редактирования отправлено", slog.String("msg_id", msgID))
 
+		bgCtx, bgCancel := context.WithTimeout(context.WithoutCancel(c.Ctx()), 15*time.Second)
 		go func(id string) {
-			time.Sleep(1 * time.Second)
-			_, err1 := b.Client().EditMessage(context.Background(), id, &maxbot.EditMessageRequest{
+			defer bgCancel()
+			timer := time.NewTimer(1 * time.Second)
+			defer timer.Stop()
+
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-timer.C:
+			}
+			_, err1 := b.Client().EditMessage(bgCtx, id, &maxbot.EditMessageRequest{
 				Text:   "⏳ **Тест редактирования и удаления:**\nСообщение самоуничтожится через **2** сек...",
 				Format: "markdown",
 			})
@@ -201,8 +210,13 @@ func main() {
 				logger.Error("ошибка редактирования (2 сек)", slog.Any("error", err1))
 			}
 
-			time.Sleep(1 * time.Second)
-			_, err2 := b.Client().EditMessage(context.Background(), id, &maxbot.EditMessageRequest{
+			timer.Reset(1 * time.Second)
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-timer.C:
+			}
+			_, err2 := b.Client().EditMessage(bgCtx, id, &maxbot.EditMessageRequest{
 				Text:   "⏳ **Тест редактирования и удаления:**\nСообщение самоуничтожится через **1** сек... 💥",
 				Format: "markdown",
 			})
@@ -210,8 +224,13 @@ func main() {
 				logger.Error("ошибка редактирования (1 сек)", slog.Any("error", err2))
 			}
 
-			time.Sleep(1 * time.Second)
-			errDel := b.Client().DeleteMessage(context.Background(), id)
+			timer.Reset(1 * time.Second)
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-timer.C:
+			}
+			errDel := b.Client().DeleteMessage(bgCtx, id)
 			if errDel != nil {
 				logger.Error("ошибка удаления сообщения", slog.Any("error", errDel))
 			} else {
@@ -286,7 +305,7 @@ func main() {
 		_ = png.Encode(&imgBuf, img)
 
 		// Two-step upload
-		uploadResp, err := b.Client().UploadMedia(context.Background(), "image", "badge.png", &imgBuf)
+		uploadResp, err := b.Client().UploadMedia(c.Ctx(), "image", "badge.png", &imgBuf)
 		if err != nil {
 			logger.Error("ошибка загрузки медиа", slog.Any("error", err))
 			kb := maxbot.NewInlineKeyboard().
@@ -315,7 +334,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		_, err = b.Client().SendMessage(context.Background(), rec, msgPayload)
+		_, err = b.Client().SendMessage(c.Ctx(), rec, msgPayload)
 		if err != nil {
 			logger.Error("ошибка отправки фото с токеном", slog.Any("error", err))
 		}
@@ -326,7 +345,7 @@ func main() {
 	b.OnCallbackPayload("menu_deeplink", func(c *bot.Context) error {
 		_ = c.AnswerNotification("Генерируем реферальную ссылку...")
 
-		me, err := b.Client().GetMe(context.Background())
+		me, err := b.Client().GetMe(c.Ctx())
 		if err != nil {
 			return err
 		}
@@ -359,7 +378,7 @@ func main() {
 	b.OnCallbackPayload("menu_channel", func(c *bot.Context) error {
 		_ = c.AnswerNotification("Инструкция по каналам")
 
-		me, _ := b.Client().GetMe(context.Background())
+		me, _ := b.Client().GetMe(c.Ctx())
 		botUsername := me.Username
 		if botUsername == "" {
 			botUsername = "ВАШ_БОТ"
@@ -390,7 +409,7 @@ func main() {
 			slog.Any("update", c.Update),
 		)
 
-		chatInfo, err := b.Client().GetChat(context.Background(), chatID)
+		chatInfo, err := b.Client().GetChat(c.Ctx(), chatID)
 		chatTitle := "Неизвестно"
 		chatType := "группа/канал"
 		if err == nil && chatInfo != nil {
@@ -406,11 +425,11 @@ func main() {
 
 		// Send notification to the user in PM if last private user is known
 		if lastPrivateUserID != 0 {
-			_, _ = b.Client().SendTextMessage(context.Background(), maxbot.ToUser(lastPrivateUserID), notifyText)
+			_, _ = b.Client().SendTextMessage(c.Ctx(), maxbot.ToUser(lastPrivateUserID), notifyText)
 		}
 
 		// Also post greeting into the group/channel itself
-		_, _ = b.Client().SendTextMessage(context.Background(), maxbot.ToChat(chatID), "👋 Привет всем! Я бот-ассистент, успешно подключен к этому чату.")
+		_, _ = b.Client().SendTextMessage(c.Ctx(), maxbot.ToChat(chatID), "👋 Привет всем! Я бот-ассистент, успешно подключен к этому чату.")
 
 		return nil
 	})

@@ -158,7 +158,7 @@ func RegisterGuardScenario(b *bot.Bot, hood *HoodEngine, client *maxbot.Client) 
 				"• **ID группы/канала:** `%d`\n"+
 				"• **Событие:** `bot_added` успешно перехвачено сервером\n\n"+
 				"Для полноценной модерации выдайте боту права Администратора в настройках группы.", chatID)
-			_, _ = c.Client().SendTextMessage(context.Background(), maxbot.ToUser(inviterID), dmText)
+			_, _ = c.Client().SendTextMessage(c.Ctx(), maxbot.ToUser(inviterID), dmText)
 		}
 
 		return nil

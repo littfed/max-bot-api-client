@@ -18,6 +18,8 @@ import (
 )
 
 // SQLStore implements a persistent database-backed storage for PostgreSQL and SQLite.
+// SQLStore is safe for concurrent use by multiple goroutines; an internal mutex
+// serializes operations to prevent SQLITE_BUSY contention on SQLite.
 type SQLStore struct {
 	db      *sql.DB
 	dialect string
@@ -80,8 +82,8 @@ func (s *SQLStore) seedDefaultChannels() {
 	}
 
 	for _, ch := range channels {
-		if _, exists := s.getChannelLocked(ch.ChatID); !exists {
-			_ = s.saveChannelLocked(ch)
+		if _, exists := s.getChannelLocked(context.Background(), ch.ChatID); !exists {
+			_ = s.saveChannelLocked(context.Background(), ch)
 		}
 	}
 }
@@ -89,12 +91,16 @@ func (s *SQLStore) seedDefaultChannels() {
 // --- Channel Operations ---
 
 func (s *SQLStore) SaveChannel(ch Channel) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.saveChannelLocked(ch)
+	return s.SaveChannelContext(context.Background(), ch)
 }
 
-func (s *SQLStore) saveChannelLocked(ch Channel) error {
+func (s *SQLStore) SaveChannelContext(ctx context.Context, ch Channel) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveChannelLocked(ctx, ch)
+}
+
+func (s *SQLStore) saveChannelLocked(ctx context.Context, ch Channel) error {
 	permsJSON, err := json.Marshal(ch.Permissions)
 	if err != nil {
 		permsJSON = []byte("[]")
@@ -113,19 +119,23 @@ ON CONFLICT (chat_id) DO UPDATE SET
 	permissions = EXCLUDED.permissions,
 	last_updated = EXCLUDED.last_updated;`
 
-	_, err = s.db.Exec(query, ch.ChatID, ch.Title, ch.Type, ch.IsAdmin, string(permsJSON), ch.LastUpdated)
+	_, err = s.db.ExecContext(ctx, query, ch.ChatID, ch.Title, ch.Type, ch.IsAdmin, string(permsJSON), ch.LastUpdated)
 	return err
 }
 
 func (s *SQLStore) GetChannel(chatID int64) (Channel, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.getChannelLocked(chatID)
+	return s.GetChannelContext(context.Background(), chatID)
 }
 
-func (s *SQLStore) getChannelLocked(chatID int64) (Channel, bool) {
+func (s *SQLStore) GetChannelContext(ctx context.Context, chatID int64) (Channel, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getChannelLocked(ctx, chatID)
+}
+
+func (s *SQLStore) getChannelLocked(ctx context.Context, chatID int64) (Channel, bool) {
 	query := `SELECT chat_id, title, type, is_admin, permissions, last_updated FROM channels WHERE chat_id = $1;`
-	row := s.db.QueryRow(query, chatID)
+	row := s.db.QueryRowContext(ctx, query, chatID)
 
 	var ch Channel
 	var permsStr string
@@ -138,11 +148,15 @@ func (s *SQLStore) getChannelLocked(chatID int64) (Channel, bool) {
 }
 
 func (s *SQLStore) ListChannels() []Channel {
+	return s.ListChannelsContext(context.Background())
+}
+
+func (s *SQLStore) ListChannelsContext(ctx context.Context) []Channel {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	query := `SELECT chat_id, title, type, is_admin, permissions, last_updated FROM channels ORDER BY title ASC;`
-	rows, err := s.db.Query(query)
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil
 	}
@@ -163,6 +177,10 @@ func (s *SQLStore) ListChannels() []Channel {
 // --- Order Operations ---
 
 func (s *SQLStore) CreateOrder(order Order) error {
+	return s.CreateOrderContext(context.Background(), order)
+}
+
+func (s *SQLStore) CreateOrderContext(ctx context.Context, order Order) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -187,16 +205,20 @@ ON CONFLICT (id) DO UPDATE SET
 	status = EXCLUDED.status,
 	address = EXCLUDED.address;`
 
-	_, err = s.db.Exec(query, order.ID, order.UserID, order.UserName, string(itemsJSON), order.Total, order.DeliveryType, order.Address, order.Status, order.Verified, order.CreatedAt)
+	_, err = s.db.ExecContext(ctx, query, order.ID, order.UserID, order.UserName, string(itemsJSON), order.Total, order.DeliveryType, order.Address, order.Status, order.Verified, order.CreatedAt)
 	return err
 }
 
 func (s *SQLStore) GetOrder(id string) (Order, bool) {
+	return s.GetOrderContext(context.Background(), id)
+}
+
+func (s *SQLStore) GetOrderContext(ctx context.Context, id string) (Order, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	query := `SELECT id, user_id, user_name, items, total, delivery_type, address, status, verified, created_at FROM orders WHERE id = $1;`
-	row := s.db.QueryRow(query, id)
+	row := s.db.QueryRowContext(ctx, query, id)
 
 	var ord Order
 	var itemsStr string
@@ -209,11 +231,15 @@ func (s *SQLStore) GetOrder(id string) (Order, bool) {
 }
 
 func (s *SQLStore) ListOrdersByUser(userID int64) []Order {
+	return s.ListOrdersByUserContext(context.Background(), userID)
+}
+
+func (s *SQLStore) ListOrdersByUserContext(ctx context.Context, userID int64) []Order {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	query := `SELECT id, user_id, user_name, items, total, delivery_type, address, status, verified, created_at FROM orders WHERE user_id = $1 ORDER BY created_at DESC;`
-	rows, err := s.db.Query(query, userID)
+	rows, err := s.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil
 	}
@@ -232,11 +258,15 @@ func (s *SQLStore) ListOrdersByUser(userID int64) []Order {
 }
 
 func (s *SQLStore) ListAllOrders() []Order {
+	return s.ListAllOrdersContext(context.Background())
+}
+
+func (s *SQLStore) ListAllOrdersContext(ctx context.Context) []Order {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	query := `SELECT id, user_id, user_name, items, total, delivery_type, address, status, verified, created_at FROM orders ORDER BY created_at DESC;`
-	rows, err := s.db.Query(query)
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil
 	}
@@ -255,15 +285,22 @@ func (s *SQLStore) ListAllOrders() []Order {
 }
 
 func (s *SQLStore) UpdateOrderStatus(id string, status string) error {
+	return s.UpdateOrderStatusContext(context.Background(), id, status)
+}
+
+func (s *SQLStore) UpdateOrderStatusContext(ctx context.Context, id string, status string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	query := `UPDATE orders SET status = $1 WHERE id = $2;`
-	res, err := s.db.Exec(query, status, id)
+	res, err := s.db.ExecContext(ctx, query, status, id)
 	if err != nil {
 		return err
 	}
-	rowsAff, _ := res.RowsAffected()
+	rowsAff, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if rowsAff == 0 {
 		return fmt.Errorf("order %q not found", id)
 	}
@@ -273,18 +310,35 @@ func (s *SQLStore) UpdateOrderStatus(id string, status string) error {
 // --- Reaction Operations ---
 
 func (s *SQLStore) ToggleReaction(postMID string, chatID int64, userID int64, emoji string) (map[string]int, error) {
+	return s.ToggleReactionContext(context.Background(), postMID, chatID, userID, emoji)
+}
+
+func (s *SQLStore) ToggleReactionContext(ctx context.Context, postMID string, chatID int64, userID int64, emoji string) (map[string]int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	// 1. Fetch current reaction state
 	query := `SELECT counts, user_votes FROM reactions WHERE post_mid = $1;`
-	row := s.db.QueryRow(query, postMID)
+	if s.dialect == "postgres" {
+		query = `SELECT counts, user_votes FROM reactions WHERE post_mid = $1 FOR UPDATE;`
+	}
+	row := tx.QueryRowContext(ctx, query, postMID)
 
 	counts := make(map[string]int)
 	userVotes := make(map[int64]string)
 
 	var countsStr, votesStr string
-	if err := row.Scan(&countsStr, &votesStr); err == nil {
+	err = row.Scan(&countsStr, &votesStr)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
 		_ = json.Unmarshal([]byte(countsStr), &counts)
 		_ = json.Unmarshal([]byte(votesStr), &userVotes)
 	}
@@ -320,11 +374,14 @@ ON CONFLICT (post_mid) DO UPDATE SET
 	counts = EXCLUDED.counts,
 	user_votes = EXCLUDED.user_votes;`
 
-	if _, err := s.db.Exec(saveQuery, postMID, chatID, string(cJSON), string(vJSON)); err != nil {
+	if _, err := tx.ExecContext(ctx, saveQuery, postMID, chatID, string(cJSON), string(vJSON)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
-	resCounts := make(map[string]int)
+	resCounts := make(map[string]int, len(counts))
 	for k, v := range counts {
 		resCounts[k] = v
 	}
@@ -332,11 +389,15 @@ ON CONFLICT (post_mid) DO UPDATE SET
 }
 
 func (s *SQLStore) GetReactions(postMID string) (map[string]int, bool) {
+	return s.GetReactionsContext(context.Background(), postMID)
+}
+
+func (s *SQLStore) GetReactionsContext(ctx context.Context, postMID string) (map[string]int, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	query := `SELECT counts FROM reactions WHERE post_mid = $1;`
-	row := s.db.QueryRow(query, postMID)
+	row := s.db.QueryRowContext(ctx, query, postMID)
 
 	var countsStr string
 	if err := row.Scan(&countsStr); err != nil {
@@ -350,6 +411,10 @@ func (s *SQLStore) GetReactions(postMID string) (map[string]int, bool) {
 // --- Poll Operations ---
 
 func (s *SQLStore) CreatePoll(poll Poll) error {
+	return s.CreatePollContext(context.Background(), poll)
+}
+
+func (s *SQLStore) CreatePollContext(ctx context.Context, poll Poll) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -368,16 +433,20 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (id) DO UPDATE SET
 	message_mid = EXCLUDED.message_mid;`
 
-	_, err := s.db.Exec(query, poll.ID, poll.ChatID, poll.MessageMID, poll.Question, string(optsJSON), string(votesJSON), poll.CreatedAt)
+	_, err := s.db.ExecContext(ctx, query, poll.ID, poll.ChatID, poll.MessageMID, poll.Question, string(optsJSON), string(votesJSON), poll.CreatedAt)
 	return err
 }
 
 func (s *SQLStore) GetPoll(id string) (Poll, bool) {
+	return s.GetPollContext(context.Background(), id)
+}
+
+func (s *SQLStore) GetPollContext(ctx context.Context, id string) (Poll, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	query := `SELECT id, chat_id, message_mid, question, options, votes, created_at FROM polls WHERE id = $1;`
-	row := s.db.QueryRow(query, id)
+	row := s.db.QueryRowContext(ctx, query, id)
 
 	var p Poll
 	var optsStr, votesStr string
@@ -390,16 +459,32 @@ func (s *SQLStore) GetPoll(id string) (Poll, bool) {
 }
 
 func (s *SQLStore) VotePoll(pollID string, userID int64, optionIdx int) ([]int, []int, error) {
+	return s.VotePollContext(context.Background(), pollID, userID, optionIdx)
+}
+
+func (s *SQLStore) VotePollContext(ctx context.Context, pollID string, userID int64, optionIdx int) ([]int, []int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	query := `SELECT id, chat_id, message_mid, question, options, votes, created_at FROM polls WHERE id = $1;`
-	row := s.db.QueryRow(query, pollID)
+	if s.dialect == "postgres" {
+		query = `SELECT id, chat_id, message_mid, question, options, votes, created_at FROM polls WHERE id = $1 FOR UPDATE;`
+	}
+	row := tx.QueryRowContext(ctx, query, pollID)
 
 	var p Poll
 	var optsStr, votesStr string
 	if err := row.Scan(&p.ID, &p.ChatID, &p.MessageMID, &p.Question, &optsStr, &votesStr, &p.CreatedAt); err != nil {
-		return nil, nil, fmt.Errorf("poll %s not found", pollID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, fmt.Errorf("poll %s not found", pollID)
+		}
+		return nil, nil, err
 	}
 	_ = json.Unmarshal([]byte(optsStr), &p.Options)
 	_ = json.Unmarshal([]byte(votesStr), &p.Votes)
@@ -415,7 +500,10 @@ func (s *SQLStore) VotePoll(pollID string, userID int64, optionIdx int) ([]int, 
 
 	vJSON, _ := json.Marshal(p.Votes)
 	updateQuery := `UPDATE polls SET votes = $1 WHERE id = $2;`
-	if _, err := s.db.Exec(updateQuery, string(vJSON), pollID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateQuery, string(vJSON), pollID); err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
 
@@ -440,6 +528,10 @@ func (s *SQLStore) VotePoll(pollID string, userID int64, optionIdx int) ([]int, 
 // --- Giveaway Operations ---
 
 func (s *SQLStore) CreateGiveaway(gw Giveaway) error {
+	return s.CreateGiveawayContext(context.Background(), gw)
+}
+
+func (s *SQLStore) CreateGiveawayContext(ctx context.Context, gw Giveaway) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -460,16 +552,20 @@ func (s *SQLStore) CreateGiveaway(gw Giveaway) error {
 	query := `INSERT INTO giveaways (id, chat_id, title, promo_code, discount_percent, participants, winners, active, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`
 
-	_, err := s.db.Exec(query, gw.ID, gw.ChatID, gw.Title, gw.PromoCode, gw.DiscountPercent, string(pJSON), string(wJSON), gw.Active, gw.CreatedAt)
+	_, err := s.db.ExecContext(ctx, query, gw.ID, gw.ChatID, gw.Title, gw.PromoCode, gw.DiscountPercent, string(pJSON), string(wJSON), gw.Active, gw.CreatedAt)
 	return err
 }
 
 func (s *SQLStore) GetGiveaway(id string) (Giveaway, bool) {
+	return s.GetGiveawayContext(context.Background(), id)
+}
+
+func (s *SQLStore) GetGiveawayContext(ctx context.Context, id string) (Giveaway, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	query := `SELECT id, chat_id, title, promo_code, discount_percent, participants, winners, active, created_at FROM giveaways WHERE id = $1;`
-	row := s.db.QueryRow(query, id)
+	row := s.db.QueryRowContext(ctx, query, id)
 
 	var gw Giveaway
 	var pStr, wStr string
@@ -482,16 +578,32 @@ func (s *SQLStore) GetGiveaway(id string) (Giveaway, bool) {
 }
 
 func (s *SQLStore) AddGiveawayParticipant(id string, userID int64, userName string) error {
+	return s.AddGiveawayParticipantContext(context.Background(), id, userID, userName)
+}
+
+func (s *SQLStore) AddGiveawayParticipantContext(ctx context.Context, id string, userID int64, userName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	query := `SELECT participants, active FROM giveaways WHERE id = $1;`
-	row := s.db.QueryRow(query, id)
+	if s.dialect == "postgres" {
+		query = `SELECT participants, active FROM giveaways WHERE id = $1 FOR UPDATE;`
+	}
+	row := tx.QueryRowContext(ctx, query, id)
 
 	var pStr string
 	var active bool
 	if err := row.Scan(&pStr, &active); err != nil {
-		return fmt.Errorf("giveaway %s not found", id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("giveaway %s not found", id)
+		}
+		return err
 	}
 	if !active {
 		return fmt.Errorf("giveaway %s is already finished", id)
@@ -503,21 +615,42 @@ func (s *SQLStore) AddGiveawayParticipant(id string, userID int64, userName stri
 
 	pJSON, _ := json.Marshal(participants)
 	updateQuery := `UPDATE giveaways SET participants = $1 WHERE id = $2;`
-	_, err := s.db.Exec(updateQuery, string(pJSON), id)
-	return err
+	if _, err := tx.ExecContext(ctx, updateQuery, string(pJSON), id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) DrawGiveawayWinners(id string, count int) ([]int64, error) {
+	return s.DrawGiveawayWinnersContext(context.Background(), id, count)
+}
+
+func (s *SQLStore) DrawGiveawayWinnersContext(ctx context.Context, id string, count int) ([]int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	query := `SELECT id, chat_id, title, promo_code, discount_percent, participants, winners, active, created_at FROM giveaways WHERE id = $1;`
-	row := s.db.QueryRow(query, id)
+	if s.dialect == "postgres" {
+		query = `SELECT id, chat_id, title, promo_code, discount_percent, participants, winners, active, created_at FROM giveaways WHERE id = $1 FOR UPDATE;`
+	}
+	row := tx.QueryRowContext(ctx, query, id)
 
 	var gw Giveaway
 	var pStr, wStr string
 	if err := row.Scan(&gw.ID, &gw.ChatID, &gw.Title, &gw.PromoCode, &gw.DiscountPercent, &pStr, &wStr, &gw.Active, &gw.CreatedAt); err != nil {
-		return nil, fmt.Errorf("giveaway %s not found", id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("giveaway %s not found", id)
+		}
+		return nil, err
+	}
+	if !gw.Active {
+		return nil, fmt.Errorf("giveaway %s is already finished", id)
 	}
 	_ = json.Unmarshal([]byte(pStr), &gw.Participants)
 
@@ -542,7 +675,10 @@ func (s *SQLStore) DrawGiveawayWinners(id string, count int) ([]int64, error) {
 
 	wJSON, _ := json.Marshal(winners)
 	updateQuery := `UPDATE giveaways SET winners = $1, active = false WHERE id = $2;`
-	if _, err := s.db.Exec(updateQuery, string(wJSON), id); err != nil {
+	if _, err := tx.ExecContext(ctx, updateQuery, string(wJSON), id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
@@ -552,6 +688,10 @@ func (s *SQLStore) DrawGiveawayWinners(id string, count int) ([]int64, error) {
 // --- Media Artifact Operations ---
 
 func (s *SQLStore) SaveMediaArtifact(artifact MediaArtifact) (*MediaArtifact, error) {
+	return s.SaveMediaArtifactContext(context.Background(), artifact)
+}
+
+func (s *SQLStore) SaveMediaArtifactContext(ctx context.Context, artifact MediaArtifact) (*MediaArtifact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -570,24 +710,31 @@ func (s *SQLStore) SaveMediaArtifact(artifact MediaArtifact) (*MediaArtifact, er
 	if s.dialect == "postgres" {
 		query := `INSERT INTO media_history (user_id, artifact_type, title, prompt, content_text, media_url, metadata, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id;`
-		err = s.db.QueryRow(query, artifact.UserID, artifact.ArtifactType, artifact.Title, artifact.Prompt, artifact.ContentText, artifact.MediaURL, string(metaJSON), artifact.CreatedAt).Scan(&artifact.ID)
+		err = s.db.QueryRowContext(ctx, query, artifact.UserID, artifact.ArtifactType, artifact.Title, artifact.Prompt, artifact.ContentText, artifact.MediaURL, string(metaJSON), artifact.CreatedAt).Scan(&artifact.ID)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		query := `INSERT INTO media_history (user_id, artifact_type, title, prompt, content_text, media_url, metadata, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`
-		res, err := s.db.Exec(query, artifact.UserID, artifact.ArtifactType, artifact.Title, artifact.Prompt, artifact.ContentText, artifact.MediaURL, string(metaJSON), artifact.CreatedAt)
+		res, err := s.db.ExecContext(ctx, query, artifact.UserID, artifact.ArtifactType, artifact.Title, artifact.Prompt, artifact.ContentText, artifact.MediaURL, string(metaJSON), artifact.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
-		artifact.ID, _ = res.LastInsertId()
+		artifact.ID, err = res.LastInsertId()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &artifact, nil
 }
 
 func (s *SQLStore) ListMediaArtifacts(userID int64, artifactType string, limit int) ([]MediaArtifact, error) {
+	return s.ListMediaArtifactsContext(context.Background(), userID, artifactType, limit)
+}
+
+func (s *SQLStore) ListMediaArtifactsContext(ctx context.Context, userID int64, artifactType string, limit int) ([]MediaArtifact, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -601,11 +748,11 @@ func (s *SQLStore) ListMediaArtifacts(userID int64, artifactType string, limit i
 	if artifactType != "" && artifactType != "all" {
 		query := `SELECT id, user_id, artifact_type, title, prompt, content_text, media_url, metadata, created_at
 FROM media_history WHERE user_id = $1 AND artifact_type = $2 ORDER BY created_at DESC LIMIT $3;`
-		rows, err = s.db.Query(query, userID, artifactType, limit)
+		rows, err = s.db.QueryContext(ctx, query, userID, artifactType, limit)
 	} else {
 		query := `SELECT id, user_id, artifact_type, title, prompt, content_text, media_url, metadata, created_at
 FROM media_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2;`
-		rows, err = s.db.Query(query, userID, limit)
+		rows, err = s.db.QueryContext(ctx, query, userID, limit)
 	}
 
 	if err != nil {
@@ -617,10 +764,14 @@ FROM media_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2;`
 	for rows.Next() {
 		var a MediaArtifact
 		var metaStr string
-		if err := rows.Scan(&a.ID, &a.UserID, &a.ArtifactType, &a.Title, &a.Prompt, &a.ContentText, &a.MediaURL, &metaStr, &a.CreatedAt); err == nil {
-			_ = json.Unmarshal([]byte(metaStr), &a.Metadata)
-			result = append(result, a)
+		if err := rows.Scan(&a.ID, &a.UserID, &a.ArtifactType, &a.Title, &a.Prompt, &a.ContentText, &a.MediaURL, &metaStr, &a.CreatedAt); err != nil {
+			return nil, err
 		}
+		_ = json.Unmarshal([]byte(metaStr), &a.Metadata)
+		result = append(result, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -666,10 +817,10 @@ func (s *SQLStore) SetUserActiveMode(ctx context.Context, userID int64, modeID s
 	return nil
 }
 
-// IsAdminPlatformUser returns true if the platform user ID matches the owner or is listed in ADMIN_USER_IDS.
+// IsAdminPlatformUser returns true if the platform user ID is listed in ADMIN_USER_IDS.
 func IsAdminPlatformUser(platformUserID string) bool {
-	if platformUserID == "396393759" {
-		return true
+	if platformUserID == "" {
+		return false
 	}
 	adminEnv := os.Getenv("ADMIN_USER_IDS")
 	if adminEnv != "" {
@@ -694,18 +845,31 @@ func (s *SQLStore) ResolveUserIdentity(ctx context.Context, platform, platformUs
 	var identityID, userID int64
 	err := s.db.QueryRowContext(ctx, findQuery, platform, platformUserID).Scan(&identityID, &userID)
 	if err == nil {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+
 		// Update user identity metadata if changed, preserving phone if new one is empty
 		updateQuery := `UPDATE user_identities SET username = COALESCE(NULLIF($1, ''), username), first_name = COALESCE(NULLIF($2, ''), first_name), phone = COALESCE(NULLIF($3, ''), phone) WHERE id = $4;`
-		_, _ = s.db.ExecContext(ctx, updateQuery, username, firstName, phone, identityID)
+		if _, err := tx.ExecContext(ctx, updateQuery, username, firstName, phone, identityID); err != nil {
+			return nil, fmt.Errorf("failed to update user identity: %w", err)
+		}
 
 		var u User
 		getUserQuery := `SELECT id, active_mode_id, role, timezone, created_at, updated_at FROM users WHERE id = $1;`
-		if err := s.db.QueryRowContext(ctx, getUserQuery, userID).Scan(&u.ID, &u.ActiveModeID, &u.Role, &u.Timezone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := tx.QueryRowContext(ctx, getUserQuery, userID).Scan(&u.ID, &u.ActiveModeID, &u.Role, &u.Timezone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to fetch existing user %d: %w", userID, err)
 		}
 		if isAdmin && u.Role != "admin" && u.Role != "superadmin" {
-			_, _ = s.db.ExecContext(ctx, `UPDATE users SET role = 'admin', updated_at = $1 WHERE id = $2;`, time.Now(), u.ID)
+			if _, err := tx.ExecContext(ctx, `UPDATE users SET role = 'admin', updated_at = $1 WHERE id = $2;`, time.Now(), u.ID); err != nil {
+				return nil, fmt.Errorf("failed to promote user %d to admin: %w", u.ID, err)
+			}
 			u.Role = "admin"
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("failed to commit user identity update: %w", err)
 		}
 		return &u, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -843,15 +1007,20 @@ func (s *SQLStore) SetModeActive(ctx context.Context, modeID string, isActive bo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for SetModeActive: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	now := time.Now()
 	var res sql.Result
-	var err error
 	if maintMsg != "" {
 		query := `UPDATE mode_configs SET is_active = $1, maintenance_message = $2, updated_at = $3 WHERE mode_id = $4;`
-		res, err = s.db.ExecContext(ctx, query, isActive, maintMsg, now, modeID)
+		res, err = tx.ExecContext(ctx, query, isActive, maintMsg, now, modeID)
 	} else {
 		query := `UPDATE mode_configs SET is_active = $1, updated_at = $2 WHERE mode_id = $3;`
-		res, err = s.db.ExecContext(ctx, query, isActive, now, modeID)
+		res, err = tx.ExecContext(ctx, query, isActive, now, modeID)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to set mode active for %s: %w", modeID, err)
@@ -859,13 +1028,18 @@ func (s *SQLStore) SetModeActive(ctx context.Context, modeID string, isActive bo
 
 	if res != nil {
 		rows, err := res.RowsAffected()
-		if err == nil && rows == 0 {
+		if err != nil {
+			return fmt.Errorf("failed to check rows affected for %s: %w", modeID, err)
+		}
+		if rows == 0 {
 			// Mode didn't exist in mode_configs, insert new row
 			insertQuery := `INSERT INTO mode_configs (mode_id, title, is_active, maintenance_message, daily_quota, updated_at) VALUES ($1, $2, $3, $4, 100, $5);`
-			_, _ = s.db.ExecContext(ctx, insertQuery, modeID, modeID, isActive, maintMsg, now)
+			if _, err := tx.ExecContext(ctx, insertQuery, modeID, modeID, isActive, maintMsg, now); err != nil {
+				return fmt.Errorf("failed to insert mode config for %s: %w", modeID, err)
+			}
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // SaveLead creates a new lead and returns its generated ID.
@@ -1031,6 +1205,81 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);`
 		if err != nil {
 			return 0, fmt.Errorf("failed to get support ticket last insert id: %w", err)
 		}
+	}
+	return ticket.ID, nil
+}
+
+// CreateSupportTicketWithMessage atomically creates a support ticket and its initial message in a transaction.
+func (s *SQLStore) CreateSupportTicketWithMessage(ctx context.Context, ticket *SupportTicket, msg *SupportMessage) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if ticket == nil {
+		return 0, errors.New("ticket cannot be nil")
+	}
+	if ticket.Status == "" {
+		ticket.Status = "open"
+	}
+	now := time.Now()
+	if ticket.CreatedAt.IsZero() {
+		ticket.CreatedAt = now
+	}
+	if ticket.UpdatedAt.IsZero() {
+		ticket.UpdatedAt = now
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if s.dialect == "postgres" {
+		query := `INSERT INTO support_tickets (user_id, platform, mode_scope, subject, status, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;`
+		if err := tx.QueryRowContext(ctx, query, ticket.UserID, ticket.Platform, ticket.ModeScope, ticket.Subject, ticket.Status, ticket.CreatedAt, ticket.UpdatedAt).Scan(&ticket.ID); err != nil {
+			return 0, fmt.Errorf("failed to create support ticket in postgres: %w", err)
+		}
+	} else {
+		query := `INSERT INTO support_tickets (user_id, platform, mode_scope, subject, status, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7);`
+		res, err := tx.ExecContext(ctx, query, ticket.UserID, ticket.Platform, ticket.ModeScope, ticket.Subject, ticket.Status, ticket.CreatedAt, ticket.UpdatedAt)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create support ticket in sqlite: %w", err)
+		}
+		ticket.ID, err = res.LastInsertId()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get support ticket last insert id: %w", err)
+		}
+	}
+
+	if msg != nil {
+		msg.TicketID = ticket.ID
+		if msg.CreatedAt.IsZero() {
+			msg.CreatedAt = now
+		}
+		if s.dialect == "postgres" {
+			msgQuery := `INSERT INTO support_messages (ticket_id, sender_type, message_text, created_at)
+VALUES ($1, $2, $3, $4) RETURNING id;`
+			if err := tx.QueryRowContext(ctx, msgQuery, msg.TicketID, msg.SenderType, msg.MessageText, msg.CreatedAt).Scan(&msg.ID); err != nil {
+				return 0, fmt.Errorf("failed to save initial support message in postgres: %w", err)
+			}
+		} else {
+			msgQuery := `INSERT INTO support_messages (ticket_id, sender_type, message_text, created_at)
+VALUES ($1, $2, $3, $4);`
+			res, err := tx.ExecContext(ctx, msgQuery, msg.TicketID, msg.SenderType, msg.MessageText, msg.CreatedAt)
+			if err != nil {
+				return 0, fmt.Errorf("failed to save initial support message in sqlite: %w", err)
+			}
+			msg.ID, err = res.LastInsertId()
+			if err != nil {
+				return 0, fmt.Errorf("failed to get initial support message last insert id: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit support ticket transaction: %w", err)
 	}
 	return ticket.ID, nil
 }

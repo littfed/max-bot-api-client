@@ -15,15 +15,23 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/maxbot"
 )
 
+const (
+	defaultMaxConcurrency = 64
+	maxRecentChats        = 1024
+)
+
 // Bot provides high-level event routing and Long Polling update consumption.
+// Bot is safe for concurrent use by multiple goroutines.
 type Bot struct {
 	client          *maxbot.Client
 	router          *Router
 	logger          *slog.Logger
 	pollingTimeout  int
 	pollingInterval time.Duration
+	maxConcurrency  int
 	marker          int64
-	recentChats     sync.Map
+	recentChatsMu   sync.RWMutex
+	recentChats     map[int64]int64
 }
 
 // BotOption configures a Bot instance.
@@ -40,6 +48,16 @@ func WithLogger(logger *slog.Logger) BotOption {
 func WithPollingTimeout(seconds int) BotOption {
 	return func(b *Bot) {
 		b.pollingTimeout = seconds
+	}
+}
+
+// WithMaxConcurrency sets the maximum number of concurrent update handler goroutines
+// spawned by StartLongPolling (default: 64).
+func WithMaxConcurrency(n int) BotOption {
+	return func(b *Bot) {
+		if n > 0 {
+			b.maxConcurrency = n
+		}
 	}
 }
 
@@ -204,9 +222,36 @@ func (b *Bot) OnAny(handler HandlerFunc) {
 
 // RecordActiveChat registers an active chat and user ID for correlating bare events.
 func (b *Bot) RecordActiveChat(chatID, userID int64) {
-	if chatID != 0 {
-		b.recentChats.Store(chatID, userID)
+	if chatID == 0 {
+		return
 	}
+	b.recentChatsMu.Lock()
+	defer b.recentChatsMu.Unlock()
+	if b.recentChats == nil {
+		b.recentChats = make(map[int64]int64)
+	}
+	if _, exists := b.recentChats[chatID]; !exists && len(b.recentChats) >= maxRecentChats {
+		for k := range b.recentChats {
+			delete(b.recentChats, k)
+			break
+		}
+	}
+	b.recentChats[chatID] = userID
+}
+
+type recentChatEntry struct {
+	chatID int64
+	userID int64
+}
+
+func (b *Bot) snapshotRecentChats() []recentChatEntry {
+	b.recentChatsMu.RLock()
+	defer b.recentChatsMu.RUnlock()
+	entries := make([]recentChatEntry, 0, len(b.recentChats))
+	for cid, uid := range b.recentChats {
+		entries = append(entries, recentChatEntry{chatID: cid, userID: uid})
+	}
+	return entries
 }
 
 // ProcessUpdate handles a single update (useful for both Long Polling and Webhook endpoints).
@@ -259,39 +304,32 @@ func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
 		)
 
 		// Brief pause to allow platform backend CDN/indexing sync
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(1 * time.Second):
+		if err := sleepCtx(ctx, 1*time.Second); err != nil {
+			return err
 		}
 
 		var targetChatID int64
 		var targetUserID int64
 
-		b.recentChats.Range(func(key, value any) bool {
-			cid := key.(int64)
-			uid := value.(int64)
-			chat, err := b.client.GetChat(ctx, cid)
+		entries := b.snapshotRecentChats()
+		for _, entry := range entries {
+			chat, err := b.client.GetChat(ctx, entry.chatID)
 			if err == nil && chat != nil {
 				diff := chat.LastEventTime - u.Timestamp
 				if diff < 0 {
 					diff = -diff
 				}
 				if diff <= 5000 {
-					targetChatID = cid
-					targetUserID = uid
-					return false
+					targetChatID = entry.chatID
+					targetUserID = entry.userID
+					break
 				}
 			}
-			return true
-		})
+		}
 
-		if targetChatID == 0 {
-			b.recentChats.Range(func(key, value any) bool {
-				targetChatID = key.(int64)
-				targetUserID = value.(int64)
-				return false
-			})
+		if targetChatID == 0 && len(entries) > 0 {
+			targetChatID = entries[0].chatID
+			targetUserID = entries[0].userID
 		}
 
 		if targetChatID != 0 {
@@ -338,8 +376,20 @@ func (b *Bot) ProcessUpdate(ctx context.Context, u *maxbot.Update) error {
 	return b.router.Handle(c)
 }
 
-// StartLongPolling begins sequentially consuming events from platform-api2.max.ru.
-// Blocks until ctx is cancelled or an unrecoverable error occurs.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// StartLongPolling begins consuming events from platform-api2.max.ru.
+// Blocks until ctx is cancelled or an unrecoverable error occurs, and waits
+// for all in-flight update handlers to finish before returning.
 func (b *Bot) StartLongPolling(ctx context.Context) error {
 	// 1. Verify credentials and connectivity on startup
 	me, err := b.client.GetMe(ctx)
@@ -352,6 +402,14 @@ func (b *Bot) StartLongPolling(ctx context.Context) error {
 		slog.String("bot_username", me.Username),
 		slog.Int64("bot_id", me.UserID),
 	)
+
+	maxConc := b.maxConcurrency
+	if maxConc <= 0 {
+		maxConc = defaultMaxConcurrency
+	}
+	sem := make(chan struct{}, maxConc)
+	var wg sync.WaitGroup
+	defer wg.Wait()
 
 	// Long Polling loop
 	for {
@@ -378,22 +436,18 @@ func (b *Bot) StartLongPolling(ctx context.Context) error {
 			// If rate limited, backoff
 			if maxbot.IsTooManyRequests(err) {
 				b.logger.Warn("rate limited by MAX API (429), backing off for 2 seconds")
-				select {
-				case <-ctx.Done():
+				if sleepCtx(ctx, 2*time.Second) != nil {
 					return nil
-				case <-time.After(2 * time.Second):
-					continue
 				}
+				continue
 			}
 
 			b.logger.Error("failed to fetch updates via long polling", slog.Any("error", err))
 			// Transient network error backoff
-			select {
-			case <-ctx.Done():
+			if sleepCtx(ctx, 1*time.Second) != nil {
 				return nil
-			case <-time.After(1 * time.Second):
-				continue
 			}
+			continue
 		}
 
 		if resp != nil {
@@ -402,8 +456,26 @@ func (b *Bot) StartLongPolling(ctx context.Context) error {
 			}
 
 			for _, update := range resp.Updates {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case sem <- struct{}{}:
+				}
+
 				u := update
+				wg.Add(1)
 				go func(item *maxbot.Update) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					defer func() {
+						if r := recover(); r != nil {
+							b.logger.Error("panic recovered processing update",
+								slog.String("type", item.UpdateType),
+								slog.Any("panic", r),
+							)
+						}
+					}()
+
 					if err := b.ProcessUpdate(ctx, item); err != nil {
 						b.logger.Error("handler error processing update",
 							slog.String("type", item.UpdateType),
@@ -415,10 +487,8 @@ func (b *Bot) StartLongPolling(ctx context.Context) error {
 		}
 
 		if b.pollingInterval > 0 {
-			select {
-			case <-ctx.Done():
+			if sleepCtx(ctx, b.pollingInterval) != nil {
 				return nil
-			case <-time.After(b.pollingInterval):
 			}
 		}
 	}
@@ -427,14 +497,17 @@ func (b *Bot) StartLongPolling(ctx context.Context) error {
 // WebhookHandler returns an http.HandlerFunc that decodes incoming webhooks and dispatches them.
 func (b *Bot) WebhookHandler(secret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if secret != "" {
-			reqSecret := r.Header.Get("X-Max-Bot-Api-Secret")
-			if subtle.ConstantTimeCompare([]byte(reqSecret), []byte(secret)) != 1 {
-				http.Error(w, "Unauthorized secret", http.StatusUnauthorized)
-				return
-			}
+		if secret == "" {
+			http.Error(w, "Webhook secret not configured", http.StatusUnauthorized)
+			return
+		}
+		reqSecret := r.Header.Get("X-Max-Bot-Api-Secret")
+		if subtle.ConstantTimeCompare([]byte(reqSecret), []byte(secret)) != 1 {
+			http.Error(w, "Unauthorized secret", http.StatusUnauthorized)
+			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var update maxbot.Update
 		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)

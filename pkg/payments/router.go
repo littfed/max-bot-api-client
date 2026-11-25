@@ -2,7 +2,7 @@ package payments
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 )
@@ -11,6 +11,7 @@ import (
 type PaymentHandler func(ctx context.Context, payment *Payment) error
 
 // Router dispatches incoming payment webhooks to registered gateway processors and fulfillment callbacks.
+// Router is safe for concurrent use by multiple goroutines.
 type Router struct {
 	gateways   map[string]Gateway
 	onSuccess  []PaymentHandler
@@ -69,13 +70,14 @@ func (r *Router) HTTPHandler(gatewayName string) http.HandlerFunc {
 		r.mu.RUnlock()
 
 		if !ok {
-			http.Error(w, fmt.Sprintf("gateway %q not configured", gatewayName), http.StatusNotFound)
+			http.Error(w, "gateway not configured", http.StatusNotFound)
 			return
 		}
 
 		payment, err := gw.ParseAndVerify(req)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("verification failed: %v", err), http.StatusBadRequest)
+			slog.Warn("payment webhook verification failed", slog.String("gateway", gatewayName), slog.Any("error", err))
+			http.Error(w, "verification failed", http.StatusBadRequest)
 			return
 		}
 
@@ -95,7 +97,8 @@ func (r *Router) HTTPHandler(gatewayName string) http.HandlerFunc {
 
 		for _, h := range handlers {
 			if err := h(ctx, payment); err != nil {
-				http.Error(w, fmt.Sprintf("handler error: %v", err), http.StatusInternalServerError)
+				slog.Error("payment webhook handler error", slog.String("gateway", gatewayName), slog.Any("error", err))
+				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
 		}

@@ -3,11 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -58,7 +61,11 @@ func main() {
 	fsmStorage := fsm.NewStorageFromEnv(redisURL, 1*time.Hour)
 	defer fsmStorage.Close()
 	if _, isRedis := fsmStorage.(*fsm.RedisStorage); isRedis {
-		logger.Info("FSM подключен к распределенному Redis хранилищу сессий", slog.String("redis_url", redisURL))
+		redactedRedis := redisURL
+		if u, err := url.Parse(redisURL); err == nil {
+			redactedRedis = u.Redacted()
+		}
+		logger.Info("FSM подключен к распределенному Redis хранилищу сессий", slog.String("redis_url", redactedRedis))
 	} else {
 		logger.Info("FSM запущен в режиме In-Memory хранилища сессий (1h TTL)")
 	}
@@ -72,8 +79,12 @@ func main() {
 
 	// 4. Initialize Payment Router & MAX Bot Client
 	paymentRouter := payments.NewRouter()
-	paymentRouter.RegisterGateway(payments.NewTBankGateway("TerminalLive", "SecretPass123"))
-	paymentRouter.RegisterGateway(payments.NewYooKassaGateway("YooSecretKey"))
+	if tbankKey, tbankPass := strings.TrimSpace(os.Getenv("TBANK_TERMINAL_KEY")), strings.TrimSpace(os.Getenv("TBANK_PASSWORD")); tbankKey != "" && tbankPass != "" {
+		paymentRouter.RegisterGateway(payments.NewTBankGateway(tbankKey, tbankPass))
+	}
+	if yooKey := strings.TrimSpace(os.Getenv("YOOKASSA_SECRET_KEY")); yooKey != "" {
+		paymentRouter.RegisterGateway(payments.NewYooKassaGateway(yooKey))
+	}
 
 	var client *maxbot.Client
 	var err error
@@ -146,28 +157,33 @@ func main() {
 		ai.WithTimeout(120*time.Second),
 	)
 
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 25*time.Second)
-	if err := aiClient.Ping(pingCtx); err == nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if pingAI(ctx, aiClient, 25*time.Second) {
 		hood.SetAIAvailable(true)
 		logger.Info("AI Gateway успешно подключен", slog.String("url", aiGatewayURL), slog.String("chat_model", chatModel))
 	} else {
-		logger.Info("AI Gateway оффлайн или не запущен при старте (AI раздел временно скрыт, запущен фоновый ретрай)", slog.String("url", aiGatewayURL), slog.Any("error", err))
+		logger.Info("AI Gateway оффлайн или не запущен при старте (AI раздел временно скрыт, запущен фоновый ретрай)", slog.String("url", aiGatewayURL))
 		// Background retry: re-probe periodically so when gateway warms up, AI becomes available automatically
 		go func() {
+			timer := time.NewTimer(15 * time.Second)
+			defer timer.Stop()
 			for i := 0; i < 12; i++ {
-				time.Sleep(15 * time.Second)
-				retryCtx, retryCancel := context.WithTimeout(context.Background(), 20*time.Second)
-				if err := aiClient.Ping(retryCtx); err == nil {
+				select {
+				case <-ctx.Done():
+					return
+				case <-timer.C:
+				}
+				if pingAI(ctx, aiClient, 20*time.Second) {
 					hood.SetAIAvailable(true)
 					logger.Info("AI Gateway успешно подключен после повторной проверки", slog.String("url", aiGatewayURL))
-					retryCancel()
 					break
 				}
-				retryCancel()
+				timer.Reset(15 * time.Second)
 			}
 		}()
 	}
-	pingCancel()
 
 	// 6. Setup HTTP Server (Webhooks, Mini App, Metrics)
 	httpMux := http.NewServeMux()
@@ -221,9 +237,16 @@ func main() {
 		sqlStore = appStore.SQL()
 	} else {
 		dbConn, err := sql.Open("sqlite", ":memory:")
-		if err == nil {
+		if err != nil {
+			logger.Warn("не удалось открыть in-memory SQLite", slog.Any("error", err))
+		} else {
+			dbConn.SetMaxOpenConns(1)
+			dbConn.SetMaxIdleConns(1)
+			dbConn.SetConnMaxLifetime(0)
+			dbConn.SetConnMaxIdleTime(0)
 			sqlStore, err = store.NewSQLStore(dbConn, "sqlite")
 			if err != nil {
+				_ = dbConn.Close()
 				logger.Warn("не удалось инициализировать in-memory SQLStore", slog.Any("error", err))
 			} else {
 				logger.Info("SQLStore инициализирован в режиме in-memory SQLite с миграциями")
@@ -255,6 +278,26 @@ func main() {
 	orchestrator.RegisterModule(supportMod)
 	orchestrator.RegisterModule(chatMod)
 
+	jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	if jwtSecret == "" {
+		var randBytes [32]byte
+		if _, err := rand.Read(randBytes[:]); err != nil {
+			logger.Error("не удалось сгенерировать эфемерный JWT_SECRET", slog.Any("error", err))
+			os.Exit(1)
+		}
+		jwtSecret = hex.EncodeToString(randBytes[:])
+		logger.Warn("JWT_SECRET не задан; сгенерирован эфемерный ключ для текущей сессии")
+	}
+
+	var allowedOrigins []string
+	if rawOrigins := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")); rawOrigins != "" {
+		for _, o := range strings.Split(rawOrigins, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	}
+
 	// 7.3. Mount /api/v1/ REST API routes
 	apiRouter := api.NewRouter(api.RouterConfig{
 		Store:           sqlStore,
@@ -267,15 +310,20 @@ func main() {
 		SupportModule:   supportMod,
 		ChatModule:      chatMod,
 		BotToken:        token,
-		JWTSecret:       os.Getenv("JWT_SECRET"),
+		JWTSecret:       jwtSecret,
 		PlatformAdapter: maxAdapter,
+		AllowedOrigins:  allowedOrigins,
 		AllowDevHeaders: os.Getenv("ALLOW_DEV_HEADERS") == "true" || os.Getenv("DEV_MODE") == "true",
 	})
 	httpMux.Handle("/api/v1/", apiRouter)
 
 	// 7.4. Mount Webhook endpoint and wire bot updates to Core Orchestrator
 	webhookSecret := strings.TrimSpace(os.Getenv("MAX_WEBHOOK_SECRET"))
-	httpMux.HandleFunc("/webhook", b.WebhookHandler(webhookSecret))
+	if webhookSecret != "" {
+		httpMux.HandleFunc("/webhook", b.WebhookHandler(webhookSecret))
+	} else {
+		logger.Warn("MAX_WEBHOOK_SECRET не задан; HTTP /webhook отключен")
+	}
 	wireBotToOrchestrator(b, orchestrator, logger)
 
 	// 8. Register Core Routes, Menu & Scenarios
@@ -335,13 +383,25 @@ func main() {
 		return err
 	})
 
-	// 7. Start HTTP Server
+	// 7. Start HTTP Server with security headers & timeouts
+	securedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		httpMux.ServeHTTP(w, r)
+	})
 	server := &http.Server{
-		Addr:    ":" + *portFlag,
-		Handler: httpMux,
+		Addr:              ":" + *portFlag,
+		Handler:           securedHandler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
+	serverDone := make(chan struct{})
 	go func() {
+		defer close(serverDone)
 		logger.Info("веб-сервер запущен", slog.String("addr", server.Addr))
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("ошибка веб-сервера", slog.Any("error", err))
@@ -349,9 +409,6 @@ func main() {
 	}()
 
 	// 7. Register Bot Commands in MAX Menu
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	if client != nil {
 		_ = client.SetCommands(ctx, []maxbot.BotCommand{
 			{Name: "start", Description: "Приветствие и возможности бота"},
@@ -380,7 +437,14 @@ func main() {
 	}
 
 	_ = server.Shutdown(context.Background())
+	<-serverDone
 	logger.Info("бот-витрина успешно остановлен")
+}
+
+func pingAI(parent context.Context, client *ai.Client, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	return client.Ping(ctx) == nil
 }
 
 func registerBaseTechCards(h *HoodEngine) {

@@ -14,10 +14,12 @@ type memoryRecord struct {
 
 // MemoryStorage implements thread-safe in-memory session storage with TTL expiration.
 type MemoryStorage struct {
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	sessions map[SessionKey]*memoryRecord
 	ttl      time.Duration
 	stopGC   chan struct{}
+	stopOnce sync.Once
+	gcDone   chan struct{}
 }
 
 // NewMemoryStorage creates a new MemoryStorage with the given session TTL.
@@ -30,6 +32,7 @@ func NewMemoryStorage(ttl time.Duration) *MemoryStorage {
 	}
 
 	if ttl > 0 {
+		ms.gcDone = make(chan struct{})
 		go ms.gcLoop(ttl)
 	}
 
@@ -37,6 +40,7 @@ func NewMemoryStorage(ttl time.Duration) *MemoryStorage {
 }
 
 func (ms *MemoryStorage) gcLoop(ttl time.Duration) {
+	defer close(ms.gcDone)
 	ticker := time.NewTicker(ttl / 2)
 	defer ticker.Stop()
 
@@ -156,12 +160,13 @@ func (ms *MemoryStorage) Reset(ctx context.Context, key SessionKey) error {
 	return nil
 }
 
-// Close stops the background GC worker.
+// Close stops the background GC worker and waits for it to exit.
 func (ms *MemoryStorage) Close() error {
-	select {
-	case <-ms.stopGC:
-	default:
+	ms.stopOnce.Do(func() {
 		close(ms.stopGC)
+	})
+	if ms.gcDone != nil {
+		<-ms.gcDone
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 
@@ -50,8 +51,8 @@ func GenerateSBPLink(qrID string, opts ...SBPOptions) string {
 		q.Set("bank", opt.BankID)
 	}
 
-	if opt.Amount > 0 {
-		kopecks := int64(opt.Amount * 100)
+	if opt.Amount > 0 && !math.IsNaN(opt.Amount) && !math.IsInf(opt.Amount, 0) {
+		kopecks := int64(math.Round(opt.Amount * 100))
 		q.Set("sum", fmt.Sprintf("%d", kopecks))
 		q.Set("cur", "RUB")
 	}

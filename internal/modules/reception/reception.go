@@ -230,7 +230,8 @@ func (m *Module) GetUserOnboarding(ctx context.Context, userID int64) (*store.On
 
 	for i := len(m.submissions) - 1; i >= 0; i-- {
 		if m.submissions[i].UserID == userID {
-			return &m.submissions[i], nil
+			cp := m.submissions[i]
+			return &cp, nil
 		}
 	}
 	return nil, nil

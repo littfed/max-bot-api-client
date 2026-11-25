@@ -21,6 +21,7 @@ type ScheduledPost struct {
 }
 
 // PostScheduler manages the background queue and timed dispatch of channel/group posts.
+// PostScheduler is safe for concurrent use by multiple goroutines.
 type PostScheduler struct {
 	client    *maxbot.Client
 	posts     map[string]*ScheduledPost
@@ -28,7 +29,6 @@ type PostScheduler struct {
 	onSuccess func(ctx context.Context, post *ScheduledPost, mid string)
 	onError   func(ctx context.Context, post *ScheduledPost, err error)
 	mu        sync.Mutex
-	stopCh    chan struct{}
 }
 
 // SchedulerOption configures PostScheduler.
@@ -54,7 +54,6 @@ func NewPostScheduler(client *maxbot.Client, opts ...SchedulerOption) *PostSched
 		client: client,
 		posts:  make(map[string]*ScheduledPost),
 		timers: make(map[string]*time.Timer),
-		stopCh: make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(s)

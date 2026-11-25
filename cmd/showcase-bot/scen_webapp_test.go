@@ -71,7 +71,7 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 		t.Fatalf("simulate order failed: %v", err)
 	}
 
-	// 4. Test WebBridge Action POST in demo/unauthenticated mode
+	// 4. Test WebBridge Action POST rejects demo/unauthenticated initData
 	actionReq := httptest.NewRequest(http.MethodPost, "/api/webapp/action", bytes.NewReader([]byte(`{
 		"action": "submit_cart",
 		"init_data": "demo=true&user_id=888",
@@ -80,8 +80,8 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 	actionRec := httptest.NewRecorder()
 	mux.ServeHTTP(actionRec, actionReq)
 
-	if actionRec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK for demo initData in showcase-bot, got %d", actionRec.Code)
+	if actionRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for unauthenticated demo initData, got %d", actionRec.Code)
 	}
 
 	// 5. Test WebBridge Action POST with signed initData
@@ -100,7 +100,8 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 	}
 
 	// 6. Test GET /api/webapp/orders
-	ordersReq := httptest.NewRequest(http.MethodGet, "/api/webapp/orders?user_id=888", nil)
+	ordersReq := httptest.NewRequest(http.MethodGet, "/api/webapp/orders", nil)
+	ordersReq.Header.Set("X-Init-Data", signedInit)
 	ordersRec := httptest.NewRecorder()
 	mux.ServeHTTP(ordersRec, ordersReq)
 	if ordersRec.Code != http.StatusOK {
@@ -109,6 +110,7 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 
 	// 7. Test POST /api/webapp/spin
 	spinReq := httptest.NewRequest(http.MethodPost, "/api/webapp/spin", nil)
+	spinReq.Header.Set("X-Init-Data", signedInit)
 	spinRec := httptest.NewRecorder()
 	mux.ServeHTTP(spinRec, spinReq)
 	if spinRec.Code != http.StatusOK {
@@ -118,22 +120,22 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 	// 8. Test POST /api/webapp/publish_post with unauthorized user (Access denied check)
 	pubJSON, _ := json.Marshal(map[string]any{
 		"channel_id": -78368186601503,
-		"user_id":    999999, // not owner (396393759)
 		"text":       "Test unauthorized post",
 	})
 	pubReq := httptest.NewRequest(http.MethodPost, "/api/webapp/publish_post", bytes.NewReader(pubJSON))
+	pubReq.Header.Set("X-Init-Data", signedInit)
 	pubRec := httptest.NewRecorder()
 	mux.ServeHTTP(pubRec, pubReq)
 	var pubResp map[string]any
 	_ = json.Unmarshal(pubRec.Body.Bytes(), &pubResp)
 	if pubResp["success"] == true {
-		t.Fatalf("expected publish_post to reject non-owner, got success=true")
+		t.Fatalf("expected publish_post to reject non-admin, got success=true")
 	}
 
 	// 9. Test WebBridge Action book_service
 	bookJSON, _ := json.Marshal(map[string]any{
 		"action":    "book_service",
-		"init_data": "demo=true&user_id=888",
+		"init_data": signedInit,
 		"payload": map[string]any{
 			"service_id":   "srv_audit",
 			"service_name": "Архитектурный аудит Go / MAX",
@@ -161,9 +163,9 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 	imgGenJSON, _ := json.Marshal(map[string]any{
 		"prompt": "Go Gopher Mascot",
 		"style":  "cyberpunk",
-		"user_id": 888,
 	})
 	imgGenReq := httptest.NewRequest(http.MethodPost, "/api/webapp/generate_image", bytes.NewReader(imgGenJSON))
+	imgGenReq.Header.Set("X-Init-Data", signedInit)
 	imgGenRec := httptest.NewRecorder()
 	mux.ServeHTTP(imgGenRec, imgGenReq)
 	if imgGenRec.Code != http.StatusOK {
@@ -177,11 +179,11 @@ func TestWebappScenarioWorkflow(t *testing.T) {
 
 	// 11. Test POST /api/webapp/ai_chat
 	chatJSON, _ := json.Marshal(map[string]any{
-		"prompt":  "Расскажи про MAX Bot API",
-		"model":   "auto",
-		"user_id": 888,
+		"prompt": "Расскажи про MAX Bot API",
+		"model":  "auto",
 	})
 	chatReq := httptest.NewRequest(http.MethodPost, "/api/webapp/ai_chat", bytes.NewReader(chatJSON))
+	chatReq.Header.Set("X-Init-Data", signedInit)
 	chatRec := httptest.NewRecorder()
 	mux.ServeHTTP(chatRec, chatReq)
 	if chatRec.Code != http.StatusOK {
@@ -307,8 +309,11 @@ func TestWebappMediaHistoryAPI(t *testing.T) {
 		t.Fatalf("failed to save doc artifact: %v", err)
 	}
 
+	signedHistInit := webapp.SignInitData("test_token_123", testUID, "HistUser", "hist_user")
+
 	// 2. Query all history for testUID
-	reqAll := httptest.NewRequest(http.MethodGet, "/api/webapp/history?user_id=777123", nil)
+	reqAll := httptest.NewRequest(http.MethodGet, "/api/webapp/history", nil)
+	reqAll.Header.Set("X-Init-Data", signedHistInit)
 	recAll := httptest.NewRecorder()
 	mux.ServeHTTP(recAll, reqAll)
 
@@ -328,7 +333,8 @@ func TestWebappMediaHistoryAPI(t *testing.T) {
 	}
 
 	// 3. Query filtered by type=image
-	reqImg := httptest.NewRequest(http.MethodGet, "/api/webapp/history?user_id=777123&type=image", nil)
+	reqImg := httptest.NewRequest(http.MethodGet, "/api/webapp/history?type=image", nil)
+	reqImg.Header.Set("X-Init-Data", signedHistInit)
 	recImg := httptest.NewRecorder()
 	mux.ServeHTTP(recImg, reqImg)
 
@@ -342,7 +348,8 @@ func TestWebappMediaHistoryAPI(t *testing.T) {
 	}
 
 	// 4. Query filtered by type=transcription
-	reqSTT := httptest.NewRequest(http.MethodGet, "/api/webapp/history?user_id=777123&type=transcription", nil)
+	reqSTT := httptest.NewRequest(http.MethodGet, "/api/webapp/history?type=transcription", nil)
+	reqSTT.Header.Set("X-Init-Data", signedHistInit)
 	recSTT := httptest.NewRecorder()
 	mux.ServeHTTP(recSTT, reqSTT)
 
@@ -358,9 +365,9 @@ func TestWebappMediaHistoryAPI(t *testing.T) {
 	// 5. Test POST /api/webapp/generate_image automatically saves artifact
 	genReq := httptest.NewRequest(http.MethodPost, "/api/webapp/generate_image", bytes.NewReader([]byte(`{
 		"prompt": "Gopher in Space",
-		"style": "Cyberpunk",
-		"user_id": 777123
+		"style": "Cyberpunk"
 	}`)))
+	genReq.Header.Set("X-Init-Data", signedHistInit)
 	genRec := httptest.NewRecorder()
 	mux.ServeHTTP(genRec, genReq)
 

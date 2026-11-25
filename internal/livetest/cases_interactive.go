@@ -63,7 +63,7 @@ func (t *TestCaseInteractiveCallback) Run(ctx context.Context, s *Suite) (*TestR
 	var promptMID string
 	defer func() {
 		if s.Config.Cleanup && promptMID != "" {
-			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			cleanCtx, cleanCancel := context.WithTimeout(context.WithoutCancel(testCtx), 5*time.Second)
 			defer cleanCancel()
 			_ = s.Client.DeleteMessage(cleanCtx, promptMID)
 		}

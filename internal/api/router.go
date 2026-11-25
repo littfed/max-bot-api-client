@@ -79,7 +79,7 @@ type JWTClaims struct {
 // GenerateJWT creates a standard HS256 signed JWT for an authenticated user.
 func GenerateJWT(claims JWTClaims, secret string) (string, error) {
 	if secret == "" {
-		secret = "default_bothub_jwt_secret_key"
+		return "", errors.New("jwt: signing secret must not be empty")
 	}
 
 	headerJSON, err := json.Marshal(map[string]string{
@@ -109,7 +109,7 @@ func GenerateJWT(claims JWTClaims, secret string) (string, error) {
 // ValidateJWT verifies the cryptographic signature and expiration of an HS256 JWT.
 func ValidateJWT(tokenStr string, secret string) (*JWTClaims, error) {
 	if secret == "" {
-		secret = "default_bothub_jwt_secret_key"
+		return nil, errors.New("jwt: signing secret must not be empty")
 	}
 
 	parts := strings.Split(tokenStr, ".")
@@ -218,8 +218,17 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/admin/tickets/{id}/reply", requireAdmin(admH.handleAdminTicketReply))
 	mux.HandleFunc("GET /api/v1/admin/audit-logs", requireAdmin(admH.handleAdminAuditLogs))
 
-	// Middleware chaining: CORS -> Auth -> Handler
-	return corsMiddleware(cfg, authMiddleware(cfg, mux))
+	// Middleware chaining: CORS -> MaxBody -> Auth -> Handler
+	return corsMiddleware(cfg, maxBodyMiddleware(1<<20, authMiddleware(cfg, mux)))
+}
+
+func maxBodyMiddleware(limit int64, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // corsMiddleware handles preflight OPTIONS requests and sets CORS headers.
@@ -227,23 +236,29 @@ func corsMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		allowed := false
-		if len(cfg.AllowedOrigins) > 0 {
+		wildcard := false
+		if len(cfg.AllowedOrigins) > 0 && origin != "" {
 			for _, o := range cfg.AllowedOrigins {
-				if o == origin || o == "*" {
+				if o == "*" {
+					wildcard = true
+					break
+				}
+				if o == origin {
 					allowed = true
 					break
 				}
 			}
-		} else {
-			allowed = true
 		}
 
-		if allowed || origin == "" {
+		w.Header().Add("Vary", "Origin")
+		if allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		} else if wildcard {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Init-Data, X-Platform, X-Dev-User-ID, X-Test-User-ID")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 
 		if r.Method == http.MethodOptions {
@@ -290,7 +305,7 @@ func authMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
 			if initDataStr != "" {
 				initData, err := webapp.ValidateInitData(initDataStr, cfg.BotToken)
 				if err != nil {
-					writeError(w, http.StatusUnauthorized, fmt.Sprintf("invalid initData: %v", err))
+					writeError(w, http.StatusUnauthorized, "invalid initData")
 					return
 				}
 				if initData.User != nil && cfg.Store != nil {

@@ -125,6 +125,7 @@ func TestYooKassaAndRouterIntegration(t *testing.T) {
 	}`
 
 	req := httptest.NewRequest(http.MethodPost, "/webhook/yookassa", bytes.NewReader([]byte(yooPayload)))
+	req.RemoteAddr = "185.71.76.1:12345"
 	rec := httptest.NewRecorder()
 
 	router.HTTPHandler("yookassa")(rec, req)

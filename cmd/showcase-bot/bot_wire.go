@@ -142,12 +142,15 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 			logger.Debug("initial typing dispatch note", slog.Any("error", errTyping))
 		}
 		stopTyping := make(chan struct{})
+		defer close(stopTyping)
 		go func() {
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-stopTyping:
+					return
+				case <-ctx.Done():
 					return
 				case <-ticker.C:
 					_ = c.Typing()
@@ -156,7 +159,6 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 		}()
 
 		resp, err := orchestrator.ProcessEvent(ctx, event)
-		close(stopTyping)
 		if err != nil {
 			logger.Error("orchestrator: error processing event", slog.Any("error", err))
 			return err
@@ -199,12 +201,15 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 			logger.Debug("initial typing dispatch note", slog.Any("error", errTyping))
 		}
 		stopTyping := make(chan struct{})
+		defer close(stopTyping)
 		go func() {
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-stopTyping:
+					return
+				case <-ctx.Done():
 					return
 				case <-ticker.C:
 					_ = c.Typing()
@@ -213,7 +218,6 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 		}()
 
 		resp, err := orchestrator.ProcessEvent(ctx, event)
-		close(stopTyping)
 		if err != nil {
 			logger.Error("orchestrator: error processing plain text message", slog.Any("error", err))
 			return err

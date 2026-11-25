@@ -69,7 +69,22 @@ func NewWithSQL(sqlStore *SQLStore) *Store {
 	}
 }
 
+func configurePool(dbConn *sql.DB, dialect string) {
+	if dialect == "sqlite" {
+		dbConn.SetMaxOpenConns(1)
+		dbConn.SetMaxIdleConns(1)
+		dbConn.SetConnMaxLifetime(0)
+		dbConn.SetConnMaxIdleTime(0)
+		return
+	}
+	dbConn.SetMaxOpenConns(25)
+	dbConn.SetMaxIdleConns(5)
+	dbConn.SetConnMaxLifetime(15 * time.Minute)
+	dbConn.SetConnMaxIdleTime(5 * time.Minute)
+}
+
 // OpenDatabase creates a *sql.DB for the given databaseURL (postgres:// or sqlite/file)
+// with driver-appropriate connection pool defaults.
 func OpenDatabase(databaseURL string) (*sql.DB, string, error) {
 	trimmed := strings.TrimSpace(databaseURL)
 	if strings.HasPrefix(trimmed, "postgres://") || strings.HasPrefix(trimmed, "postgresql://") {
@@ -77,6 +92,7 @@ func OpenDatabase(databaseURL string) (*sql.DB, string, error) {
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to open postgres database: %w", err)
 		}
+		configurePool(dbConn, "postgres")
 		return dbConn, "postgres", nil
 	}
 
@@ -90,6 +106,7 @@ func OpenDatabase(databaseURL string) (*sql.DB, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to open sqlite database: %w", err)
 	}
+	configurePool(dbConn, "sqlite")
 	return dbConn, "sqlite", nil
 }
 
@@ -102,9 +119,7 @@ func NewFromEnv(databaseURL string, fallbackPath string) (*Store, error) {
 			return New(fallbackPath)
 		}
 
-		dbConn.SetMaxOpenConns(25)
-		dbConn.SetMaxIdleConns(5)
-		dbConn.SetConnMaxLifetime(15 * time.Minute)
+		configurePool(dbConn, dialect)
 
 		sqlStore, err := NewSQLStore(dbConn, dialect)
 		if err != nil {
@@ -216,7 +231,7 @@ func (s *Store) saveLocked() error {
 	}
 
 	dir := filepath.Dir(s.filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
@@ -235,7 +250,7 @@ func (s *Store) saveLocked() error {
 	}
 
 	tmpPath := s.filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write tmp store file: %w", err)
 	}
 
@@ -466,6 +481,19 @@ func (s *Store) GetReactions(postMID string) (map[string]int, bool) {
 
 // --- Poll Operations ---
 
+func clonePoll(p Poll) Poll {
+	cp := p
+	if p.Options != nil {
+		cp.Options = make([]string, len(p.Options))
+		copy(cp.Options, p.Options)
+	}
+	cp.Votes = make(map[int64]int, len(p.Votes))
+	for k, v := range p.Votes {
+		cp.Votes[k] = v
+	}
+	return cp
+}
+
 func (s *Store) CreatePoll(poll Poll) error {
 	if s.sql != nil {
 		return s.sql.CreatePoll(poll)
@@ -476,10 +504,8 @@ func (s *Store) CreatePoll(poll Poll) error {
 	if poll.CreatedAt.IsZero() {
 		poll.CreatedAt = time.Now()
 	}
-	if poll.Votes == nil {
-		poll.Votes = make(map[int64]int)
-	}
-	s.polls[poll.ID] = &poll
+	cp := clonePoll(poll)
+	s.polls[cp.ID] = &cp
 	return s.saveLocked()
 }
 
@@ -494,7 +520,7 @@ func (s *Store) GetPoll(id string) (Poll, bool) {
 	if !ok {
 		return Poll{}, false
 	}
-	return *poll, true
+	return clonePoll(*poll), true
 }
 
 func (s *Store) VotePoll(pollID string, userID int64, optionIdx int) ([]int, []int, error) {
@@ -538,6 +564,19 @@ func (s *Store) VotePoll(pollID string, userID int64, optionIdx int) ([]int, []i
 
 // --- Giveaway Operations ---
 
+func cloneGiveaway(gw Giveaway) Giveaway {
+	cp := gw
+	cp.Participants = make(map[int64]string, len(gw.Participants))
+	for k, v := range gw.Participants {
+		cp.Participants[k] = v
+	}
+	if gw.Winners != nil {
+		cp.Winners = make([]int64, len(gw.Winners))
+		copy(cp.Winners, gw.Winners)
+	}
+	return cp
+}
+
 func (s *Store) CreateGiveaway(gw Giveaway) error {
 	if s.sql != nil {
 		return s.sql.CreateGiveaway(gw)
@@ -548,11 +587,9 @@ func (s *Store) CreateGiveaway(gw Giveaway) error {
 	if gw.CreatedAt.IsZero() {
 		gw.CreatedAt = time.Now()
 	}
-	if gw.Participants == nil {
-		gw.Participants = make(map[int64]string)
-	}
-	gw.Active = true
-	s.giveaways[gw.ID] = &gw
+	cp := cloneGiveaway(gw)
+	cp.Active = true
+	s.giveaways[cp.ID] = &cp
 	return s.saveLocked()
 }
 
@@ -567,7 +604,7 @@ func (s *Store) GetGiveaway(id string) (Giveaway, bool) {
 	if !ok {
 		return Giveaway{}, false
 	}
-	return *gw, true
+	return cloneGiveaway(*gw), true
 }
 
 func (s *Store) AddGiveawayParticipant(id string, userID int64, userName string) error {

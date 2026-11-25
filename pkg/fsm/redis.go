@@ -24,6 +24,7 @@ type RedisClient interface {
 }
 
 // RedisStorage implements persistent distributed Storage backed by Redis.
+// RedisStorage is safe for concurrent use by multiple goroutines.
 type RedisStorage struct {
 	client RedisClient
 	prefix string
@@ -171,7 +172,7 @@ func NewStorageFromEnv(redisURL string, defaultTTL time.Duration) Storage {
 
 // Ping verifies connection to Redis.
 func (r *RedisStorage) Ping(ctx context.Context) error {
-	if pinger, ok := r.client.(interface{ Ping(context.Context) error }); ok {
+	if pinger, ok := r.client.(interface{ Ping(ctx context.Context) error }); ok {
 		return pinger.Ping(ctx)
 	}
 	_, err := r.client.Get(ctx, "__fsm_ping__")
@@ -293,11 +294,23 @@ func newRespClient(addr string, password string, db int, timeout time.Duration) 
 	}
 }
 
-func (c *respClient) getConn() (net.Conn, *bufio.Reader, error) {
+func (c *respClient) deadline(ctx context.Context) time.Time {
+	dl := time.Now().Add(c.timeout)
+	if ctxDL, ok := ctx.Deadline(); ok && ctxDL.Before(dl) {
+		return ctxDL
+	}
+	return dl
+}
+
+func (c *respClient) getConn(ctx context.Context) (net.Conn, *bufio.Reader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if c.conn != nil {
 		return c.conn, c.reader, nil
 	}
-	conn, err := net.DialTimeout("tcp", c.addr, c.timeout)
+	dialer := &net.Dialer{Timeout: c.timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", c.addr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -307,7 +320,7 @@ func (c *respClient) getConn() (net.Conn, *bufio.Reader, error) {
 
 	// Handle AUTH
 	if c.password != "" {
-		if err := c.execRaw("AUTH", c.password); err != nil {
+		if err := c.execRaw(ctx, "AUTH", c.password); err != nil {
 			_ = conn.Close()
 			c.conn = nil
 			return nil, nil, fmt.Errorf("redis auth failed: %w", err)
@@ -315,7 +328,7 @@ func (c *respClient) getConn() (net.Conn, *bufio.Reader, error) {
 	}
 	// Handle SELECT DB
 	if c.db > 0 {
-		if err := c.execRaw("SELECT", strconv.Itoa(c.db)); err != nil {
+		if err := c.execRaw(ctx, "SELECT", strconv.Itoa(c.db)); err != nil {
 			_ = conn.Close()
 			c.conn = nil
 			return nil, nil, fmt.Errorf("redis select db failed: %w", err)
@@ -333,9 +346,9 @@ func (c *respClient) closeConn() {
 	}
 }
 
-func (c *respClient) execRaw(args ...string) error {
+func (c *respClient) execRaw(ctx context.Context, args ...string) error {
 	cmd := formatRESPCommand(args...)
-	_ = c.conn.SetDeadline(time.Now().Add(c.timeout))
+	_ = c.conn.SetDeadline(c.deadline(ctx))
 	if _, err := c.conn.Write([]byte(cmd)); err != nil {
 		return err
 	}
@@ -349,25 +362,44 @@ func (c *respClient) execRaw(args ...string) error {
 	return nil
 }
 
-func (c *respClient) Get(ctx context.Context, key string) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	conn, r, err := c.getConn()
+func (c *respClient) roundTrip(ctx context.Context, args ...string) (any, error) {
+	conn, r, err := c.getConn(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	cmd := formatRESPCommand("GET", key)
-	_ = conn.SetDeadline(time.Now().Add(c.timeout))
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.SetDeadline(time.Now())
+	})
+	defer stop()
+
+	cmd := formatRESPCommand(args...)
+	_ = conn.SetDeadline(c.deadline(ctx))
 	if _, err := conn.Write([]byte(cmd)); err != nil {
 		c.closeConn()
-		return "", err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, err
 	}
 
 	res, err := readRESP(r)
 	if err != nil {
 		c.closeConn()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, err
+	}
+	return res, nil
+}
+
+func (c *respClient) Get(ctx context.Context, key string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	res, err := c.roundTrip(ctx, "GET", key)
+	if err != nil {
 		return "", err
 	}
 
@@ -386,27 +418,15 @@ func (c *respClient) Set(ctx context.Context, key string, value string, ttl time
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	conn, r, err := c.getConn()
-	if err != nil {
-		return err
-	}
-
-	var cmd string
+	var args []string
 	if ttl > 0 {
-		cmd = formatRESPCommand("SET", key, value, "EX", strconv.Itoa(int(ttl.Seconds())))
+		args = []string{"SET", key, value, "EX", strconv.Itoa(int(ttl.Seconds()))}
 	} else {
-		cmd = formatRESPCommand("SET", key, value)
+		args = []string{"SET", key, value}
 	}
 
-	_ = conn.SetDeadline(time.Now().Add(c.timeout))
-	if _, err := conn.Write([]byte(cmd)); err != nil {
-		c.closeConn()
-		return err
-	}
-
-	res, err := readRESP(r)
+	res, err := c.roundTrip(ctx, args...)
 	if err != nil {
-		c.closeConn()
 		return err
 	}
 
@@ -420,27 +440,15 @@ func (c *respClient) SetNX(ctx context.Context, key string, value string, ttl ti
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	conn, r, err := c.getConn()
-	if err != nil {
-		return false, err
-	}
-
-	var cmd string
+	var args []string
 	if ttl > 0 {
-		cmd = formatRESPCommand("SET", key, value, "NX", "EX", strconv.Itoa(int(ttl.Seconds())))
+		args = []string{"SET", key, value, "NX", "EX", strconv.Itoa(int(ttl.Seconds()))}
 	} else {
-		cmd = formatRESPCommand("SET", key, value, "NX")
+		args = []string{"SET", key, value, "NX"}
 	}
 
-	_ = conn.SetDeadline(time.Now().Add(c.timeout))
-	if _, err := conn.Write([]byte(cmd)); err != nil {
-		c.closeConn()
-		return false, err
-	}
-
-	res, err := readRESP(r)
+	res, err := c.roundTrip(ctx, args...)
 	if err != nil {
-		c.closeConn()
 		return false, err
 	}
 
@@ -463,21 +471,8 @@ func (c *respClient) Incr(ctx context.Context, key string) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	conn, r, err := c.getConn()
+	res, err := c.roundTrip(ctx, "INCR", key)
 	if err != nil {
-		return 0, err
-	}
-
-	cmd := formatRESPCommand("INCR", key)
-	_ = conn.SetDeadline(time.Now().Add(c.timeout))
-	if _, err := conn.Write([]byte(cmd)); err != nil {
-		c.closeConn()
-		return 0, err
-	}
-
-	res, err := readRESP(r)
-	if err != nil {
-		c.closeConn()
 		return 0, err
 	}
 
@@ -497,47 +492,17 @@ func (c *respClient) Del(ctx context.Context, keys ...string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	conn, r, err := c.getConn()
-	if err != nil {
-		return err
-	}
-
 	args := append([]string{"DEL"}, keys...)
-	cmd := formatRESPCommand(args...)
-
-	_ = conn.SetDeadline(time.Now().Add(c.timeout))
-	if _, err := conn.Write([]byte(cmd)); err != nil {
-		c.closeConn()
-		return err
-	}
-
-	_, err = readRESP(r)
-	if err != nil {
-		c.closeConn()
-		return err
-	}
-	return nil
+	_, err := c.roundTrip(ctx, args...)
+	return err
 }
 
 func (c *respClient) Ping(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	conn, r, err := c.getConn()
+	res, err := c.roundTrip(ctx, "PING")
 	if err != nil {
-		return err
-	}
-
-	cmd := formatRESPCommand("PING")
-	_ = conn.SetDeadline(time.Now().Add(c.timeout))
-	if _, err := conn.Write([]byte(cmd)); err != nil {
-		c.closeConn()
-		return err
-	}
-
-	res, err := readRESP(r)
-	if err != nil {
-		c.closeConn()
 		return err
 	}
 
@@ -563,15 +528,17 @@ func formatRESPCommand(args ...string) string {
 	return sb.String()
 }
 
+const maxRESPBulkSize = 64 * 1024 * 1024 // 64 MiB
+
 func readRESP(r *bufio.Reader) (any, error) {
 	line, err := r.ReadString('\n')
 	if err != nil {
 		return nil, err
 	}
-	if len(line) < 2 {
+	line = strings.TrimSuffix(line, "\r\n")
+	if len(line) == 0 {
 		return nil, errors.New("empty RESP line")
 	}
-	line = strings.TrimSuffix(line, "\r\n")
 	prefix := line[0]
 	payload := line[1:]
 
@@ -589,6 +556,9 @@ func readRESP(r *bufio.Reader) (any, error) {
 		}
 		if length == -1 {
 			return nil, nil // Null bulk string
+		}
+		if length < -1 || length > maxRESPBulkSize {
+			return nil, fmt.Errorf("invalid RESP bulk length: %d", length)
 		}
 		buf := make([]byte, length+2) // include \r\n
 		if _, err := io.ReadFull(r, buf); err != nil {

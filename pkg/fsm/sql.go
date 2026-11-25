@@ -4,12 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 )
 
+var validSQLIdent = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,62}$`)
+
 // SQLStorage implements persistent Storage backed by any standard database/sql database (SQLite, PostgreSQL, MySQL).
+// SQLStorage is safe for concurrent use by multiple goroutines; an internal mutex
+// serializes operations to avoid SQLITE_BUSY errors on SQLite backends.
 type SQLStorage struct {
 	db        *sql.DB
 	tableName string
@@ -31,6 +37,9 @@ func NewSQLStorage(db *sql.DB, opts ...SQLStorageOptions) (*SQLStorage, error) {
 	tbl := "fsm_states"
 	if len(opts) > 0 && opts[0].TableName != "" {
 		tbl = opts[0].TableName
+	}
+	if !validSQLIdent.MatchString(tbl) {
+		return nil, fmt.Errorf("fsm: invalid table name %q", tbl)
 	}
 
 	storage := &SQLStorage{
@@ -59,24 +68,34 @@ func (s *SQLStorage) SetState(ctx context.Context, key SessionKey, state State) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	now := time.Now().Unix()
 
 	// Portable UPSERT check
 	var dummy int
 	checkQuery := fmt.Sprintf("SELECT 1 FROM %s WHERE user_id = ? AND chat_id = ?", s.tableName)
-	err := s.db.QueryRowContext(ctx, checkQuery, key.UserID, key.ChatID).Scan(&dummy)
+	err = tx.QueryRowContext(ctx, checkQuery, key.UserID, key.ChatID).Scan(&dummy)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		insertQuery := fmt.Sprintf("INSERT INTO %s (user_id, chat_id, state, data, updated_at) VALUES (?, ?, ?, ?, ?)", s.tableName)
-		_, err = s.db.ExecContext(ctx, insertQuery, key.UserID, key.ChatID, string(state), "{}", now)
-		return err
+		if _, err = tx.ExecContext(ctx, insertQuery, key.UserID, key.ChatID, string(state), "{}", now); err != nil {
+			return err
+		}
+		return tx.Commit()
 	} else if err != nil {
 		return err
 	}
 
 	updateQuery := fmt.Sprintf("UPDATE %s SET state = ?, updated_at = ? WHERE user_id = ? AND chat_id = ?", s.tableName)
-	_, err = s.db.ExecContext(ctx, updateQuery, string(state), now, key.UserID, key.ChatID)
-	return err
+	if _, err = tx.ExecContext(ctx, updateQuery, string(state), now, key.UserID, key.ChatID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetState retrieves the current state for the given session key.
@@ -87,7 +106,7 @@ func (s *SQLStorage) GetState(ctx context.Context, key SessionKey) (State, error
 	var stateStr string
 	query := fmt.Sprintf("SELECT state FROM %s WHERE user_id = ? AND chat_id = ?", s.tableName)
 	err := s.db.QueryRowContext(ctx, query, key.UserID, key.ChatID).Scan(&stateStr)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return StateEmpty, nil
 	}
 	if err != nil {
@@ -106,22 +125,32 @@ func (s *SQLStorage) SetData(ctx context.Context, key SessionKey, data map[strin
 		return fmt.Errorf("fsm: failed to marshal data: %w", err)
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	now := time.Now().Unix()
 	var dummy int
 	checkQuery := fmt.Sprintf("SELECT 1 FROM %s WHERE user_id = ? AND chat_id = ?", s.tableName)
-	err = s.db.QueryRowContext(ctx, checkQuery, key.UserID, key.ChatID).Scan(&dummy)
+	err = tx.QueryRowContext(ctx, checkQuery, key.UserID, key.ChatID).Scan(&dummy)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		insertQuery := fmt.Sprintf("INSERT INTO %s (user_id, chat_id, state, data, updated_at) VALUES (?, ?, ?, ?, ?)", s.tableName)
-		_, err = s.db.ExecContext(ctx, insertQuery, key.UserID, key.ChatID, string(StateEmpty), string(raw), now)
-		return err
+		if _, err = tx.ExecContext(ctx, insertQuery, key.UserID, key.ChatID, string(StateEmpty), string(raw), now); err != nil {
+			return err
+		}
+		return tx.Commit()
 	} else if err != nil {
 		return err
 	}
 
 	updateQuery := fmt.Sprintf("UPDATE %s SET data = ?, updated_at = ? WHERE user_id = ? AND chat_id = ?", s.tableName)
-	_, err = s.db.ExecContext(ctx, updateQuery, string(raw), now, key.UserID, key.ChatID)
-	return err
+	if _, err = tx.ExecContext(ctx, updateQuery, string(raw), now, key.UserID, key.ChatID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetData retrieves and deserializes the stored data for the given session key.
@@ -132,7 +161,7 @@ func (s *SQLStorage) GetData(ctx context.Context, key SessionKey) (map[string]an
 	var rawData string
 	query := fmt.Sprintf("SELECT data FROM %s WHERE user_id = ? AND chat_id = ?", s.tableName)
 	err := s.db.QueryRowContext(ctx, query, key.UserID, key.ChatID).Scan(&rawData)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return make(map[string]any), nil
 	}
 	if err != nil {
@@ -155,13 +184,24 @@ func (s *SQLStorage) UpdateData(ctx context.Context, key SessionKey, fn func(dat
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var rawData string
 	query := fmt.Sprintf("SELECT data FROM %s WHERE user_id = ? AND chat_id = ?", s.tableName)
-	err := s.db.QueryRowContext(ctx, query, key.UserID, key.ChatID).Scan(&rawData)
+	err = tx.QueryRowContext(ctx, query, key.UserID, key.ChatID).Scan(&rawData)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 
 	data := make(map[string]any)
 	if err == nil && rawData != "" && rawData != "{}" {
-		_ = json.Unmarshal([]byte(rawData), &data)
+		if unmarshalErr := json.Unmarshal([]byte(rawData), &data); unmarshalErr != nil {
+			return fmt.Errorf("fsm: failed to unmarshal data: %w", unmarshalErr)
+		}
 	}
 
 	if err := fn(data); err != nil {
@@ -176,19 +216,23 @@ func (s *SQLStorage) UpdateData(ctx context.Context, key SessionKey, fn func(dat
 	now := time.Now().Unix()
 	var dummy int
 	checkQuery := fmt.Sprintf("SELECT 1 FROM %s WHERE user_id = ? AND chat_id = ?", s.tableName)
-	err = s.db.QueryRowContext(ctx, checkQuery, key.UserID, key.ChatID).Scan(&dummy)
+	err = tx.QueryRowContext(ctx, checkQuery, key.UserID, key.ChatID).Scan(&dummy)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		insertQuery := fmt.Sprintf("INSERT INTO %s (user_id, chat_id, state, data, updated_at) VALUES (?, ?, ?, ?, ?)", s.tableName)
-		_, err = s.db.ExecContext(ctx, insertQuery, key.UserID, key.ChatID, string(StateEmpty), string(raw), now)
-		return err
+		if _, err = tx.ExecContext(ctx, insertQuery, key.UserID, key.ChatID, string(StateEmpty), string(raw), now); err != nil {
+			return err
+		}
+		return tx.Commit()
 	} else if err != nil {
 		return err
 	}
 
 	updateQuery := fmt.Sprintf("UPDATE %s SET data = ?, updated_at = ? WHERE user_id = ? AND chat_id = ?", s.tableName)
-	_, err = s.db.ExecContext(ctx, updateQuery, string(raw), now, key.UserID, key.ChatID)
-	return err
+	if _, err = tx.ExecContext(ctx, updateQuery, string(raw), now, key.UserID, key.ChatID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Reset clears the state and data for the session key.

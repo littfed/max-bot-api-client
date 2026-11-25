@@ -40,7 +40,7 @@ func (t *TestCaseMessageLifecycle) Run(ctx context.Context, s *Suite) (*TestReco
 	var messageIDsToDelete []string
 	defer func() {
 		if s.Config.Cleanup && len(messageIDsToDelete) > 0 {
-			cleanCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			for _, mid := range messageIDsToDelete {
 				if mid != "" {
@@ -88,9 +88,11 @@ func (t *TestCaseMessageLifecycle) Run(ctx context.Context, s *Suite) (*TestReco
 			rec.AddEvent(DirectionAction, "PUT /chats/{id}/pin", "Message pinned successfully", true, nil)
 
 			// Small pause for visual realism
+			pinTimer := time.NewTimer(300 * time.Millisecond)
 			select {
-			case <-time.After(300 * time.Millisecond):
+			case <-pinTimer.C:
 			case <-ctx.Done():
+				pinTimer.Stop()
 				return rec, ctx.Err()
 			}
 
@@ -123,9 +125,11 @@ func (t *TestCaseMessageLifecycle) Run(ctx context.Context, s *Suite) (*TestReco
 
 	// Pause briefly before deletion if cleanup is enabled
 	if s.Config.Cleanup {
+		delTimer := time.NewTimer(600 * time.Millisecond)
 		select {
-		case <-time.After(600 * time.Millisecond):
+		case <-delTimer.C:
 		case <-ctx.Done():
+			delTimer.Stop()
 			return rec, ctx.Err()
 		}
 

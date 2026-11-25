@@ -71,6 +71,12 @@ func (h *modulesHandler) handleShopCreateOrder(w http.ResponseWriter, r *http.Re
 }
 
 func (h *modulesHandler) handleShopSimulate(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
 	orderID := r.PathValue("id")
 	if orderID == "" {
 		writeError(w, http.StatusBadRequest, "order id is required")
@@ -78,6 +84,16 @@ func (h *modulesHandler) handleShopSimulate(w http.ResponseWriter, r *http.Reque
 	}
 	if h.cfg.ShopModule == nil {
 		writeError(w, http.StatusServiceUnavailable, "shop module not available")
+		return
+	}
+
+	ord, err := h.cfg.ShopModule.GetOrder(r.Context(), orderID)
+	if err != nil || ord == nil {
+		writeError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if ord.UserID != user.ID && user.Role != "admin" && user.Role != "superadmin" {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
@@ -91,7 +107,7 @@ func (h *modulesHandler) handleShopSimulate(w http.ResponseWriter, r *http.Reque
 
 	result, err := h.cfg.ShopModule.SimulatePayment(r.Context(), orderID, req.Action)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("payment simulation failed: %v", err))
+		writeError(w, http.StatusBadRequest, "payment simulation failed")
 		return
 	}
 
@@ -432,19 +448,17 @@ func (h *modulesHandler) handleSupportCreateTicket(w http.ResponseWriter, r *htt
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		var err error
-		ticketID, err = h.cfg.Store.CreateSupportTicket(r.Context(), sqlTicket)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save support ticket: %v", err))
-			return
-		}
 		msg := &store.SupportMessage{
-			TicketID:    ticketID,
 			SenderType:  "user",
 			MessageText: req.Message,
 			CreatedAt:   time.Now(),
 		}
-		_ = h.cfg.Store.SaveSupportMessage(r.Context(), msg)
+		var err error
+		ticketID, err = h.cfg.Store.CreateSupportTicketWithMessage(r.Context(), sqlTicket, msg)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save support ticket: %v", err))
+			return
+		}
 	}
 
 	// Also register in support module for in-memory tracking
@@ -622,21 +636,24 @@ func (h *modulesHandler) handleChatMessage(w http.ResponseWriter, r *http.Reques
 				recipientID = ident.PlatformUserID
 			}
 		}
-		_ = h.cfg.PlatformAdapter.SendChatAction(r.Context(), recipientID, "typing_on")
+		reqCtx := r.Context()
+		_ = h.cfg.PlatformAdapter.SendChatAction(reqCtx, recipientID, "typing_on")
 		stopTyping := make(chan struct{})
 		defer close(stopTyping)
-		go func(recID string) {
+		go func(ctx context.Context, recID string) {
 			ticker := time.NewTicker(4 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-stopTyping:
 					return
+				case <-ctx.Done():
+					return
 				case <-ticker.C:
-					_ = h.cfg.PlatformAdapter.SendChatAction(context.Background(), recID, "typing_on")
+					_ = h.cfg.PlatformAdapter.SendChatAction(ctx, recID, "typing_on")
 				}
 			}
-		}(recipientID)
+		}(reqCtx, recipientID)
 	}
 
 	reply, err := h.cfg.ChatModule.SendMessage(r.Context(), user.ID, req.RoleID, req.ToneID, req.Message)
