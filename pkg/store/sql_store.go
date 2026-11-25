@@ -1757,7 +1757,54 @@ func (s *SQLStore) CancelReminderBySourceRef(ctx context.Context, sourceType, re
 	return nil
 }
 
-// GetPendingRemindersForUpdate retrieves a batch of pending reminders due for delivery.
+// TryUpdateReminderStatus atomically transitions a reminder's status only if its current status is in fromStatuses.
+func (s *SQLStore) TryUpdateReminderStatus(ctx context.Context, id int64, newStatus string, fromStatuses ...string) (bool, error) {
+	if len(fromStatuses) == 0 {
+		return false, errors.New("fromStatuses cannot be empty")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	var args []any
+	var query string
+	if s.dialect == "postgres" {
+		args = append(args, newStatus, now, id)
+		placeholders := make([]string, len(fromStatuses))
+		for i, st := range fromStatuses {
+			placeholders[i] = fmt.Sprintf("$%d", i+4)
+			args = append(args, st)
+		}
+		query = fmt.Sprintf(
+			`UPDATE reminders SET status = $1, updated_at = $2, last_sent_at = CASE WHEN $1 = 'sent' THEN $2 ELSE last_sent_at END WHERE id = $3 AND status IN (%s);`,
+			strings.Join(placeholders, ","),
+		)
+	} else {
+		args = append(args, newStatus, now, newStatus, now, id)
+		placeholders := make([]string, len(fromStatuses))
+		for i, st := range fromStatuses {
+			placeholders[i] = "?"
+			args = append(args, st)
+		}
+		query = fmt.Sprintf(
+			`UPDATE reminders SET status = ?, updated_at = ?, last_sent_at = CASE WHEN ? = 'sent' THEN ? ELSE last_sent_at END WHERE id = ? AND status IN (%s);`,
+			strings.Join(placeholders, ","),
+		)
+	}
+
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to update reminder status: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect affected rows: %w", err)
+	}
+	return affected > 0, nil
+}
+
+// GetPendingRemindersForUpdate atomically claims a batch of pending reminders due for delivery.
 func (s *SQLStore) GetPendingRemindersForUpdate(ctx context.Context, limit int) ([]Reminder, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1767,29 +1814,40 @@ func (s *SQLStore) GetPendingRemindersForUpdate(ctx context.Context, limit int) 
 		limit = 50
 	}
 
-	var query string
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction for pending reminders: %w", err)
+	}
+	defer tx.Rollback()
+
+	var rows *sql.Rows
 	if s.dialect == "postgres" {
-		query = `SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
-FROM reminders
-WHERE status = 'pending' AND remind_at <= $1
-ORDER BY remind_at ASC
-LIMIT $2
-FOR UPDATE SKIP LOCKED;`
+		query := `UPDATE reminders
+SET status = 'processing', updated_at = $1
+WHERE id IN (
+	SELECT id
+	FROM reminders
+	WHERE status = 'pending' AND remind_at <= $1
+	ORDER BY remind_at ASC
+	LIMIT $2
+	FOR UPDATE SKIP LOCKED
+)
+RETURNING id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at;`
+		rows, err = tx.QueryContext(ctx, query, now, limit)
 	} else {
-		query = `SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
+		query := `SELECT id, user_id, title, description, remind_at, recurrence_rule, status, source_type, source_ref_id, template_id, ab_variant, last_sent_at, created_at, updated_at
 FROM reminders
 WHERE status = 'pending' AND remind_at <= ?
 ORDER BY remind_at ASC
 LIMIT ?;`
+		rows, err = tx.QueryContext(ctx, query, now, limit)
 	}
-
-	rows, err := s.db.QueryContext(ctx, query, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pending reminders: %w", err)
 	}
-	defer rows.Close()
 
 	var results []Reminder
+	var claimedIDs []any
 	for rows.Next() {
 		var rem Reminder
 		var templateID sql.NullString
@@ -1799,6 +1857,7 @@ LIMIT ?;`
 			&rem.RecurrenceRule, &rem.Status, &rem.SourceType, &rem.SourceRefID,
 			&templateID, &rem.ABVariant, &lastSentAt, &rem.CreatedAt, &rem.UpdatedAt,
 		); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan pending reminder row: %w", err)
 		}
 		if templateID.Valid {
@@ -1809,8 +1868,38 @@ LIMIT ?;`
 			rem.LastSentAt = &t
 		}
 		results = append(results, rem)
+		claimedIDs = append(claimedIDs, rem.ID)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	if s.dialect != "postgres" && len(claimedIDs) > 0 {
+		placeholders := make([]string, len(claimedIDs))
+		args := make([]any, 0, len(claimedIDs)+1)
+		args = append(args, now)
+		for i, id := range claimedIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		claimQuery := fmt.Sprintf(
+			`UPDATE reminders SET status = 'processing', updated_at = ? WHERE id IN (%s);`,
+			strings.Join(placeholders, ","),
+		)
+		if _, err := tx.ExecContext(ctx, claimQuery, args...); err != nil {
+			return nil, fmt.Errorf("failed to claim pending reminders: %w", err)
+		}
+		for i := range results {
+			results[i].Status = "processing"
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit pending reminders claim: %w", err)
+	}
+	return results, nil
 }
 
 // RecordNotificationEvent records an interaction or delivery event for A/B testing analytics.
