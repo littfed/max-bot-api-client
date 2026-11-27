@@ -338,6 +338,116 @@ func (c *Client) GenerateImage(ctx context.Context, req *ImageRequest) (*ImageRe
 		return nil, fmt.Errorf("ai: gateway error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
+	return c.parseImageResponse(ctx, respBody, model, start)
+}
+
+// EditImage edits an existing image using a prompt via multipart POST /images/edits.
+func (c *Client) EditImage(ctx context.Context, req *ImageEditRequest) (*ImageResponse, error) {
+	if req == nil || len(req.ImageBytes) == 0 {
+		return nil, errors.New("ai: image bytes cannot be empty")
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		return nil, errors.New("ai: prompt cannot be empty")
+	}
+
+	model := req.Model
+	if model == "" {
+		model = c.defaultImageModel
+	}
+	filename := req.Filename
+	if filename == "" {
+		filename = "image.png"
+	}
+
+	bodyBuf := &bytes.Buffer{}
+	writer := multipart.NewWriter(bodyBuf)
+
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="image"; filename="%s"`, filename))
+	mimeType := detectImageContentType(req.ImageBytes, filename)
+	h.Set("Content-Type", mimeType)
+
+	part, err := writer.CreatePart(h)
+	if err != nil {
+		return nil, fmt.Errorf("ai: create form part failed: %w", err)
+	}
+	if _, err := part.Write(req.ImageBytes); err != nil {
+		return nil, fmt.Errorf("ai: write image failed: %w", err)
+	}
+
+	_ = writer.WriteField("prompt", req.Prompt)
+	if model != "" {
+		_ = writer.WriteField("model", model)
+	}
+	if req.Size != "" {
+		_ = writer.WriteField("size", req.Size)
+	}
+	if req.ResponseFormat != "" {
+		_ = writer.WriteField("response_format", req.ResponseFormat)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("ai: close writer failed: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/images/edits", c.endpoint)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bodyBuf)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
+	if c.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	log := logger.FromContext(ctx)
+	log.Debug("ai image edit starting", slog.String("model", model), slog.String("filename", filename), slog.Int("bytes", len(req.ImageBytes)))
+
+	start := time.Now()
+	resp, err := c.httpClient.Do(httpReq)
+	duration := time.Since(start)
+	if err != nil {
+		log.Error("ai image edit request failed", slog.String("model", model), slog.Duration("duration", duration), slog.Any("error", err))
+		return nil, fmt.Errorf("ai: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Error("ai image edit read response failed", slog.String("model", model), slog.Any("error", err))
+		return nil, fmt.Errorf("ai: read response failed: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Error("ai image edit gateway error response",
+			slog.String("model", model),
+			slog.Int("status_code", resp.StatusCode),
+			slog.Duration("duration", duration),
+			slog.String("response_body", string(respBody)),
+		)
+		return nil, fmt.Errorf("ai: gateway error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return c.parseImageResponse(ctx, respBody, model, start)
+}
+
+func detectImageContentType(data []byte, filename string) string {
+	detected := http.DetectContentType(data)
+	if strings.HasPrefix(detected, "image/") {
+		return detected
+	}
+	lower := strings.ToLower(filename)
+	switch {
+	case strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"):
+		return "image/jpeg"
+	case strings.HasSuffix(lower, ".webp"):
+		return "image/webp"
+	default:
+		return "image/png"
+	}
+}
+
+func (c *Client) parseImageResponse(ctx context.Context, respBody []byte, model string, start time.Time) (*ImageResponse, error) {
 	var rawResp struct {
 		Created int64 `json:"created"`
 		Data    []struct {

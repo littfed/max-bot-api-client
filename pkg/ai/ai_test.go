@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -210,4 +211,103 @@ func TestAIClientStructuredLogging(t *testing.T) {
 	if !strings.Contains(out, "ai chat gateway error response") {
 		t.Errorf("expected error log message: %s", out)
 	}
+}
+
+func TestEditImage(t *testing.T) {
+	t.Run("success multipart upload and b64_json response", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected POST, got %s", r.Method)
+			}
+			if r.URL.Path != "/images/edits" {
+				t.Fatalf("expected /images/edits, got %s", r.URL.Path)
+			}
+			if r.Header.Get("Authorization") != "Bearer test-key" {
+				t.Fatalf("unexpected authorization header: %q", r.Header.Get("Authorization"))
+			}
+			if err := r.ParseMultipartForm(10 << 20); err != nil {
+				t.Fatalf("parse multipart: %v", err)
+			}
+			if got := r.FormValue("prompt"); got != "make background dark" {
+				t.Fatalf("unexpected prompt: %s", got)
+			}
+			if got := r.FormValue("model"); got != "gpt-image-1" {
+				t.Fatalf("unexpected model: %s", got)
+			}
+			if got := r.FormValue("size"); got != "1024x1024" {
+				t.Fatalf("unexpected size: %s", got)
+			}
+			if got := r.FormValue("response_format"); got != "b64_json" {
+				t.Fatalf("unexpected response_format: %s", got)
+			}
+			f, fh, err := r.FormFile("image")
+			if err != nil {
+				t.Fatalf("missing image form file: %v", err)
+			}
+			_ = f.Close()
+			if fh.Filename != "source.png" {
+				t.Fatalf("unexpected filename: %s", fh.Filename)
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"b64_json":"aGVsbG8="}]}`))
+		}))
+		defer srv.Close()
+
+		client := NewClient(srv.URL, "test-key")
+		resp, err := client.EditImage(context.Background(), &ImageEditRequest{
+			ImageBytes:     []byte{0x89, 0x50, 0x4E, 0x47},
+			Filename:       "source.png",
+			Prompt:         "make background dark",
+			Model:          "gpt-image-1",
+			Size:           "1024x1024",
+			ResponseFormat: "b64_json",
+		})
+		if err != nil {
+			t.Fatalf("EditImage error: %v", err)
+		}
+		if string(resp.Data) != "hello" {
+			t.Fatalf("expected decoded bytes 'hello', got %q", string(resp.Data))
+		}
+		if resp.Model != "gpt-image-1" {
+			t.Fatalf("expected model gpt-image-1, got %q", resp.Model)
+		}
+	})
+
+	t.Run("validation errors", func(t *testing.T) {
+		client := NewClient("http://localhost:8080/v1", "test-key")
+		ctx := context.Background()
+
+		if _, err := client.EditImage(ctx, nil); err == nil {
+			t.Fatal("expected error for nil request")
+		}
+		if _, err := client.EditImage(ctx, &ImageEditRequest{Prompt: "edit"}); err == nil {
+			t.Fatal("expected error for empty ImageBytes")
+		}
+		if _, err := client.EditImage(ctx, &ImageEditRequest{ImageBytes: []byte{1, 2, 3}, Prompt: "   "}); err == nil {
+			t.Fatal("expected error for empty Prompt")
+		}
+	})
+
+	t.Run("non-2xx status error includes status code", func(t *testing.T) {
+		for _, code := range []int{http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented} {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(code)
+				_, _ = w.Write([]byte(`{"error":"not supported"}`))
+			}))
+			client := NewClient(srv.URL, "test-key")
+			_, err := client.EditImage(context.Background(), &ImageEditRequest{
+				ImageBytes: []byte{0x89, 0x50, 0x4E, 0x47},
+				Prompt:     "edit",
+			})
+			srv.Close()
+			if err == nil {
+				t.Fatalf("expected error for status %d", code)
+			}
+			want := fmt.Sprintf("status %d", code)
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected %q in error, got: %v", want, err)
+			}
+		}
+	})
 }

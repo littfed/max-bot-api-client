@@ -139,6 +139,16 @@ type ImageResponse struct {
 	Latency time.Duration `json:"latency"`
 }
 
+// ImageEditRequest represents a multipart image edit request sent to /images/edits.
+type ImageEditRequest struct {
+	ImageBytes     []byte `json:"-"`
+	Filename       string `json:"filename,omitempty"`
+	Prompt         string `json:"prompt"`
+	Model          string `json:"model,omitempty"`
+	Size           string `json:"size,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+}
+
 // AudioRequest represents an audio transcription (STT) request.
 type AudioRequest struct {
 	AudioBytes []byte `json:"-"`
