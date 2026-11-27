@@ -1997,6 +1997,22 @@ ORDER BY template_id, variant;`
 	return stats, rows.Err()
 }
 
+// DB returns the underlying *sql.DB connection.
+func (s *SQLStore) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
+// Dialect returns the normalized SQL dialect ("postgres" or "sqlite3").
+func (s *SQLStore) Dialect() string {
+	if s == nil {
+		return ""
+	}
+	return s.dialect
+}
+
 func (s *SQLStore) Close() error {
 	return s.db.Close()
 }

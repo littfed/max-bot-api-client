@@ -22,6 +22,7 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/api"
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/modules/chat"
+	"github.com/littfed/max-bot-api-client/internal/modules/posts"
 	"github.com/littfed/max-bot-api-client/internal/modules/reception"
 	"github.com/littfed/max-bot-api-client/internal/modules/reminders"
 	"github.com/littfed/max-bot-api-client/internal/modules/shop"
@@ -278,11 +279,34 @@ func main() {
 	remindersMod := reminders.New(remindersService, sqlStore)
 	receptionMod.SetReminderScheduler(&receptionReminderScheduler{svc: remindersService})
 
+	webAppURL := strings.TrimSpace(os.Getenv("WEBAPP_URL"))
+	if webAppURL == "" {
+		publicURL := strings.TrimSpace(os.Getenv("WEBAPP_BASE_URL"))
+		if publicURL == "" {
+			publicURL = strings.TrimSpace(os.Getenv("PUBLIC_URL"))
+		}
+		if publicURL == "" {
+			publicURL = "https://combot.littfed.ru"
+		}
+		webAppURL = strings.TrimRight(publicURL, "/") + "/maxapp"
+	}
+
+	var postsStore posts.Repository
+	if sqlStore != nil && sqlStore.DB() != nil && sqlStore.Dialect() == "postgres" {
+		postsStore = posts.NewPGStore(sqlStore.DB())
+	} else {
+		postsStore = posts.NewMemoryStore()
+	}
+	postsPipeline := posts.NewPipeline(posts.NewAIGateway(aiClient))
+	postsService := posts.NewService(postsStore, postsPipeline)
+	postsMod := posts.New(postsService, webAppURL)
+
 	orchestrator.RegisterModule(shopMod)
 	orchestrator.RegisterModule(receptionMod)
 	orchestrator.RegisterModule(supportMod)
 	orchestrator.RegisterModule(chatMod)
 	orchestrator.RegisterModule(remindersMod)
+	orchestrator.RegisterModule(postsMod)
 
 	adapters := map[string]platform.PlatformAdapter{
 		"max": maxAdapter,
@@ -322,6 +346,7 @@ func main() {
 		SupportModule:   supportMod,
 		ChatModule:      chatMod,
 		RemindersModule: remindersMod,
+		PostsModule:     postsMod,
 		BotToken:        token,
 		JWTSecret:       jwtSecret,
 		PlatformAdapter: maxAdapter,
