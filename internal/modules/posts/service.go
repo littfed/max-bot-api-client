@@ -21,12 +21,13 @@ const (
 var curatedTextModels = []ModelOption{
 	{ID: "auto", Label: "Auto (Smart Router)", Tier: "auto", Description: "Автоматический выбор оптимальной модели"},
 	{ID: "gemini-3.8-flash", Label: "Gemini 3.8 Flash", Tier: "balanced", Description: "Быстрая и сбалансированная модель Google"},
+	{ID: "deepseek-4-1-flash", Label: "DeepSeek V4.1 Flash", Tier: "balanced", Description: "Быстрая модель DeepSeek для текстов"},
+	{ID: "gpt-6-luna", Label: "GPT-6 Luna", Tier: "balanced", Description: "Универсальная модель нового поколения"},
 	{ID: "claude-sonnet-5-5", Label: "Claude Sonnet 5.5", Tier: "balanced", Description: "Выразительный копирайтинг и структура"},
 	{ID: "gpt-5.4", Label: "GPT-5.4", Tier: "balanced", Description: "Универсальная модель OpenAI"},
-	{ID: "deepseek-4-pro", Label: "DeepSeek 4 Pro", Tier: "balanced", Description: "Глубокая логика и аналитика"},
+	{ID: "deepseek-4-pro", Label: "DeepSeek 4 Pro", Tier: "pro", Description: "Глубокая логика и аналитика"},
 	{ID: "qwen3.6-plus", Label: "Qwen 3.6 Plus", Tier: "balanced", Description: "Сильный мультиязычный текст"},
 	{ID: "claude-opus-5-5", Label: "Claude Opus 5.5", Tier: "pro", Description: "Максимальное качество и нюансы стиля"},
-	{ID: "gpt-6-astra", Label: "GPT-6 Astra", Tier: "pro", Description: "Флагманская модель для сложных задач"},
 }
 
 // Service orchestrates Content Studio workflows across persistence and the AI pipeline.

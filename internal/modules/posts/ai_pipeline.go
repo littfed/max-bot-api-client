@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -90,35 +89,15 @@ func (g *aiClientGateway) ListModels(ctx context.Context) ([]string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, modelsTimeout)
 	defer cancel()
 
-	modelsURL := strings.TrimRight(g.client.Endpoint(), "/") + "/models"
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, modelsURL, nil)
+	rawModels, err := g.client.ListModels(reqCtx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("posts: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("posts: list models request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("posts: list models returned status %d", resp.StatusCode)
-	}
-
-	var payload struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("posts: decode models response: %w", err)
-	}
-
-	models := make([]string, 0, len(payload.Data))
-	seen := make(map[string]struct{}, len(payload.Data))
-	for _, item := range payload.Data {
-		id := strings.TrimSpace(item.ID)
+	models := make([]string, 0, len(rawModels))
+	seen := make(map[string]struct{}, len(rawModels))
+	for _, rawID := range rawModels {
+		id := strings.TrimSpace(rawID)
 		if id == "" {
 			continue
 		}

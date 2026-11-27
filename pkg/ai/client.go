@@ -126,6 +126,45 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
+// ListModels fetches available model IDs from the gateway's /models endpoint.
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	modelsURL := fmt.Sprintf("%s/models", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ai: list models failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("ai: list models returned status %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("ai: decode models response: %w", err)
+	}
+
+	models := make([]string, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			models = append(models, id)
+		}
+	}
+	return models, nil
+}
+
 // Chat performs a chat completion request against /chat/completions.
 func (c *Client) Chat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	if req == nil || len(req.Messages) == 0 {

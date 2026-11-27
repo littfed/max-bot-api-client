@@ -261,8 +261,8 @@ func TestService_ListAvailableModels_FilteredAndFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAvailableModels(fallback) error = %v", err)
 	}
-	if len(fallbackCatalog.Curated) != 8 {
-		t.Fatalf("expected 8 curated fallback models, got %d", len(fallbackCatalog.Curated))
+	if len(fallbackCatalog.Curated) != len(curatedTextModels) {
+		t.Fatalf("expected %d curated fallback models, got %d", len(curatedTextModels), len(fallbackCatalog.Curated))
 	}
 }
 
