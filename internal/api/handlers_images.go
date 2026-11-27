@@ -166,9 +166,6 @@ func (h *imagesHandler) handleCreateProject(w http.ResponseWriter, r *http.Reque
 	if !h.checkModeActive(w, r) {
 		return
 	}
-	if !h.consumeQuota(w, r, user.ID) {
-		return
-	}
 
 	input := images.CreateProjectInput{
 		UserID: user.ID,
@@ -238,6 +235,14 @@ func (h *imagesHandler) handleCreateProject(w http.ResponseWriter, r *http.Reque
 		input.UseExampleSource = req.UseExampleSource
 	}
 
+	if err := validateCreateProjectInput(input); err != nil {
+		writeImagesServiceError(w, "failed to create project", err)
+		return
+	}
+	if !h.consumeQuota(w, r, user.ID) {
+		return
+	}
+
 	proj, err := svc.CreateAndRun(r.Context(), input)
 	if err != nil {
 		writeImagesServiceError(w, "failed to create project", err)
@@ -246,15 +251,52 @@ func (h *imagesHandler) handleCreateProject(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, proj)
 }
 
+func validateCreateProjectInput(input images.CreateProjectInput) error {
+	var preset images.Preset
+	hasPreset := false
+	if presetID := strings.TrimSpace(input.PresetID); presetID != "" {
+		p, ok := images.GetPreset(presetID)
+		if !ok {
+			return fmt.Errorf("%w: unknown preset %q", images.ErrInvalidInput, presetID)
+		}
+		preset = p
+		hasPreset = true
+	}
+
+	mode := strings.TrimSpace(input.Mode)
+	if mode == "" && hasPreset {
+		mode = preset.Mode
+	}
+	if mode == "" {
+		mode = images.ModeGenerate
+	}
+	if mode != images.ModeGenerate && mode != images.ModeEdit {
+		return fmt.Errorf("%w: unsupported mode %q", images.ErrInvalidInput, mode)
+	}
+
+	if strings.TrimSpace(input.Prompt) == "" {
+		return fmt.Errorf("%w: prompt is required", images.ErrInvalidInput)
+	}
+
+	if mode == images.ModeEdit {
+		switch {
+		case len(input.SourceImage) > 0:
+			if _, _, err := images.ValidateImageBytes(input.SourceImage); err != nil {
+				return err
+			}
+		case !input.UseExampleSource:
+			return fmt.Errorf("%w: source image is required for edit mode", images.ErrInvalidInput)
+		}
+	}
+	return nil
+}
+
 func (h *imagesHandler) handleRefineProject(w http.ResponseWriter, r *http.Request) {
 	user, svc, ok := h.requireContext(w, r)
 	if !ok {
 		return
 	}
 	if !h.checkModeActive(w, r) {
-		return
-	}
-	if !h.consumeQuota(w, r, user.ID) {
 		return
 	}
 	projectID, ok := parseImageProjectID(w, r)
@@ -268,6 +310,17 @@ func (h *imagesHandler) handleRefineProject(w http.ResponseWriter, r *http.Reque
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		writeImagesServiceError(w, "failed to refine project", fmt.Errorf("%w: prompt is required", images.ErrInvalidInput))
+		return
+	}
+	if _, err := svc.GetProject(r.Context(), user.ID, projectID); err != nil {
+		writeImagesServiceError(w, "failed to refine project", err)
+		return
+	}
+	if !h.consumeQuota(w, r, user.ID) {
 		return
 	}
 

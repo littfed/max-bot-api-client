@@ -462,7 +462,20 @@ func TestImagesAPI_NotFoundAndForbiddenActions(t *testing.T) {
 func TestImagesAPI_QuotaExceeded(t *testing.T) {
 	srv := setupTestImagesAPIServer(t)
 
-	// Default daily_quota from 00006_images_studio.sql is 50; exhaust it for user 1.
+	// Invalid requests (400 / 404) must NOT consume quota.
+	badCreate := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(`{"mode":"generate","prompt":""}`), "application/json")
+	badCreate.Body.Close()
+	if badCreate.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty prompt, got %d", badCreate.StatusCode)
+	}
+
+	badRefine := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects/999999/refine", "1", strings.NewReader(`{"prompt":"test"}`), "application/json")
+	badRefine.Body.Close()
+	if badRefine.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for nonexistent project refine, got %d", badRefine.StatusCode)
+	}
+
+	// Default daily_quota from 00006_images_studio.sql is 50; all 50 valid requests must still succeed.
 	for i := 0; i < 50; i++ {
 		resp := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(`{"mode":"generate","prompt":"quota test"}`), "application/json")
 		resp.Body.Close()
