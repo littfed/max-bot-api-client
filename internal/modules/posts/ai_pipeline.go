@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	chatTimeout   = 30 * time.Second
+	chatTimeout   = 60 * time.Second
 	visionTimeout = 30 * time.Second
 	imageTimeout  = 60 * time.Second
+	chatMaxTokens = 4096
 )
 
 // AIGateway abstracts text chat, vision analysis, and image generation for the posts pipeline.
@@ -47,8 +48,10 @@ func (g *aiClientGateway) Chat(ctx context.Context, systemPrompt, userPrompt str
 	}
 	messages = append(messages, ai.NewTextMessage(ai.RoleUser, userPrompt))
 
+	maxTokens := chatMaxTokens
 	resp, err := g.client.Chat(reqCtx, &ai.ChatRequest{
-		Messages: messages,
+		Messages:  messages,
+		MaxTokens: &maxTokens,
 	})
 	if err != nil {
 		return "", err

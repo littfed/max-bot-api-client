@@ -35,6 +35,7 @@ var default8Modes = []ModeItem{
 	{ID: "reception", Title: "Ресепшен", IsActive: true, DailyQuota: 100},
 	{ID: "reminders", Title: "Напоминания", IsActive: false, MaintenanceMessage: "Модуль находится в разработке (Этап 2)", DailyQuota: 100},
 	{ID: "channels", Title: "Каналы", IsActive: false, MaintenanceMessage: "Модуль находится в разработке (Этап 2)", DailyQuota: 100},
+	{ID: "posts", Title: "Контент-студия", IsActive: true, DailyQuota: 50},
 	{ID: "giveaways", Title: "Конкурсы", IsActive: false, MaintenanceMessage: "Модуль находится в разработке (Этап 2)", DailyQuota: 100},
 	{ID: "support", Title: "Поддержка", IsActive: true, DailyQuota: 100},
 	{ID: "docs", Title: "Документы", IsActive: false, MaintenanceMessage: "Модуль находится в разработке (Этап 2)", DailyQuota: 100},
