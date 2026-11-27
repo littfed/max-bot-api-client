@@ -1,10 +1,21 @@
 import { api } from './client';
-import { BrandProfile, PostDraft, PostVariant, StudioState } from '../types/posts';
+import {
+  BrandProfile,
+  ModelsCatalog,
+  PostDraft,
+  PostVariant,
+  StudioState,
+} from '../types/posts';
 
 const modulesConfig = {};
 const aiModulesConfig = { timeout: 90000 };
 
 export const postsApi = {
+  async getModels(): Promise<ModelsCatalog> {
+    const res = await api.get<ModelsCatalog>('/posts/models', modulesConfig);
+    return res.data;
+  },
+
   async getState(draftId?: number): Promise<StudioState> {
     const res = await api.get<StudioState>('/posts/state', {
       ...modulesConfig,
@@ -38,7 +49,8 @@ export const postsApi = {
     draftId: number,
     goal: string,
     tone: string,
-    targetPlatforms: string[]
+    targetPlatforms: string[],
+    textModel?: string
   ): Promise<PostDraft> {
     const res = await api.patch<{ draft: PostDraft }>(
       `/posts/drafts/${draftId}/brief`,
@@ -46,25 +58,33 @@ export const postsApi = {
         goal,
         tone,
         target_platforms: targetPlatforms,
+        text_model: textModel || undefined,
       },
       modulesConfig
     );
     return res.data.draft;
   },
 
-  async generateHooks(draftId: number): Promise<PostDraft> {
+  async generateHooks(draftId: number, textModel?: string): Promise<PostDraft> {
     const res = await api.post<{ draft: PostDraft }>(
       `/posts/drafts/${draftId}/hooks`,
-      {},
+      textModel ? { text_model: textModel } : {},
       aiModulesConfig
     );
     return res.data.draft;
   },
 
-  async generatePackage(draftId: number, hookId: string): Promise<PostDraft> {
+  async generatePackage(
+    draftId: number,
+    hookId: string,
+    textModel?: string
+  ): Promise<PostDraft> {
     const res = await api.post<{ draft: PostDraft }>(
       `/posts/drafts/${draftId}/generate`,
-      { hook_id: hookId },
+      {
+        hook_id: hookId,
+        text_model: textModel || undefined,
+      },
       aiModulesConfig
     );
     return res.data.draft;
@@ -73,11 +93,16 @@ export const postsApi = {
   async refineDraft(
     draftId: number,
     platform: string,
-    instruction: string
+    instruction: string,
+    textModel?: string
   ): Promise<PostDraft> {
     const res = await api.post<{ draft: PostDraft }>(
       `/posts/drafts/${draftId}/refine`,
-      { platform, instruction },
+      {
+        platform,
+        instruction,
+        text_model: textModel || undefined,
+      },
       aiModulesConfig
     );
     return res.data.draft;
@@ -101,6 +126,24 @@ export const postsApi = {
       `/posts/drafts/${draftId}/image`,
       customPrompt ? { prompt: customPrompt } : {},
       aiModulesConfig
+    );
+    return res.data.draft;
+  },
+
+  async restoreRevision(
+    draftId: number,
+    type: 'image' | 'text',
+    version: number,
+    platform?: string
+  ): Promise<PostDraft> {
+    const res = await api.post<{ draft: PostDraft }>(
+      `/posts/drafts/${draftId}/restore`,
+      {
+        type,
+        version,
+        platform: platform || undefined,
+      },
+      modulesConfig
     );
     return res.data.draft;
   },

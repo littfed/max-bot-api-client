@@ -26,6 +26,38 @@ export interface PostVariant {
   cta?: string;
 }
 
+export interface ImageRevision {
+  version: number;
+  url: string;
+  prompt?: string;
+  created_at: string;
+}
+
+export interface TextRevision {
+  version: number;
+  platform: string;
+  text: string;
+  hashtags?: string[];
+  cta?: string;
+  source: 'generate' | 'refine' | 'manual' | 'restore' | string;
+  instruction?: string;
+  model?: string;
+  created_at: string;
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  tier: 'auto' | 'balanced' | 'pro' | 'other' | string;
+  description?: string;
+}
+
+export interface ModelsCatalog {
+  default_model: string;
+  curated: ModelOption[];
+  all: string[];
+}
+
 export interface PostDraft {
   id: number;
   user_id: number;
@@ -41,6 +73,9 @@ export interface PostDraft {
   selected_hook_id?: string;
   image_prompt?: string;
   generated_image_url?: string;
+  text_model?: string;
+  image_history?: ImageRevision[];
+  text_history?: TextRevision[];
   variants: PostVariant[];
   created_at: string;
   updated_at: string;

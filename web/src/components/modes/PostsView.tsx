@@ -16,9 +16,20 @@ import {
   Loader2,
   Save,
   X,
+  Cpu,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
 } from 'lucide-react';
 import { postsApi } from '../../api/posts';
-import { BrandProfile, PostDraft, PostHook, PostVariant } from '../../types/posts';
+import {
+  BrandProfile,
+  ModelsCatalog,
+  PostDraft,
+  PostHook,
+  PostVariant,
+} from '../../types/posts';
+import { FormattedMessage } from '../common/FormattedMessage';
 
 interface PostsViewProps {
   onBack: () => void;
@@ -59,6 +70,20 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   generating: { label: 'Генерация', cls: 'bg-teal-50 text-teal-700' },
   ready: { label: 'Готов', cls: 'bg-emerald-50 text-emerald-700' },
   archived: { label: 'Архив', cls: 'bg-slate-100 text-slate-500' },
+};
+
+const TIER_BADGES: Record<string, { label: string; cls: string }> = {
+  auto: { label: 'Auto', cls: 'bg-teal-50 text-teal-700 border-teal-200' },
+  balanced: { label: 'Balanced', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
+  pro: { label: 'Pro', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
+  other: { label: 'Other', cls: 'bg-slate-100 text-slate-600 border-slate-200' },
+};
+
+const REVISION_SOURCE_LABELS: Record<string, { label: string; cls: string }> = {
+  generate: { label: 'Генерация', cls: 'bg-teal-50 text-teal-700' },
+  refine: { label: 'ИИ-правка', cls: 'bg-indigo-50 text-indigo-700' },
+  manual: { label: 'Вручную', cls: 'bg-amber-50 text-amber-700' },
+  restore: { label: 'Откат', cls: 'bg-slate-100 text-slate-700' },
 };
 
 function getPlatformMeta(id: string): PlatformMeta {
@@ -118,6 +143,14 @@ export const PostsView: React.FC<PostsViewProps> = ({
     cta: '',
     hashtags: '',
   });
+  const [activeVariantPlatform, setActiveVariantPlatform] = useState<string>('');
+  const [showTextHistory, setShowTextHistory] = useState(false);
+  const [restoringKey, setRestoringKey] = useState<string | null>(null);
+
+  // Text model selector
+  const [modelsCatalog, setModelsCatalog] = useState<ModelsCatalog | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [showAllModels, setShowAllModels] = useState(false);
 
   // Brand Profile form
   const [profileName, setProfileName] = useState('Мой бренд');
@@ -141,6 +174,16 @@ export const PostsView: React.FC<PostsViewProps> = ({
         ? draft.target_platforms
         : defaultPlatforms
     );
+    if (draft.text_model) {
+      setSelectedModel(draft.text_model);
+    }
+    if (draft.variants && draft.variants.length > 0) {
+      setActiveVariantPlatform((prev) =>
+        draft.variants.some((v) => v.platform === prev) ? prev : draft.variants[0].platform
+      );
+    } else {
+      setActiveVariantPlatform('');
+    }
     setWizardStep(stepFromDraft(draft));
   };
 
@@ -186,6 +229,15 @@ export const PostsView: React.FC<PostsViewProps> = ({
 
   useEffect(() => {
     loadState();
+    postsApi
+      .getModels()
+      .then((catalog) => {
+        setModelsCatalog(catalog);
+        setSelectedModel((prev) => prev || catalog.default_model || catalog.curated?.[0]?.id || '');
+      })
+      .catch(() => {
+        // Gracefully ignore /models failure so UI continues to work
+      });
   }, []);
 
   const handleStartNewPost = () => {
@@ -193,6 +245,9 @@ export const PostsView: React.FC<PostsViewProps> = ({
     setRawIdea('');
     setSourceImageUrl('');
     setEditingPlatform(null);
+    setActiveVariantPlatform('');
+    setShowTextHistory(false);
+    setSelectedModel(modelsCatalog?.default_model || '');
     setWizardStep(1);
     setActiveTab('studio');
   };
@@ -235,8 +290,15 @@ export const PostsView: React.FC<PostsViewProps> = ({
     if (!activeDraft) return;
     setIsBusy(true);
     try {
-      await postsApi.updateBrief(activeDraft.id, goal.trim(), tone.trim(), targetPlatforms);
-      const updated = await postsApi.generateHooks(activeDraft.id);
+      const modelArg = selectedModel || undefined;
+      await postsApi.updateBrief(
+        activeDraft.id,
+        goal.trim(),
+        tone.trim(),
+        targetPlatforms,
+        modelArg
+      );
+      const updated = await postsApi.generateHooks(activeDraft.id, modelArg);
       syncDraftIntoState(updated);
       onSuccessToast('3 хука готовы! Выберите лучший');
     } catch (err: any) {
@@ -250,7 +312,7 @@ export const PostsView: React.FC<PostsViewProps> = ({
     if (!activeDraft) return;
     setIsBusy(true);
     try {
-      const updated = await postsApi.generateHooks(activeDraft.id);
+      const updated = await postsApi.generateHooks(activeDraft.id, selectedModel || undefined);
       syncDraftIntoState(updated);
       onSuccessToast('Новые хуки сгенерированы');
     } catch (err: any) {
@@ -264,7 +326,11 @@ export const PostsView: React.FC<PostsViewProps> = ({
     if (!activeDraft) return;
     setIsBusy(true);
     try {
-      const updated = await postsApi.generatePackage(activeDraft.id, hook.id);
+      const updated = await postsApi.generatePackage(
+        activeDraft.id,
+        hook.id,
+        selectedModel || undefined
+      );
       syncDraftIntoState(updated);
       onSuccessToast('Пакет постов готов!');
     } catch (err: any) {
@@ -295,7 +361,12 @@ export const PostsView: React.FC<PostsViewProps> = ({
     if (!activeDraft || !instruction.trim()) return;
     setRefiningPlatform(platform);
     try {
-      const updated = await postsApi.refineDraft(activeDraft.id, platform, instruction.trim());
+      const updated = await postsApi.refineDraft(
+        activeDraft.id,
+        platform,
+        instruction.trim(),
+        selectedModel || undefined
+      );
       syncDraftIntoState(updated);
       setCustomInstructions((prev) => ({ ...prev, [platform]: '' }));
       onSuccessToast(`Вариант для ${getPlatformMeta(platform).label} обновлён`);
@@ -355,6 +426,123 @@ export const PostsView: React.FC<PostsViewProps> = ({
     } finally {
       setIsRegeneratingImage(false);
     }
+  };
+
+  const handleRestoreImageRevision = async (version: number) => {
+    if (!activeDraft) return;
+    const key = `image:${version}`;
+    setRestoringKey(key);
+    try {
+      const updated = await postsApi.restoreRevision(activeDraft.id, 'image', version);
+      syncDraftIntoState(updated);
+      onSuccessToast(`Восстановлен визуал v${version}`);
+    } catch (err: any) {
+      onErrorToast(getErrMessage(err, 'Не удалось восстановить версию визуала'));
+    } finally {
+      setRestoringKey(null);
+    }
+  };
+
+  const handleRestoreTextRevision = async (version: number, platform: string) => {
+    if (!activeDraft) return;
+    const key = `text:${platform}:${version}`;
+    setRestoringKey(key);
+    try {
+      const updated = await postsApi.restoreRevision(activeDraft.id, 'text', version, platform);
+      syncDraftIntoState(updated);
+      setEditingPlatform(null);
+      onSuccessToast(`Восстановлена версия текста v${version}`);
+    } catch (err: any) {
+      onErrorToast(getErrMessage(err, 'Не удалось восстановить версию текста'));
+    } finally {
+      setRestoringKey(null);
+    }
+  };
+
+  const renderModelSelector = () => {
+    if (!modelsCatalog) return null;
+    const curated = modelsCatalog.curated || [];
+    const allModels = modelsCatalog.all || [];
+    if (curated.length === 0 && allModels.length === 0) return null;
+
+    const currentInCurated = curated.some((m) => m.id === selectedModel);
+    const shouldShowSelect = showAllModels || curated.length === 0;
+    const selectOptions = Array.from(
+      new Set([
+        ...curated.map((m) => m.id),
+        ...allModels,
+        ...(selectedModel ? [selectedModel] : []),
+      ])
+    ).filter(Boolean);
+
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <label className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700">
+            <Cpu className="w-3.5 h-3.5 text-teal-600" />
+            Модель текста
+          </label>
+          {allModels.length > 0 && curated.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAllModels((prev) => !prev)}
+              className="text-[11px] font-medium text-teal-700 hover:text-teal-800 underline underline-offset-2"
+            >
+              {showAllModels ? 'Основные модели' : `Все модели (${allModels.length})`}
+            </button>
+          )}
+        </div>
+
+        {shouldShowSelect ? (
+          <select
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500"
+          >
+            {selectOptions.map((id) => {
+              const curatedMeta = curated.find((m) => m.id === id);
+              return (
+                <option key={id} value={id}>
+                  {curatedMeta ? `${curatedMeta.label} (${curatedMeta.tier})` : id}
+                </option>
+              );
+            })}
+          </select>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {curated.map((opt) => {
+              const isSelected = selectedModel === opt.id;
+              const tierMeta = TIER_BADGES[opt.tier] || TIER_BADGES.other;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  title={opt.description || opt.id}
+                  onClick={() => setSelectedModel(opt.id)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-medium border transition-all ${
+                    isSelected
+                      ? 'bg-teal-50 border-teal-500 text-teal-800 shadow-sm'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-teal-400'
+                  }`}
+                >
+                  <span>{opt.label}</span>
+                  <span
+                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md border ${tierMeta.cls}`}
+                  >
+                    {tierMeta.label}
+                  </span>
+                </button>
+              );
+            })}
+            {selectedModel && !currentInCurated && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-medium border bg-teal-50 border-teal-500 text-teal-800">
+                {selectedModel}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const handleOpenDraftFromHistory = async (draftId: number) => {
@@ -663,6 +851,8 @@ export const PostsView: React.FC<PostsViewProps> = ({
                     </div>
                   </div>
 
+                  {renderModelSelector()}
+
                   <button
                     type="button"
                     disabled={isBusy}
@@ -803,23 +993,104 @@ export const PostsView: React.FC<PostsViewProps> = ({
                         {isRegeneratingImage ? '...' : 'Создать'}
                       </button>
                     </div>
+
+                    {activeDraft.image_history && activeDraft.image_history.length > 0 && (
+                      <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-slate-600">
+                            История визуала ({activeDraft.image_history.length})
+                          </span>
+                          <span className="text-[10px] text-slate-400">Нажмите для отката</span>
+                        </div>
+                        <div className="flex gap-2 overflow-x-auto pb-1">
+                          {activeDraft.image_history.map((rev) => {
+                            const isActiveUrl = rev.url === visualUrl;
+                            const isRestoringThis = restoringKey === `image:${rev.version}`;
+                            return (
+                              <button
+                                key={rev.version}
+                                type="button"
+                                disabled={Boolean(restoringKey)}
+                                onClick={() => handleRestoreImageRevision(rev.version)}
+                                title={rev.prompt || `Версия v${rev.version}`}
+                                className={`relative shrink-0 w-14 h-14 rounded-lg overflow-hidden border transition-all disabled:opacity-60 ${
+                                  isActiveUrl
+                                    ? 'border-teal-600 ring-2 ring-teal-500/30'
+                                    : 'border-slate-200 hover:border-teal-400'
+                                }`}
+                              >
+                                <img
+                                  src={rev.url}
+                                  alt={`v${rev.version}`}
+                                  className="w-full h-full object-cover"
+                                />
+                                <span
+                                  className={`absolute bottom-0.5 right-0.5 px-1 py-0.2 rounded text-[9px] font-bold ${
+                                    isActiveUrl
+                                      ? 'bg-teal-600 text-white'
+                                      : 'bg-slate-900/70 text-white'
+                                  }`}
+                                >
+                                  {isRestoringThis ? '...' : `v${rev.version}`}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Platform Variant Cards */}
-                  <div className="space-y-3">
-                    {(activeDraft.variants || []).map((variant) => {
-                      const meta = getPlatformMeta(variant.platform);
-                      const charCount = variant.text?.length || 0;
-                      const isOverLimit = charCount > meta.maxChars;
-                      const isEditing = editingPlatform === variant.platform;
-                      const isRefining = refiningPlatform === variant.platform;
-                      const isCopied = copiedPlatform === variant.platform;
+                  {/* Platform Tabs + Active Variant Card */}
+                  {(() => {
+                    const variants = activeDraft.variants || [];
+                    if (variants.length === 0) return null;
+                    const activeVariant =
+                      variants.find((v) => v.platform === activeVariantPlatform) || variants[0];
+                    const meta = getPlatformMeta(activeVariant.platform);
+                    const charCount = activeVariant.text?.length || 0;
+                    const isOverLimit = charCount > meta.maxChars;
+                    const isEditing = editingPlatform === activeVariant.platform;
+                    const isRefining = refiningPlatform === activeVariant.platform;
+                    const isCopied = copiedPlatform === activeVariant.platform;
+                    const platformHistory = (activeDraft.text_history || [])
+                      .filter(
+                        (rev) =>
+                          rev.platform.toLowerCase() === activeVariant.platform.toLowerCase()
+                      )
+                      .sort((a, b) => b.version - a.version);
 
-                      return (
-                        <div
-                          key={variant.platform}
-                          className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-sm space-y-3"
-                        >
+                    return (
+                      <div className="space-y-2.5">
+                        {/* Platform Tabs */}
+                        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                          {variants.map((v) => {
+                            const pMeta = getPlatformMeta(v.platform);
+                            const isTabActive = v.platform === activeVariant.platform;
+                            return (
+                              <button
+                                key={v.platform}
+                                type="button"
+                                onClick={() => {
+                                  setActiveVariantPlatform(v.platform);
+                                  if (editingPlatform && editingPlatform !== v.platform) {
+                                    setEditingPlatform(null);
+                                  }
+                                }}
+                                className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                                  isTabActive
+                                    ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:border-teal-400'
+                                }`}
+                              >
+                                {pMeta.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Active Variant Card */}
+                        <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-sm space-y-3">
                           {/* Card Header */}
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
@@ -841,7 +1112,9 @@ export const PostsView: React.FC<PostsViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() =>
-                                  isEditing ? setEditingPlatform(null) : startManualEdit(variant)
+                                  isEditing
+                                    ? setEditingPlatform(null)
+                                    : startManualEdit(activeVariant)
                                 }
                                 className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100"
                               >
@@ -859,7 +1132,7 @@ export const PostsView: React.FC<PostsViewProps> = ({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleCopyVariant(variant)}
+                                onClick={() => handleCopyVariant(activeVariant)}
                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 text-xs font-semibold"
                               >
                                 {isCopied ? (
@@ -877,7 +1150,7 @@ export const PostsView: React.FC<PostsViewProps> = ({
                             </div>
                           </div>
 
-                          {/* Card Body: Edit or View */}
+                          {/* Card Body: Edit or Markdown Preview */}
                           {isEditing ? (
                             <div className="space-y-2">
                               <textarea
@@ -909,7 +1182,7 @@ export const PostsView: React.FC<PostsViewProps> = ({
                               <button
                                 type="button"
                                 disabled={isBusy}
-                                onClick={() => handleSaveManualEdit(variant.platform)}
+                                onClick={() => handleSaveManualEdit(activeVariant.platform)}
                                 className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:opacity-50"
                               >
                                 <Save className="w-3.5 h-3.5" />
@@ -918,17 +1191,18 @@ export const PostsView: React.FC<PostsViewProps> = ({
                             </div>
                           ) : (
                             <div className="space-y-2">
-                              <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">
-                                {variant.text}
-                              </p>
-                              {variant.cta && (
+                              <FormattedMessage
+                                content={activeVariant.text}
+                                className="text-xs text-slate-800"
+                              />
+                              {activeVariant.cta && (
                                 <p className="text-xs font-semibold text-teal-700 bg-teal-50/60 px-2.5 py-1.5 rounded-lg">
-                                  CTA: {variant.cta}
+                                  CTA: {activeVariant.cta}
                                 </p>
                               )}
-                              {variant.hashtags && variant.hashtags.length > 0 && (
+                              {activeVariant.hashtags && activeVariant.hashtags.length > 0 && (
                                 <div className="flex flex-wrap gap-1">
-                                  {variant.hashtags.map((tag, idx) => (
+                                  {activeVariant.hashtags.map((tag, idx) => (
                                     <span
                                       key={idx}
                                       className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md"
@@ -941,15 +1215,19 @@ export const PostsView: React.FC<PostsViewProps> = ({
                             </div>
                           )}
 
-                          {/* Quick AI Refine & Custom Instruction */}
-                          <div className="pt-2 border-t border-slate-100 space-y-2">
+                          {/* Quick AI Refine, Model Selector & Custom Instruction */}
+                          <div className="pt-2.5 border-t border-slate-100 space-y-2.5">
+                            {renderModelSelector()}
+
                             <div className="flex flex-wrap gap-1">
                               {QUICK_REFINE_ACTIONS.map((act) => (
                                 <button
                                   key={act.label}
                                   type="button"
                                   disabled={isRefining}
-                                  onClick={() => handleRefine(variant.platform, act.instruction)}
+                                  onClick={() =>
+                                    handleRefine(activeVariant.platform, act.instruction)
+                                  }
                                   className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-teal-50 hover:text-teal-700 border border-slate-200 text-[11px] font-medium text-slate-600 transition-colors disabled:opacity-50"
                                 >
                                   {act.label}
@@ -960,11 +1238,11 @@ export const PostsView: React.FC<PostsViewProps> = ({
                             <div className="flex gap-1.5">
                               <input
                                 type="text"
-                                value={customInstructions[variant.platform] || ''}
+                                value={customInstructions[activeVariant.platform] || ''}
                                 onChange={(e) =>
                                   setCustomInstructions((prev) => ({
                                     ...prev,
-                                    [variant.platform]: e.target.value,
+                                    [activeVariant.platform]: e.target.value,
                                   }))
                                 }
                                 placeholder="Своя правка для ИИ..."
@@ -973,12 +1251,13 @@ export const PostsView: React.FC<PostsViewProps> = ({
                               <button
                                 type="button"
                                 disabled={
-                                  isRefining || !(customInstructions[variant.platform] || '').trim()
+                                  isRefining ||
+                                  !(customInstructions[activeVariant.platform] || '').trim()
                                 }
                                 onClick={() =>
                                   handleRefine(
-                                    variant.platform,
-                                    customInstructions[variant.platform] || ''
+                                    activeVariant.platform,
+                                    customInstructions[activeVariant.platform] || ''
                                   )
                                 }
                                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 disabled:opacity-50"
@@ -992,10 +1271,96 @@ export const PostsView: React.FC<PostsViewProps> = ({
                               </button>
                             </div>
                           </div>
+
+                          {/* Text Revision History */}
+                          {platformHistory.length > 0 && (
+                            <div className="pt-2 border-t border-slate-100 space-y-2">
+                              <button
+                                type="button"
+                                onClick={() => setShowTextHistory((prev) => !prev)}
+                                className="w-full flex items-center justify-between text-[11px] font-semibold text-slate-600 hover:text-slate-900"
+                              >
+                                <span className="inline-flex items-center gap-1.5">
+                                  <History className="w-3.5 h-3.5 text-teal-600" />
+                                  История версий ({platformHistory.length})
+                                </span>
+                                {showTextHistory ? (
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+
+                              {showTextHistory && (
+                                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
+                                  {platformHistory.map((rev) => {
+                                    const srcMeta = REVISION_SOURCE_LABELS[rev.source] || {
+                                      label: rev.source,
+                                      cls: 'bg-slate-100 text-slate-700',
+                                    };
+                                    const isRestoringThis =
+                                      restoringKey ===
+                                      `text:${activeVariant.platform}:${rev.version}`;
+                                    return (
+                                      <div
+                                        key={`${rev.platform}-${rev.version}`}
+                                        className="flex items-start justify-between gap-2 p-2 rounded-xl bg-slate-50 border border-slate-200/80"
+                                      >
+                                        <div className="min-w-0 flex-1 space-y-0.5">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="text-[11px] font-bold text-slate-800">
+                                              v{rev.version}
+                                            </span>
+                                            <span
+                                              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${srcMeta.cls}`}
+                                            >
+                                              {srcMeta.label}
+                                            </span>
+                                            {rev.model && (
+                                              <span className="text-[10px] font-mono text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200 truncate max-w-[140px]">
+                                                {rev.model}
+                                              </span>
+                                            )}
+                                            <span className="text-[10px] text-slate-400">
+                                              {new Date(rev.created_at).toLocaleString('ru-RU', {
+                                                day: '2-digit',
+                                                month: '2-digit',
+                                                hour: '2-digit',
+                                                minute: '2-digit',
+                                              })}
+                                            </span>
+                                          </div>
+                                          {rev.instruction && (
+                                            <p className="text-[11px] text-slate-600 italic truncate">
+                                              «{rev.instruction}»
+                                            </p>
+                                          )}
+                                        </div>
+                                        <button
+                                          type="button"
+                                          disabled={Boolean(restoringKey)}
+                                          onClick={() =>
+                                            handleRestoreTextRevision(
+                                              rev.version,
+                                              activeVariant.platform
+                                            )
+                                          }
+                                          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-slate-200 hover:border-teal-500 hover:text-teal-700 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
+                                        >
+                                          <RotateCcw className="w-3 h-3" />
+                                          {isRestoringThis ? '...' : 'Вернуть'}
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
