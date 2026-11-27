@@ -8,6 +8,7 @@ import {
   Headphones,
   FileText,
   MessageCircle,
+  Sparkles,
   Wrench,
 } from 'lucide-react';
 import { ModeItem } from '../../types';
@@ -24,6 +25,7 @@ const modeIcons: Record<string, React.ReactNode> = {
   shop: <ShoppingBag className="w-6 h-6 text-teal-600" />,
   reception: <Calendar className="w-6 h-6 text-teal-600" />,
   reminders: <Bell className="w-6 h-6 text-teal-600" />,
+  posts: <Sparkles className="w-6 h-6 text-teal-600" />,
   channels: <Megaphone className="w-6 h-6 text-teal-600" />,
   giveaways: <Gift className="w-6 h-6 text-teal-600" />,
   support: <Headphones className="w-6 h-6 text-teal-600" />,
@@ -36,6 +38,7 @@ const modeTitles: Record<string, string> = {
   shop: 'Магазин',
   reception: 'Ресепшен',
   reminders: 'Напоминания',
+  posts: 'Контент-студия',
   channels: 'Каналы',
   giveaways: 'Конкурсы',
   support: 'Помощь',

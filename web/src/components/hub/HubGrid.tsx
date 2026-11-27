@@ -35,7 +35,7 @@ export const HubGrid: React.FC<HubGridProps> = ({
   const shopMode = getMode('shop', 'Магазин');
   const receptionMode = getMode('reception', 'Ресепшен');
   const remindersMode = getMode('reminders', 'Напоминания');
-  const channelsMode = getMode('channels', 'Каналы');
+  const postsMode = getMode('posts', 'Контент-студия');
   const giveawaysMode = getMode('giveaways', 'Конкурсы');
   const supportMode = getMode('support', 'Помощь');
   const docsMode = getMode('docs', 'Документы');
@@ -81,10 +81,10 @@ export const HubGrid: React.FC<HubGridProps> = ({
           <MascotRenderer mascot={mascot} onTap={onTapMascot} />
         </div>
 
-        {/* Cell 6 (Row 2, Col 3): Channels ('Каналы') */}
+        {/* Cell 6 (Row 2, Col 3): Content Studio ('Контент-студия') */}
         <ModeCard
-          mode={channelsMode}
-          isActiveMode={activeModeId === 'channels'}
+          mode={postsMode}
+          isActiveMode={activeModeId === 'posts'}
           onSelect={onSelectMode}
           onMaintenanceClick={onMaintenanceClick}
         />

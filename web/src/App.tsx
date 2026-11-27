@@ -10,6 +10,7 @@ import { ReceptionView } from './components/modes/ReceptionView';
 import { SupportView } from './components/modes/SupportView';
 import { ChatView } from './components/modes/ChatView';
 import { RemindersView } from './components/modes/RemindersView';
+import { PostsView } from './components/modes/PostsView';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { apiClient } from './api/client';
 import {
@@ -31,10 +32,9 @@ const initial8Modes: ModeItem[] = [
     daily_quota: 100,
   },
   {
-    id: 'channels',
-    title: 'Каналы',
-    is_active: false,
-    maintenance_message: 'Модуль «Каналы» временно отключён администратором для обновления. Скоро вернётся в работу!',
+    id: 'posts',
+    title: 'Контент-студия',
+    is_active: true,
     daily_quota: 100,
   },
   {
@@ -256,6 +256,14 @@ export const App: React.FC = () => {
 
         {currentView === 'reminders' && (
           <RemindersView
+            onBack={() => setCurrentView('hub')}
+            onSuccessToast={(msg) => addToast('success', msg)}
+            onErrorToast={(msg) => addToast('error', msg)}
+          />
+        )}
+
+        {currentView === 'posts' && (
+          <PostsView
             onBack={() => setCurrentView('hub')}
             onSuccessToast={(msg) => addToast('success', msg)}
             onErrorToast={(msg) => addToast('error', msg)}
