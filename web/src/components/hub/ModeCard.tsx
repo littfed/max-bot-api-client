@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Sparkles,
   Wrench,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { ModeItem } from '../../types';
 
@@ -31,6 +32,7 @@ const modeIcons: Record<string, React.ReactNode> = {
   support: <Headphones className="w-6 h-6 text-teal-600" />,
   docs: <FileText className="w-6 h-6 text-teal-600" />,
   chat: <MessageCircle className="w-6 h-6 text-teal-600" />,
+  images: <ImageIcon className="w-6 h-6 text-teal-600" />,
 };
 
 // Mode short titles matching mockup
@@ -44,6 +46,7 @@ const modeTitles: Record<string, string> = {
   support: 'Помощь',
   docs: 'Документы',
   chat: 'Общение',
+  images: 'Фотостудия',
 };
 
 export const ModeCard: React.FC<ModeCardProps> = ({

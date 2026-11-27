@@ -11,6 +11,7 @@ import { SupportView } from './components/modes/SupportView';
 import { ChatView } from './components/modes/ChatView';
 import { RemindersView } from './components/modes/RemindersView';
 import { PostsView } from './components/modes/PostsView';
+import { ImagesView } from './components/modes/ImagesView';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { apiClient } from './api/client';
 import {
@@ -53,6 +54,7 @@ const initial8Modes: ModeItem[] = [
     daily_quota: 100,
   },
   { id: 'chat', title: 'Общение', is_active: true, daily_quota: 100 },
+  { id: 'images', title: 'Фотостудия', is_active: true, daily_quota: 50 },
 ];
 
 export const App: React.FC = () => {
@@ -264,6 +266,14 @@ export const App: React.FC = () => {
 
         {currentView === 'posts' && (
           <PostsView
+            onBack={() => setCurrentView('hub')}
+            onSuccessToast={(msg) => addToast('success', msg)}
+            onErrorToast={(msg) => addToast('error', msg)}
+          />
+        )}
+
+        {currentView === 'images' && (
+          <ImagesView
             onBack={() => setCurrentView('hub')}
             onSuccessToast={(msg) => addToast('success', msg)}
             onErrorToast={(msg) => addToast('error', msg)}

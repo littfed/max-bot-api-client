@@ -39,6 +39,7 @@ export const HubGrid: React.FC<HubGridProps> = ({
   const giveawaysMode = getMode('giveaways', 'Конкурсы');
   const supportMode = getMode('support', 'Помощь');
   const docsMode = getMode('docs', 'Документы');
+  const imagesMode = getMode('images', 'Фотостудия');
 
   return (
     <div className="w-full max-w-md sm:max-w-lg mx-auto px-4 py-3 sm:py-4">
@@ -109,6 +110,14 @@ export const HubGrid: React.FC<HubGridProps> = ({
         <ModeCard
           mode={docsMode}
           isActiveMode={activeModeId === 'docs'}
+          onSelect={onSelectMode}
+          onMaintenanceClick={onMaintenanceClick}
+        />
+
+        {/* Cell 10: Image Studio ('Фотостудия') */}
+        <ModeCard
+          mode={imagesMode}
+          isActiveMode={activeModeId === 'images'}
           onSelect={onSelectMode}
           onMaintenanceClick={onMaintenanceClick}
         />
