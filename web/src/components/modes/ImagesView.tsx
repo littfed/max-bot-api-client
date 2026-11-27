@@ -50,7 +50,12 @@ const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
 };
 
 function getErrMessage(err: any, fallback: string): string {
-  return err?.response?.data?.error || err?.message || fallback;
+  return (
+    err?.response?.data?.message ||
+    err?.response?.data?.error ||
+    err?.message ||
+    fallback
+  );
 }
 
 export const ImagesView: React.FC<ImagesViewProps> = ({
@@ -931,7 +936,14 @@ export const ImagesView: React.FC<ImagesViewProps> = ({
                               {badge.label}
                             </span>
                             <span className="text-[10px] text-slate-400">
-                              {proj.aspect_ratio}
+                              {proj.updated_at || proj.created_at
+                                ? new Date(
+                                    proj.updated_at || proj.created_at
+                                  ).toLocaleDateString('ru-RU', {
+                                    day: '2-digit',
+                                    month: 'short',
+                                  })
+                                : proj.aspect_ratio}
                             </span>
                           </div>
                         </div>
