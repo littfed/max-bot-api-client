@@ -168,22 +168,7 @@ func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*D
 	}
 
 	// 5. Quota Check: daily quota protection per user and mode
-	dailyQuota := 100
-	if o.store != nil {
-		configs, err := o.store.GetModeConfigs(ctx)
-		if err == nil {
-			for _, cfg := range configs {
-				if cfg.ModeID == activeMode {
-					if cfg.DailyQuota > 0 {
-						dailyQuota = cfg.DailyQuota
-					}
-					break
-				}
-			}
-		}
-	}
-	quotaKey := fmt.Sprintf("bothub:quota:%d:%s:%s", user.ID, activeMode, time.Now().Format("20060102"))
-	allowed, err := o.checkAndIncrementQuota(ctx, quotaKey, dailyQuota)
+	allowed, err := o.ConsumeQuota(ctx, user.ID, activeMode)
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator: quota check failed: %w", err)
 	}
@@ -409,6 +394,27 @@ func (o *Orchestrator) activeModeButtons(ctx context.Context) [][]ResponseButton
 			{Text: "💬 Общение", Data: "mode:select:chat"},
 		},
 	}
+}
+
+// ConsumeQuota checks and increments the daily quota for userID in modeID.
+// Returns (true, nil) if within the configured daily_quota, or (false, nil) if exceeded.
+func (o *Orchestrator) ConsumeQuota(ctx context.Context, userID int64, modeID string) (bool, error) {
+	dailyQuota := 100
+	if o.store != nil {
+		configs, err := o.store.GetModeConfigs(ctx)
+		if err == nil {
+			for _, cfg := range configs {
+				if cfg.ModeID == modeID {
+					if cfg.DailyQuota > 0 {
+						dailyQuota = cfg.DailyQuota
+					}
+					break
+				}
+			}
+		}
+	}
+	quotaKey := fmt.Sprintf("bothub:quota:%d:%s:%s", userID, modeID, time.Now().Format("20060102"))
+	return o.checkAndIncrementQuota(ctx, quotaKey, dailyQuota)
 }
 
 func (o *Orchestrator) checkAndIncrementQuota(ctx context.Context, key string, limit int) (bool, error) {

@@ -106,6 +106,8 @@ func setupTestImagesAPIServer(t *testing.T) *httptest.Server {
 
 	guard := core.NewMaintenanceGuard(sqlStore, nil)
 	fsm := core.NewCompositeFSM(sqlStore, nil)
+	lockMgr := core.NewLockManager(nil)
+	orch := core.NewOrchestrator(sqlStore, fsm, lockMgr, guard)
 	gw := &mockImagesAIGateway{
 		generatedPNG: makeTestPNG(10, 120, 220),
 		editedPNG:    makeTestPNG(220, 80, 40),
@@ -119,6 +121,7 @@ func setupTestImagesAPIServer(t *testing.T) *httptest.Server {
 		Store:           sqlStore,
 		Guard:           guard,
 		FSM:             fsm,
+		Orchestrator:    orch,
 		ImagesModule:    mod,
 		BotToken:        "test-token",
 		JWTSecret:       "test-jwt-secret",
@@ -282,6 +285,9 @@ func TestImagesAPI_FullFlow(t *testing.T) {
 	if restored.CurrentVersion != 3 {
 		t.Fatalf("expected CurrentVersion=3 after restore, got %d", restored.CurrentVersion)
 	}
+	if restored.CurrentImageURL != proj.CurrentImageURL {
+		t.Fatalf("expected restored CurrentImageURL %q to equal v1 URL %q", restored.CurrentImageURL, proj.CurrentImageURL)
+	}
 
 	// 4. GET /api/v1/images/assets/{key...} (without auth header, simulating browser <img>)
 	assetResp := doImagesReq(t, http.MethodGet, srv.URL+restored.CurrentImageURL, "", nil, "")
@@ -311,5 +317,164 @@ func TestImagesAPI_FullFlow(t *testing.T) {
 	defer afterDelResp.Body.Close()
 	if afterDelResp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404 after delete, got %d", afterDelResp.StatusCode)
+	}
+}
+
+func TestImagesAPI_Unauthorized(t *testing.T) {
+	srv := setupTestImagesAPIServer(t)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/images/presets"},
+		{http.MethodGet, "/api/v1/images/projects"},
+	} {
+		resp := doImagesReq(t, tc.method, srv.URL+tc.path, "", nil, "")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s %s without auth: expected 401, got %d", tc.method, tc.path, resp.StatusCode)
+		}
+	}
+}
+
+func TestImagesAPI_UploadTooLarge(t *testing.T) {
+	srv := setupTestImagesAPIServer(t)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	_ = mw.WriteField("mode", "edit")
+	_ = mw.WriteField("prompt", "Studio shot")
+	fw, err := mw.CreateFormFile("source_image", "huge.png")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	oversize := make([]byte, images.MaxUploadBytes+1024)
+	copy(oversize, makeTestPNG(10, 20, 30))
+	_, _ = fw.Write(oversize)
+	_ = mw.Close()
+
+	resp := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", &body, mw.FormDataContentType())
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 413 for >10 MiB upload, got %d: %s", resp.StatusCode, string(raw))
+	}
+}
+
+func TestImagesAPI_ListModelsAndProjects(t *testing.T) {
+	srv := setupTestImagesAPIServer(t)
+
+	// GET /api/v1/images/models
+	modelsResp := doImagesReq(t, http.MethodGet, srv.URL+"/api/v1/images/models", "1", nil, "")
+	defer modelsResp.Body.Close()
+	if modelsResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /models expected 200, got %d", modelsResp.StatusCode)
+	}
+	var modelsPayload struct {
+		Models []images.ModelOption `json:"models"`
+	}
+	if err := json.NewDecoder(modelsResp.Body).Decode(&modelsPayload); err != nil {
+		t.Fatalf("decode models: %v", err)
+	}
+	if len(modelsPayload.Models) == 0 {
+		t.Fatalf("expected non-empty models list")
+	}
+
+	// Create a project for user 1
+	createResp := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(`{"mode":"generate","prompt":"Neon cat"}`), "application/json")
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create project expected 201, got %d", createResp.StatusCode)
+	}
+
+	// GET /api/v1/images/projects for user 1 -> 1 project
+	list1Resp := doImagesReq(t, http.MethodGet, srv.URL+"/api/v1/images/projects", "1", nil, "")
+	defer list1Resp.Body.Close()
+	if list1Resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /projects expected 200, got %d", list1Resp.StatusCode)
+	}
+	var list1 struct {
+		Projects []images.Project `json:"projects"`
+	}
+	if err := json.NewDecoder(list1Resp.Body).Decode(&list1); err != nil {
+		t.Fatalf("decode user 1 projects: %v", err)
+	}
+	if len(list1.Projects) != 1 {
+		t.Fatalf("expected 1 project for user 1, got %d", len(list1.Projects))
+	}
+
+	// GET /api/v1/images/projects for user 2 -> 0 projects
+	list2Resp := doImagesReq(t, http.MethodGet, srv.URL+"/api/v1/images/projects", "2", nil, "")
+	defer list2Resp.Body.Close()
+	var list2 struct {
+		Projects []images.Project `json:"projects"`
+	}
+	if err := json.NewDecoder(list2Resp.Body).Decode(&list2); err != nil {
+		t.Fatalf("decode user 2 projects: %v", err)
+	}
+	if len(list2.Projects) != 0 {
+		t.Fatalf("expected 0 projects for user 2, got %d", len(list2.Projects))
+	}
+}
+
+func TestImagesAPI_NotFoundAndForbiddenActions(t *testing.T) {
+	srv := setupTestImagesAPIServer(t)
+
+	// 404 on nonexistent project
+	nfResp := doImagesReq(t, http.MethodGet, srv.URL+"/api/v1/images/projects/999999", "1", nil, "")
+	nfResp.Body.Close()
+	if nfResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for nonexistent project, got %d", nfResp.StatusCode)
+	}
+
+	// Create project as user 1
+	createResp := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(`{"mode":"generate","prompt":"Glass vase"}`), "application/json")
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 creating project, got %d", createResp.StatusCode)
+	}
+	var proj images.Project
+	if err := json.NewDecoder(createResp.Body).Decode(&proj); err != nil {
+		t.Fatalf("decode project: %v", err)
+	}
+
+	// User 2 cannot refine, restore, or delete user 1's project -> 403
+	refResp := doImagesReq(t, http.MethodPost, fmt.Sprintf("%s/api/v1/images/projects/%d/refine", srv.URL, proj.ID), "2", strings.NewReader(`{"prompt":"blue"}`), "application/json")
+	refResp.Body.Close()
+	if refResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("refine by other user: expected 403, got %d", refResp.StatusCode)
+	}
+
+	restResp := doImagesReq(t, http.MethodPost, fmt.Sprintf("%s/api/v1/images/projects/%d/restore", srv.URL, proj.ID), "2", strings.NewReader(`{"version":1}`), "application/json")
+	restResp.Body.Close()
+	if restResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("restore by other user: expected 403, got %d", restResp.StatusCode)
+	}
+
+	delResp := doImagesReq(t, http.MethodDelete, fmt.Sprintf("%s/api/v1/images/projects/%d", srv.URL, proj.ID), "2", nil, "")
+	delResp.Body.Close()
+	if delResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("delete by other user: expected 403, got %d", delResp.StatusCode)
+	}
+}
+
+func TestImagesAPI_QuotaExceeded(t *testing.T) {
+	srv := setupTestImagesAPIServer(t)
+
+	// Default daily_quota from 00006_images_studio.sql is 50; exhaust it for user 1.
+	for i := 0; i < 50; i++ {
+		resp := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(`{"mode":"generate","prompt":"quota test"}`), "application/json")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("request %d: expected 201, got %d", i+1, resp.StatusCode)
+		}
+	}
+
+	// 51st request must return 429 Too Many Requests.
+	overResp := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(`{"mode":"generate","prompt":"over quota"}`), "application/json")
+	overResp.Body.Close()
+	if overResp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 when daily quota exceeded, got %d", overResp.StatusCode)
 	}
 }

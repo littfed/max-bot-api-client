@@ -48,11 +48,27 @@ func (h *imagesHandler) checkModeActive(w http.ResponseWriter, r *http.Request) 
 		return true
 	}
 	active, maintMsg, err := h.cfg.Guard.IsActive(r.Context(), "images")
-	if err == nil && !active && maintMsg != "Режим не найден" {
+	if err == nil && !active {
 		if maintMsg == "" {
 			maintMsg = "Фотостудия временно недоступна (техническое обслуживание)"
 		}
 		writeError(w, http.StatusForbidden, maintMsg)
+		return false
+	}
+	return true
+}
+
+func (h *imagesHandler) consumeQuota(w http.ResponseWriter, r *http.Request, userID int64) bool {
+	if h.cfg.Orchestrator == nil {
+		return true
+	}
+	allowed, err := h.cfg.Orchestrator.ConsumeQuota(r.Context(), userID, "images")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("quota check failed: %v", err))
+		return false
+	}
+	if !allowed {
+		writeError(w, http.StatusTooManyRequests, "Суточный лимит операций в Фотостудии исчерпан")
 		return false
 	}
 	return true
@@ -150,6 +166,9 @@ func (h *imagesHandler) handleCreateProject(w http.ResponseWriter, r *http.Reque
 	if !h.checkModeActive(w, r) {
 		return
 	}
+	if !h.consumeQuota(w, r, user.ID) {
+		return
+	}
 
 	input := images.CreateProjectInput{
 		UserID: user.ID,
@@ -233,6 +252,9 @@ func (h *imagesHandler) handleRefineProject(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !h.checkModeActive(w, r) {
+		return
+	}
+	if !h.consumeQuota(w, r, user.ID) {
 		return
 	}
 	projectID, ok := parseImageProjectID(w, r)
