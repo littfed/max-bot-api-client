@@ -231,7 +231,7 @@ func TestService_ListAvailableModels_FilteredAndFallback(t *testing.T) {
 	store := NewMemoryStore()
 
 	gw := &mockAIGateway{
-		modelsResp: []string{"auto", "gemini-3.8-flash", "gpt-5.4", "flux-dev", "whisper-1", "custom-text-model"},
+		modelsResp: []string{"auto", "gemini-3-8-flash", "gpt-4o-mini", "flux-dev", "whisper-1", "custom-text-model"},
 	}
 	svc := NewService(store, NewPipeline(gw))
 

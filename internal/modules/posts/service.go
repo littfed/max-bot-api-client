@@ -19,15 +19,17 @@ const (
 )
 
 var curatedTextModels = []ModelOption{
-	{ID: "auto", Label: "Auto (Smart Router)", Tier: "auto", Description: "Автоматический выбор оптимальной модели"},
-	{ID: "gemini-3.8-flash", Label: "Gemini 3.8 Flash", Tier: "balanced", Description: "Быстрая и сбалансированная модель Google"},
-	{ID: "deepseek-4-1-flash", Label: "DeepSeek V4.1 Flash", Tier: "balanced", Description: "Быстрая модель DeepSeek для текстов"},
-	{ID: "gpt-6-luna", Label: "GPT-6 Luna", Tier: "balanced", Description: "Универсальная модель нового поколения"},
-	{ID: "claude-sonnet-5-5", Label: "Claude Sonnet 5.5", Tier: "balanced", Description: "Выразительный копирайтинг и структура"},
-	{ID: "gpt-5.4", Label: "GPT-5.4", Tier: "balanced", Description: "Универсальная модель OpenAI"},
-	{ID: "deepseek-4-pro", Label: "DeepSeek 4 Pro", Tier: "pro", Description: "Глубокая логика и аналитика"},
-	{ID: "qwen3.6-plus", Label: "Qwen 3.6 Plus", Tier: "balanced", Description: "Сильный мультиязычный текст"},
-	{ID: "claude-opus-5-5", Label: "Claude Opus 5.5", Tier: "pro", Description: "Максимальное качество и нюансы стиля"},
+	{ID: "auto", Label: "Auto (Smart Router)", Tier: "auto", Description: "Автоматический выбор оптимальной модели (~1.9s)"},
+	{ID: "gemini-2.5-flash", Label: "Gemini 2.5 Flash", Tier: "balanced", Description: "Очень быстрая и стабильная модель Google (~1.9s)"},
+	{ID: "gpt-4o-mini", Label: "GPT-4o Mini", Tier: "balanced", Description: "Быстрая модель OpenAI с чётким JSON (~1.7s)"},
+	{ID: "qwen3.7-flash", Label: "Qwen 3.7 Flash", Tier: "balanced", Description: "Быстрая мультиязычная модель (~4.2s)"},
+	{ID: "deepseek-4-flash", Label: "DeepSeek 4 Flash", Tier: "balanced", Description: "Сбалансированная модель DeepSeek (~5.2s)"},
+	{ID: "gemini-3-8-flash", Label: "Gemini 3.8 Flash", Tier: "balanced", Description: "Свежая модель Google Flash (~6.1s)"},
+	{ID: "llama-3.3-70b", Label: "Llama 3.3 70B", Tier: "balanced", Description: "Крупная открытая модель Meta (~6.0s)"},
+	{ID: "mistral-large", Label: "Mistral Large", Tier: "pro", Description: "Флагман Mistral с быстрым откликом (~2.5s)"},
+	{ID: "qwen3.8-27b", Label: "Qwen 3.8 27B", Tier: "pro", Description: "Качественный русский копирайтинг (~5.5s)"},
+	{ID: "deepseek-4-pro", Label: "DeepSeek 4 Pro", Tier: "pro", Description: "Глубокая логика и структура постов (~7.9s)"},
+	{ID: "gpt-6-luna", Label: "GPT-6 Luna", Tier: "pro", Description: "Мощная модель нового поколения (~22s)"},
 }
 
 // Service orchestrates Content Studio workflows across persistence and the AI pipeline.
@@ -571,7 +573,12 @@ func isTextModel(id string) bool {
 	excluded := []string{
 		"flux", "dall-e", "imagen", "midjourney", "stable-diffusion",
 		"sdxl", "sd-", "whisper", "tts", "embedding", "rerank", "moderation",
-		"-image", "image-",
+		"-image", "image-", "z-image",
+		// Known broken / paid-only / non-JSON models on GMA gateway:
+		"gpt-6-astra", "gpt-5.", "claude-sonnet-5-5", "claude-opus-5-5",
+		"qwen3.6-plus", "glm-4.6", "glm-4.7", "glm-5", "ernie-5.5",
+		"flint-1.0", "particle-1", "mimo-", "minimax-m2", "voxtral-small",
+		"laguna-s-2.1", "ling-3.", "nex-n2.5", "nova-micro", "l3-lunaris",
 	}
 	for _, pat := range excluded {
 		if strings.Contains(lower, pat) {

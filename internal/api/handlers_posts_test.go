@@ -39,7 +39,7 @@ func (m *mockPostsAIGateway) ListModels(ctx context.Context) ([]string, error) {
 	if len(m.models) > 0 {
 		return m.models, nil
 	}
-	return []string{"auto", "gemini-3.8-flash", "gpt-5.4", "flux-dev"}, nil
+	return []string{"auto", "gemini-3-8-flash", "gpt-4o-mini", "flux-dev"}, nil
 }
 
 func (m *mockPostsAIGateway) Vision(ctx context.Context, prompt, imageURL string) (string, error) {
