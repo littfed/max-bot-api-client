@@ -20,16 +20,26 @@ import (
 type mockPostsAIGateway struct {
 	chatResponses []string
 	chatIdx       int
+	lastModel     string
+	models        []string
 	imageURL      string
 }
 
-func (m *mockPostsAIGateway) Chat(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (m *mockPostsAIGateway) Chat(ctx context.Context, model, systemPrompt, userPrompt string) (string, error) {
+	m.lastModel = model
 	if m.chatIdx < len(m.chatResponses) {
 		resp := m.chatResponses[m.chatIdx]
 		m.chatIdx++
 		return resp, nil
 	}
 	return `{"variants":[{"platform":"max","text":"Refined text","hashtags":["#test"],"cta":"Act now"}]}`, nil
+}
+
+func (m *mockPostsAIGateway) ListModels(ctx context.Context) ([]string, error) {
+	if len(m.models) > 0 {
+		return m.models, nil
+	}
+	return []string{"auto", "gemini-3.8-flash", "gpt-5.4", "flux-dev"}, nil
 }
 
 func (m *mockPostsAIGateway) Vision(ctx context.Context, prompt, imageURL string) (string, error) {
@@ -118,6 +128,7 @@ func TestPostsAPI_Unauthorized(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/v1/posts/state"},
+		{http.MethodGet, "/api/v1/posts/models"},
 		{http.MethodPost, "/api/v1/posts/profile"},
 		{http.MethodPost, "/api/v1/posts/drafts"},
 		{http.MethodPatch, "/api/v1/posts/drafts/1/brief"},
@@ -126,6 +137,7 @@ func TestPostsAPI_Unauthorized(t *testing.T) {
 		{http.MethodPost, "/api/v1/posts/drafts/1/refine"},
 		{http.MethodPatch, "/api/v1/posts/drafts/1/variants/max"},
 		{http.MethodPost, "/api/v1/posts/drafts/1/image"},
+		{http.MethodPost, "/api/v1/posts/drafts/1/restore"},
 	}
 
 	for _, ep := range endpoints {
@@ -197,6 +209,7 @@ func TestPostsAPI_ValidationAndOwnership(t *testing.T) {
 		{http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/refine", draftID), map[string]any{"platform": "max", "instruction": "shorter"}},
 		{http.MethodPatch, fmt.Sprintf("/api/v1/posts/drafts/%d/variants/max", draftID), map[string]any{"text": "hacked"}},
 		{http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/image", draftID), map[string]any{"prompt": "hacked"}},
+		{http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/restore", draftID), map[string]any{"type": "text", "version": 1}},
 	}
 
 	for _, tc := range crossChecks {
@@ -403,5 +416,122 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 	imgResp.Body.Close()
 	if imgOut.Draft.ImagePrompt != "Bright isometric studio" || imgOut.Draft.GeneratedImageURL == "" {
 		t.Fatalf("unexpected image regen result: %+v", imgOut.Draft)
+	}
+}
+
+func TestPostsAPI_ModelsAndRestoreAndTextModel(t *testing.T) {
+	ts, _ := setupTestPostsAPIServer(t)
+	client := ts.Client()
+
+	doJSON := func(method, path string, body any, wantStatus int) *http.Response {
+		t.Helper()
+		var buf bytes.Buffer
+		if body != nil {
+			if err := json.NewEncoder(&buf).Encode(body); err != nil {
+				t.Fatalf("encode body: %v", err)
+			}
+		}
+		req, err := http.NewRequest(method, ts.URL+path, &buf)
+		if err != nil {
+			t.Fatalf("NewRequest(%s %s): %v", method, path, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Init-Data", testMAXInitData())
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Do(%s %s): %v", method, path, err)
+		}
+		if resp.StatusCode != wantStatus {
+			resp.Body.Close()
+			t.Fatalf("%s %s: expected status %d, got %d", method, path, wantStatus, resp.StatusCode)
+		}
+		return resp
+	}
+
+	// 1. GET /api/v1/posts/models
+	modelsResp := doJSON(http.MethodGet, "/api/v1/posts/models", nil, http.StatusOK)
+	var catalog posts.ModelsCatalog
+	if err := json.NewDecoder(modelsResp.Body).Decode(&catalog); err != nil {
+		modelsResp.Body.Close()
+		t.Fatalf("decode models: %v", err)
+	}
+	modelsResp.Body.Close()
+	if catalog.DefaultModel != "auto" || len(catalog.Curated) != 3 || len(catalog.All) != 3 {
+		t.Fatalf("unexpected models catalog: %+v", catalog)
+	}
+
+	// 2. Create draft, set text_model in brief, hooks, generate, refine
+	createResp := doJSON(http.MethodPost, "/api/v1/posts/drafts", map[string]any{"raw_idea": "Идея с моделью"}, http.StatusCreated)
+	var created struct {
+		Draft posts.PostDraft `json:"draft"`
+	}
+	_ = json.NewDecoder(createResp.Body).Decode(&created)
+	createResp.Body.Close()
+	draftID := created.Draft.ID
+
+	briefResp := doJSON(http.MethodPatch, fmt.Sprintf("/api/v1/posts/drafts/%d/brief", draftID), map[string]any{
+		"goal":             "engagement",
+		"tone":             "friendly",
+		"text_model":       "gpt-5.4",
+		"target_platforms": []string{"max"},
+	}, http.StatusOK)
+	briefResp.Body.Close()
+
+	hooksResp := doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/hooks", draftID), map[string]any{
+		"text_model": "gemini-3.8-flash",
+	}, http.StatusOK)
+	var hooksOut struct {
+		Draft posts.PostDraft `json:"draft"`
+	}
+	_ = json.NewDecoder(hooksResp.Body).Decode(&hooksOut)
+	hooksResp.Body.Close()
+	if hooksOut.Draft.TextModel != "gemini-3.8-flash" {
+		t.Fatalf("expected text_model gemini-3.8-flash, got %q", hooksOut.Draft.TextModel)
+	}
+
+	genResp := doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/generate", draftID), map[string]any{
+		"hook_id":    hooksOut.Draft.Hooks[0].ID,
+		"text_model": "gpt-5.4",
+	}, http.StatusOK)
+	genResp.Body.Close()
+
+	refResp := doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/refine", draftID), map[string]any{
+		"platform":    "max",
+		"instruction": "Короче",
+		"text_model":  "auto",
+	}, http.StatusOK)
+	var refOut struct {
+		Draft posts.PostDraft `json:"draft"`
+	}
+	_ = json.NewDecoder(refResp.Body).Decode(&refOut)
+	refResp.Body.Close()
+	if refOut.Draft.TextModel != "auto" {
+		t.Fatalf("expected text_model auto, got %q", refOut.Draft.TextModel)
+	}
+
+	// 3. Validation 400 on /restore
+	doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/restore", draftID), map[string]any{
+		"type":    "unknown",
+		"version": 1,
+	}, http.StatusBadRequest).Body.Close()
+
+	doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/restore", draftID), map[string]any{
+		"type":    "text",
+		"version": 0,
+	}, http.StatusBadRequest).Body.Close()
+
+	// 4. Valid /restore for text v1
+	resResp := doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/restore", draftID), map[string]any{
+		"type":     "text",
+		"version":  1,
+		"platform": "max",
+	}, http.StatusOK)
+	var resOut struct {
+		Draft posts.PostDraft `json:"draft"`
+	}
+	_ = json.NewDecoder(resResp.Body).Decode(&resOut)
+	resResp.Body.Close()
+	if resOut.Draft.Variants[0].Text != "Первый пост для MAX" {
+		t.Fatalf("expected restored text 'Первый пост для MAX', got %q", resOut.Draft.Variants[0].Text)
 	}
 }

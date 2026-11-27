@@ -103,7 +103,7 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 	case StepReady:
 		draftID := extractActiveDraftID(state)
 		if draftID > 0 && text != "" {
-			draft, err := m.service.Refine(ctx, u.ID, draftID, "", text)
+			draft, err := m.service.Refine(ctx, u.ID, draftID, "", text, "")
 			if err != nil {
 				return nil, err
 			}
@@ -191,7 +191,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		if st.ActiveDraft == nil {
 			return m.renderIdleMenu(state), nil
 		}
-		updated, err := m.service.UpdateBrief(ctx, u.ID, draftID, goal, st.ActiveDraft.Tone, st.ActiveDraft.TargetPlatforms)
+		updated, err := m.service.UpdateBrief(ctx, u.ID, draftID, goal, st.ActiveDraft.Tone, st.ActiveDraft.TextModel, st.ActiveDraft.TargetPlatforms)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +212,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 			return m.renderIdleMenu(state), nil
 		}
 		nextPlatforms := togglePlatform(st.ActiveDraft.TargetPlatforms, plat)
-		updated, err := m.service.UpdateBrief(ctx, u.ID, draftID, st.ActiveDraft.Goal, st.ActiveDraft.Tone, nextPlatforms)
+		updated, err := m.service.UpdateBrief(ctx, u.ID, draftID, st.ActiveDraft.Goal, st.ActiveDraft.Tone, st.ActiveDraft.TextModel, nextPlatforms)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +224,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		if draftID == 0 {
 			return m.renderIdleMenu(state), nil
 		}
-		draft, err := m.service.GenerateHooks(ctx, u.ID, draftID)
+		draft, err := m.service.GenerateHooks(ctx, u.ID, draftID, "")
 		if err != nil {
 			return nil, err
 		}
@@ -237,7 +237,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 			return m.renderIdleMenu(state), nil
 		}
 		hookID := strings.TrimPrefix(data, "pst:hook:")
-		draft, err := m.service.GeneratePackage(ctx, u.ID, draftID, hookID)
+		draft, err := m.service.GeneratePackage(ctx, u.ID, draftID, hookID, "")
 		if err != nil {
 			return nil, err
 		}
@@ -254,7 +254,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		if !ok {
 			instruction = preset
 		}
-		draft, err := m.service.Refine(ctx, u.ID, draftID, "", instruction)
+		draft, err := m.service.Refine(ctx, u.ID, draftID, "", instruction, "")
 		if err != nil {
 			return nil, err
 		}

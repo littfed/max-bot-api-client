@@ -3,14 +3,23 @@ package posts
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/littfed/max-bot-api-client/pkg/ai"
 )
 
 type mockAIGateway struct {
 	chatResponses []string
 	chatErrors    []error
 	chatCalls     []mockChatCall
+
+	modelsResp []string
+	modelsErr  error
+	modelsCalls int
 
 	visionResp  string
 	visionErr   error
@@ -22,6 +31,7 @@ type mockAIGateway struct {
 }
 
 type mockChatCall struct {
+	model        string
 	systemPrompt string
 	userPrompt   string
 }
@@ -36,9 +46,10 @@ type mockImageCall struct {
 	aspectRatio string
 }
 
-func (m *mockAIGateway) Chat(_ context.Context, systemPrompt, userPrompt string) (string, error) {
+func (m *mockAIGateway) Chat(_ context.Context, model, systemPrompt, userPrompt string) (string, error) {
 	idx := len(m.chatCalls)
 	m.chatCalls = append(m.chatCalls, mockChatCall{
+		model:        model,
 		systemPrompt: systemPrompt,
 		userPrompt:   userPrompt,
 	})
@@ -49,6 +60,14 @@ func (m *mockAIGateway) Chat(_ context.Context, systemPrompt, userPrompt string)
 		return m.chatResponses[idx], nil
 	}
 	return "", errors.New("unexpected chat call")
+}
+
+func (m *mockAIGateway) ListModels(_ context.Context) ([]string, error) {
+	m.modelsCalls++
+	if m.modelsErr != nil {
+		return nil, m.modelsErr
+	}
+	return m.modelsResp, nil
 }
 
 func (m *mockAIGateway) Vision(_ context.Context, prompt, imageURL string) (string, error) {
@@ -264,5 +283,92 @@ func TestPipeline_RefineVariant(t *testing.T) {
 	}
 	if updatedAll[0].Text != "Обновлённый пост для MAX" || updatedAll[1].Text != "Обновлённый пост для ВКонтакте" {
 		t.Errorf("expected all variants to be updated, got %+v", updatedAll)
+	}
+}
+
+func TestPipeline_PassesTextModelToChat(t *testing.T) {
+	gw := &mockAIGateway{
+		chatResponses: []string{
+			// 1. GenerateHooks
+			`{"hooks":[{"id":"h1","title":"Боль","text":"Почему падают охваты?","angle":"problem"}]}`,
+			// 2. GeneratePackage (fails JSON -> triggers parallel fallback)
+			`not-json`,
+			`not-json-retry`,
+			// 3-4. generatePackageParallel for 2 platforms
+			`{"variants":[{"platform":"max","text":"MAX text"}],"image_prompt":"Prompt"}`,
+			`{"variants":[{"platform":"vk","text":"VK text"}]}`,
+			// 5. RefineVariant
+			`{"variants":[{"platform":"max","text":"Refined MAX"}]}`,
+		},
+	}
+
+	p := NewPipeline(gw)
+	draft := &PostDraft{
+		RawIdea:         "Запуск продукта",
+		TextModel:       "claude-sonnet-5-5",
+		TargetPlatforms: []string{"max", "vk"},
+		Hooks:           []PostHook{{ID: "h1", Title: "Боль", Text: "Текст", Angle: "problem"}},
+		SelectedHookID:  "h1",
+	}
+
+	if _, err := p.GenerateHooks(context.Background(), draft, nil); err != nil {
+		t.Fatalf("GenerateHooks() error = %v", err)
+	}
+
+	maxSpec, _ := GetPlatformSpec("max")
+	vkSpec, _ := GetPlatformSpec("vk")
+	variants, _, err := p.GeneratePackage(context.Background(), draft, nil, []PlatformSpec{maxSpec, vkSpec})
+	if err != nil {
+		t.Fatalf("GeneratePackage() error = %v", err)
+	}
+	draft.Variants = variants
+
+	if _, err := p.RefineVariant(context.Background(), draft, nil, []PlatformSpec{maxSpec, vkSpec}, "max", "Короче"); err != nil {
+		t.Fatalf("RefineVariant() error = %v", err)
+	}
+
+	if len(gw.chatCalls) != 6 {
+		t.Fatalf("expected 6 chat calls, got %d", len(gw.chatCalls))
+	}
+	for i, call := range gw.chatCalls {
+		if call.model != "claude-sonnet-5-5" {
+			t.Errorf("chat call %d model = %q, want %q", i, call.model, "claude-sonnet-5-5")
+		}
+	}
+}
+
+func TestAIGateway_ListModels_CachesForFiveMinutes(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"auto"},{"id":"gpt-5.4"},{"id":"flux-dev"}]}`))
+	}))
+	defer srv.Close()
+
+	client := ai.NewClient(srv.URL+"/v1", "test-key")
+	gw := NewAIGateway(client)
+
+	models1, err := gw.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("first ListModels() error = %v", err)
+	}
+	if len(models1) != 3 || models1[0] != "auto" || models1[1] != "gpt-5.4" || models1[2] != "flux-dev" {
+		t.Fatalf("unexpected models1: %v", models1)
+	}
+
+	models2, err := gw.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("second ListModels() error = %v", err)
+	}
+	if len(models2) != 3 {
+		t.Fatalf("unexpected models2: %v", models2)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("expected 1 HTTP call due to cache, got %d", hits.Load())
 	}
 }

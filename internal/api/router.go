@@ -231,6 +231,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 
 	// Posts (Content Studio) Module Endpoints
 	mux.HandleFunc("GET /api/v1/posts/state", postsH.handleGetState)
+	mux.HandleFunc("GET /api/v1/posts/models", postsH.handleListModels)
 	mux.HandleFunc("POST /api/v1/posts/profile", postsH.handleSaveProfile)
 	mux.HandleFunc("POST /api/v1/posts/drafts", postsH.handleStartDraft)
 	mux.HandleFunc("PATCH /api/v1/posts/drafts/{id}/brief", postsH.handleUpdateBrief)
@@ -239,6 +240,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/posts/drafts/{id}/refine", postsH.handleRefine)
 	mux.HandleFunc("PATCH /api/v1/posts/drafts/{id}/variants/{platform}", postsH.handleUpdateVariant)
 	mux.HandleFunc("POST /api/v1/posts/drafts/{id}/image", postsH.handleRegenerateImage)
+	mux.HandleFunc("POST /api/v1/posts/drafts/{id}/restore", postsH.handleRestoreRevision)
 
 	// Admin Endpoints (protected by requireAdmin middleware)
 	mux.HandleFunc("GET /api/v1/admin/modes", requireAdmin(admH.handleAdminModes))

@@ -6,7 +6,28 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 )
+
+// ErrInvalidInput is returned when caller-supplied arguments fail validation.
+var ErrInvalidInput = errors.New("posts: invalid input")
+
+const (
+	defaultTextModel = "auto"
+	maxImageHistory  = 20
+	maxTextHistory   = 60
+)
+
+var curatedTextModels = []ModelOption{
+	{ID: "auto", Label: "Auto (Smart Router)", Tier: "auto", Description: "Автоматический выбор оптимальной модели"},
+	{ID: "gemini-3.8-flash", Label: "Gemini 3.8 Flash", Tier: "balanced", Description: "Быстрая и сбалансированная модель Google"},
+	{ID: "claude-sonnet-5-5", Label: "Claude Sonnet 5.5", Tier: "balanced", Description: "Выразительный копирайтинг и структура"},
+	{ID: "gpt-5.4", Label: "GPT-5.4", Tier: "balanced", Description: "Универсальная модель OpenAI"},
+	{ID: "deepseek-4-pro", Label: "DeepSeek 4 Pro", Tier: "balanced", Description: "Глубокая логика и аналитика"},
+	{ID: "qwen3.6-plus", Label: "Qwen 3.6 Plus", Tier: "balanced", Description: "Сильный мультиязычный текст"},
+	{ID: "claude-opus-5-5", Label: "Claude Opus 5.5", Tier: "pro", Description: "Максимальное качество и нюансы стиля"},
+	{ID: "gpt-6-astra", Label: "GPT-6 Astra", Tier: "pro", Description: "Флагманская модель для сложных задач"},
+}
 
 // Service orchestrates Content Studio workflows across persistence and the AI pipeline.
 type Service struct {
@@ -127,8 +148,56 @@ func (s *Service) StartDraft(ctx context.Context, userID int64, rawIdea, sourceI
 	return draft, nil
 }
 
-// UpdateBrief updates the draft's goal, tone, and target platforms and moves it to brief status.
-func (s *Service) UpdateBrief(ctx context.Context, userID, draftID int64, goal, tone string, platforms []string) (*PostDraft, error) {
+// ListAvailableModels returns curated and full text model lists from the AI gateway,
+// falling back to the curated catalog if the gateway is unavailable.
+func (s *Service) ListAvailableModels(ctx context.Context) (*ModelsCatalog, error) {
+	catalog := &ModelsCatalog{
+		DefaultModel: defaultTextModel,
+	}
+
+	var rawModels []string
+	var err error
+	if s.pipeline != nil && s.pipeline.gw != nil {
+		rawModels, err = s.pipeline.ListModels(ctx)
+	} else {
+		err = errors.New("posts: pipeline not configured")
+	}
+
+	if err != nil || len(rawModels) == 0 {
+		catalog.Curated = append([]ModelOption(nil), curatedTextModels...)
+		catalog.All = make([]string, 0, len(curatedTextModels))
+		for _, opt := range curatedTextModels {
+			catalog.All = append(catalog.All, opt.ID)
+		}
+		return catalog, nil
+	}
+
+	availSet := make(map[string]struct{}, len(rawModels))
+	allText := make([]string, 0, len(rawModels))
+	for _, id := range rawModels {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		availSet[trimmed] = struct{}{}
+		if isTextModel(trimmed) {
+			allText = append(allText, trimmed)
+		}
+	}
+
+	curated := make([]ModelOption, 0, len(curatedTextModels))
+	for _, opt := range curatedTextModels {
+		if _, ok := availSet[opt.ID]; ok {
+			curated = append(curated, opt)
+		}
+	}
+	catalog.Curated = curated
+	catalog.All = allText
+	return catalog, nil
+}
+
+// UpdateBrief updates the draft's goal, tone, optional text model, and target platforms and moves it to brief status.
+func (s *Service) UpdateBrief(ctx context.Context, userID, draftID int64, goal, tone, textModel string, platforms []string) (*PostDraft, error) {
 	if s.repo == nil {
 		return nil, errors.New("posts: repository is nil")
 	}
@@ -142,6 +211,9 @@ func (s *Service) UpdateBrief(ctx context.Context, userID, draftID int64, goal, 
 	if trimmedTone := strings.TrimSpace(tone); trimmedTone != "" {
 		draft.Tone = trimmedTone
 	}
+	if trimmedModel := strings.TrimSpace(textModel); trimmedModel != "" {
+		draft.TextModel = trimmedModel
+	}
 	if len(platforms) > 0 || len(draft.TargetPlatforms) == 0 {
 		draft.TargetPlatforms = NormalizePlatforms(platforms)
 	}
@@ -154,7 +226,7 @@ func (s *Service) UpdateBrief(ctx context.Context, userID, draftID int64, goal, 
 }
 
 // GenerateHooks generates hook options for a draft using the AI pipeline and persists them.
-func (s *Service) GenerateHooks(ctx context.Context, userID, draftID int64) (*PostDraft, error) {
+func (s *Service) GenerateHooks(ctx context.Context, userID, draftID int64, textModel string) (*PostDraft, error) {
 	if s.repo == nil || s.pipeline == nil {
 		return nil, errors.New("posts: service dependencies not configured")
 	}
@@ -162,6 +234,10 @@ func (s *Service) GenerateHooks(ctx context.Context, userID, draftID int64) (*Po
 	draft, err := s.repo.GetDraft(ctx, userID, draftID)
 	if err != nil {
 		return nil, err
+	}
+
+	if trimmedModel := strings.TrimSpace(textModel); trimmedModel != "" {
+		draft.TextModel = trimmedModel
 	}
 
 	prof := s.loadProfileForDraft(ctx, userID, draft)
@@ -179,7 +255,7 @@ func (s *Service) GenerateHooks(ctx context.Context, userID, draftID int64) (*Po
 }
 
 // GeneratePackage generates platform-adapted post variants and an optional visual illustration.
-func (s *Service) GeneratePackage(ctx context.Context, userID, draftID int64, hookID string) (*PostDraft, error) {
+func (s *Service) GeneratePackage(ctx context.Context, userID, draftID int64, hookID, textModel string) (*PostDraft, error) {
 	if s.repo == nil || s.pipeline == nil {
 		return nil, errors.New("posts: service dependencies not configured")
 	}
@@ -192,6 +268,9 @@ func (s *Service) GeneratePackage(ctx context.Context, userID, draftID int64, ho
 	if trimmedHook := strings.TrimSpace(hookID); trimmedHook != "" {
 		draft.SelectedHookID = trimmedHook
 	}
+	if trimmedModel := strings.TrimSpace(textModel); trimmedModel != "" {
+		draft.TextModel = trimmedModel
+	}
 
 	prof := s.loadProfileForDraft(ctx, userID, draft)
 	specs := resolvePlatformSpecs(draft.TargetPlatforms)
@@ -203,6 +282,9 @@ func (s *Service) GeneratePackage(ctx context.Context, userID, draftID int64, ho
 
 	draft.Variants = variants
 	draft.ImagePrompt = imagePrompt
+	for _, v := range variants {
+		appendTextRevision(draft, v, "generate", "", draft.TextModel)
+	}
 
 	if strings.TrimSpace(draft.SourceImageURL) == "" && imagePrompt != "" {
 		aspectRatio := specs[0].AspectRatio
@@ -215,6 +297,7 @@ func (s *Service) GeneratePackage(ctx context.Context, userID, draftID int64, ho
 				"user_id", userID, "draft_id", draftID, "error", imgErr)
 		} else {
 			draft.GeneratedImageURL = imgURL
+			appendImageRevision(draft, imgURL, imagePrompt)
 		}
 	}
 
@@ -226,7 +309,7 @@ func (s *Service) GeneratePackage(ctx context.Context, userID, draftID int64, ho
 }
 
 // Refine updates either a single platform variant or all variants according to the user's instruction.
-func (s *Service) Refine(ctx context.Context, userID, draftID int64, platform, instruction string) (*PostDraft, error) {
+func (s *Service) Refine(ctx context.Context, userID, draftID int64, platform, instruction, textModel string) (*PostDraft, error) {
 	if s.repo == nil || s.pipeline == nil {
 		return nil, errors.New("posts: service dependencies not configured")
 	}
@@ -234,6 +317,10 @@ func (s *Service) Refine(ctx context.Context, userID, draftID int64, platform, i
 	draft, err := s.repo.GetDraft(ctx, userID, draftID)
 	if err != nil {
 		return nil, err
+	}
+
+	if trimmedModel := strings.TrimSpace(textModel); trimmedModel != "" {
+		draft.TextModel = trimmedModel
 	}
 
 	prof := s.loadProfileForDraft(ctx, userID, draft)
@@ -245,6 +332,14 @@ func (s *Service) Refine(ctx context.Context, userID, draftID int64, platform, i
 	}
 
 	draft.Variants = variants
+	target := strings.ToLower(strings.TrimSpace(platform))
+	for _, v := range variants {
+		if target != "" && target != "all" && strings.ToLower(strings.TrimSpace(v.Platform)) != target {
+			continue
+		}
+		appendTextRevision(draft, v, "refine", instruction, draft.TextModel)
+	}
+
 	draft.Status = DraftStatusReady
 	if err := s.repo.UpdateDraft(ctx, draft); err != nil {
 		return nil, err
@@ -268,21 +363,12 @@ func (s *Service) UpdateVariantManual(ctx context.Context, userID, draftID int64
 		target = strings.ToLower(strings.TrimSpace(v.Platform))
 	}
 	if target == "" {
-		return nil, errors.New("posts: platform is required")
+		return nil, fmt.Errorf("%w: platform is required", ErrInvalidInput)
 	}
 	v.Platform = target
 
-	updated := false
-	for i := range draft.Variants {
-		if strings.ToLower(strings.TrimSpace(draft.Variants[i].Platform)) == target {
-			draft.Variants[i] = v
-			updated = true
-			break
-		}
-	}
-	if !updated {
-		draft.Variants = append(draft.Variants, v)
-	}
+	draft.Variants = upsertVariant(draft.Variants, v)
+	appendTextRevision(draft, v, "manual", "", "")
 
 	if err := s.repo.UpdateDraft(ctx, draft); err != nil {
 		return nil, err
@@ -306,7 +392,7 @@ func (s *Service) RegenerateImage(ctx context.Context, userID, draftID int64, cu
 		prompt = strings.TrimSpace(draft.ImagePrompt)
 	}
 	if prompt == "" {
-		return nil, errors.New("posts: image prompt cannot be empty")
+		return nil, fmt.Errorf("%w: image prompt cannot be empty", ErrInvalidInput)
 	}
 
 	specs := resolvePlatformSpecs(draft.TargetPlatforms)
@@ -322,6 +408,76 @@ func (s *Service) RegenerateImage(ctx context.Context, userID, draftID int64, cu
 
 	draft.ImagePrompt = prompt
 	draft.GeneratedImageURL = imgURL
+	appendImageRevision(draft, imgURL, prompt)
+
+	if err := s.repo.UpdateDraft(ctx, draft); err != nil {
+		return nil, err
+	}
+	return draft, nil
+}
+
+// RestoreRevision restores a historical image or text revision on a draft.
+func (s *Service) RestoreRevision(ctx context.Context, userID, draftID int64, kind string, version int, platform string) (*PostDraft, error) {
+	if s.repo == nil {
+		return nil, errors.New("posts: repository is nil")
+	}
+
+	normalizedKind := strings.ToLower(strings.TrimSpace(kind))
+	if normalizedKind != "image" && normalizedKind != "text" {
+		return nil, fmt.Errorf("%w: type must be 'image' or 'text'", ErrInvalidInput)
+	}
+	if version <= 0 {
+		return nil, fmt.Errorf("%w: version must be positive", ErrInvalidInput)
+	}
+
+	draft, err := s.repo.GetDraft(ctx, userID, draftID)
+	if err != nil {
+		return nil, err
+	}
+
+	switch normalizedKind {
+	case "image":
+		var found *ImageRevision
+		for i := range draft.ImageHistory {
+			if draft.ImageHistory[i].Version == version {
+				found = &draft.ImageHistory[i]
+				break
+			}
+		}
+		if found == nil {
+			return nil, fmt.Errorf("%w: image revision %d", ErrNotFound, version)
+		}
+		draft.GeneratedImageURL = found.URL
+		if found.Prompt != "" {
+			draft.ImagePrompt = found.Prompt
+		}
+
+	case "text":
+		targetPlatform := strings.ToLower(strings.TrimSpace(platform))
+		var found *TextRevision
+		for i := range draft.TextHistory {
+			if draft.TextHistory[i].Version != version {
+				continue
+			}
+			if targetPlatform != "" && strings.ToLower(strings.TrimSpace(draft.TextHistory[i].Platform)) != targetPlatform {
+				continue
+			}
+			found = &draft.TextHistory[i]
+			break
+		}
+		if found == nil {
+			return nil, fmt.Errorf("%w: text revision %d", ErrNotFound, version)
+		}
+		restoredVariant := PostVariant{
+			Platform: found.Platform,
+			Text:     found.Text,
+			Hashtags: append([]string(nil), found.Hashtags...),
+			CTA:      found.CTA,
+		}
+		draft.Variants = upsertVariant(draft.Variants, restoredVariant)
+		appendTextRevision(draft, restoredVariant, "restore", fmt.Sprintf("restore v%d", version), found.Model)
+	}
+
 	if err := s.repo.UpdateDraft(ctx, draft); err != nil {
 		return nil, err
 	}
@@ -356,4 +512,70 @@ func resolvePlatformSpecs(platformIDs []string) []PlatformSpec {
 		}
 	}
 	return specs
+}
+
+func appendImageRevision(draft *PostDraft, url, prompt string) {
+	nextVer := 1
+	if n := len(draft.ImageHistory); n > 0 {
+		nextVer = draft.ImageHistory[n-1].Version + 1
+	}
+	draft.ImageHistory = append(draft.ImageHistory, ImageRevision{
+		Version:   nextVer,
+		URL:       url,
+		Prompt:    prompt,
+		CreatedAt: time.Now().UTC(),
+	})
+	if len(draft.ImageHistory) > maxImageHistory {
+		draft.ImageHistory = draft.ImageHistory[len(draft.ImageHistory)-maxImageHistory:]
+	}
+}
+
+func appendTextRevision(draft *PostDraft, v PostVariant, source, instruction, model string) {
+	nextVer := 1
+	if n := len(draft.TextHistory); n > 0 {
+		nextVer = draft.TextHistory[n-1].Version + 1
+	}
+	draft.TextHistory = append(draft.TextHistory, TextRevision{
+		Version:     nextVer,
+		Platform:    v.Platform,
+		Text:        v.Text,
+		Hashtags:    append([]string(nil), v.Hashtags...),
+		CTA:         v.CTA,
+		Source:      source,
+		Instruction: instruction,
+		Model:       model,
+		CreatedAt:   time.Now().UTC(),
+	})
+	if len(draft.TextHistory) > maxTextHistory {
+		draft.TextHistory = draft.TextHistory[len(draft.TextHistory)-maxTextHistory:]
+	}
+}
+
+func upsertVariant(variants []PostVariant, v PostVariant) []PostVariant {
+	target := strings.ToLower(strings.TrimSpace(v.Platform))
+	for i := range variants {
+		if strings.ToLower(strings.TrimSpace(variants[i].Platform)) == target {
+			variants[i] = v
+			return variants
+		}
+	}
+	return append(variants, v)
+}
+
+func isTextModel(id string) bool {
+	lower := strings.ToLower(strings.TrimSpace(id))
+	if lower == "" {
+		return false
+	}
+	excluded := []string{
+		"flux", "dall-e", "imagen", "midjourney", "stable-diffusion",
+		"sdxl", "sd-", "whisper", "tts", "embedding", "rerank", "moderation",
+		"-image", "image-",
+	}
+	for _, pat := range excluded {
+		if strings.Contains(lower, pat) {
+			return false
+		}
+	}
+	return true
 }

@@ -72,6 +72,10 @@ func writePostsServiceError(w http.ResponseWriter, prefix string, err error) {
 		writeError(w, http.StatusNotFound, "draft not found")
 		return
 	}
+	if errors.Is(err, posts.ErrInvalidInput) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	writeError(w, http.StatusInternalServerError, fmt.Sprintf("%s: %v", prefix, err))
 }
 
@@ -84,6 +88,21 @@ func decodeOptionalJSON(r *http.Request, dst any) error {
 		return nil
 	}
 	return err
+}
+
+func (h *postsHandler) handleListModels(w http.ResponseWriter, r *http.Request) {
+	_, svc, ok := h.requireContext(w, r)
+	if !ok {
+		return
+	}
+
+	catalog, err := svc.ListAvailableModels(r.Context())
+	if err != nil {
+		writePostsServiceError(w, "failed to list models", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, catalog)
 }
 
 func (h *postsHandler) handleGetState(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +204,7 @@ func (h *postsHandler) handleStartDraft(w http.ResponseWriter, r *http.Request) 
 type updateBriefRequest struct {
 	Goal            string   `json:"goal"`
 	Tone            string   `json:"tone"`
+	TextModel       string   `json:"text_model"`
 	TargetPlatforms []string `json:"target_platforms"`
 }
 
@@ -204,7 +224,7 @@ func (h *postsHandler) handleUpdateBrief(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	draft, err := svc.UpdateBrief(r.Context(), user.ID, draftID, req.Goal, req.Tone, req.TargetPlatforms)
+	draft, err := svc.UpdateBrief(r.Context(), user.ID, draftID, req.Goal, req.Tone, req.TextModel, req.TargetPlatforms)
 	if err != nil {
 		writePostsServiceError(w, "failed to update brief", err)
 		return
@@ -217,6 +237,10 @@ func (h *postsHandler) handleUpdateBrief(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+type generateHooksRequest struct {
+	TextModel string `json:"text_model"`
+}
+
 func (h *postsHandler) handleGenerateHooks(w http.ResponseWriter, r *http.Request) {
 	user, svc, ok := h.requireContext(w, r)
 	if !ok {
@@ -227,7 +251,13 @@ func (h *postsHandler) handleGenerateHooks(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	draft, err := svc.GenerateHooks(r.Context(), user.ID, draftID)
+	var req generateHooksRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	draft, err := svc.GenerateHooks(r.Context(), user.ID, draftID, req.TextModel)
 	if err != nil {
 		writePostsServiceError(w, "failed to generate hooks", err)
 		return
@@ -241,7 +271,8 @@ func (h *postsHandler) handleGenerateHooks(w http.ResponseWriter, r *http.Reques
 }
 
 type generatePackageRequest struct {
-	HookID string `json:"hook_id"`
+	HookID    string `json:"hook_id"`
+	TextModel string `json:"text_model"`
 }
 
 func (h *postsHandler) handleGeneratePackage(w http.ResponseWriter, r *http.Request) {
@@ -260,7 +291,7 @@ func (h *postsHandler) handleGeneratePackage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	draft, err := svc.GeneratePackage(r.Context(), user.ID, draftID, req.HookID)
+	draft, err := svc.GeneratePackage(r.Context(), user.ID, draftID, req.HookID, req.TextModel)
 	if err != nil {
 		writePostsServiceError(w, "failed to generate package", err)
 		return
@@ -276,6 +307,7 @@ func (h *postsHandler) handleGeneratePackage(w http.ResponseWriter, r *http.Requ
 type refineRequest struct {
 	Platform    string `json:"platform"`
 	Instruction string `json:"instruction"`
+	TextModel   string `json:"text_model"`
 }
 
 func (h *postsHandler) handleRefine(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +330,7 @@ func (h *postsHandler) handleRefine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	draft, err := svc.Refine(r.Context(), user.ID, draftID, req.Platform, req.Instruction)
+	draft, err := svc.Refine(r.Context(), user.ID, draftID, req.Platform, req.Instruction, req.TextModel)
 	if err != nil {
 		writePostsServiceError(w, "failed to refine draft", err)
 		return
@@ -369,6 +401,50 @@ func (h *postsHandler) handleRegenerateImage(w http.ResponseWriter, r *http.Requ
 	draft, err := svc.RegenerateImage(r.Context(), user.ID, draftID, req.Prompt)
 	if err != nil {
 		writePostsServiceError(w, "failed to regenerate image", err)
+		return
+	}
+
+	h.syncActiveDraft(r.Context(), user.ID, posts.StepReady, draft.ID)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"draft": draft,
+	})
+}
+
+type restoreRevisionRequest struct {
+	Type     string `json:"type"`
+	Version  int    `json:"version"`
+	Platform string `json:"platform"`
+}
+
+func (h *postsHandler) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
+	user, svc, ok := h.requireContext(w, r)
+	if !ok {
+		return
+	}
+	draftID, ok := parseDraftID(w, r)
+	if !ok {
+		return
+	}
+
+	var req restoreRevisionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	kind := strings.ToLower(strings.TrimSpace(req.Type))
+	if kind != "image" && kind != "text" {
+		writeError(w, http.StatusBadRequest, "type must be 'image' or 'text'")
+		return
+	}
+	if req.Version <= 0 {
+		writeError(w, http.StatusBadRequest, "version must be positive")
+		return
+	}
+
+	draft, err := svc.RestoreRevision(r.Context(), user.ID, draftID, kind, req.Version, req.Platform)
+	if err != nil {
+		writePostsServiceError(w, "failed to restore revision", err)
 		return
 	}
 

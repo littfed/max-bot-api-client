@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -14,21 +15,28 @@ import (
 )
 
 const (
-	chatTimeout   = 60 * time.Second
-	visionTimeout = 30 * time.Second
-	imageTimeout  = 60 * time.Second
-	chatMaxTokens = 4096
+	chatTimeout    = 60 * time.Second
+	visionTimeout  = 30 * time.Second
+	imageTimeout   = 60 * time.Second
+	modelsTimeout  = 10 * time.Second
+	modelsCacheTTL = 5 * time.Minute
+	chatMaxTokens  = 4096
 )
 
-// AIGateway abstracts text chat, vision analysis, and image generation for the posts pipeline.
+// AIGateway abstracts text chat, model listing, vision analysis, and image generation for the posts pipeline.
 type AIGateway interface {
-	Chat(ctx context.Context, systemPrompt, userPrompt string) (string, error)
+	Chat(ctx context.Context, model, systemPrompt, userPrompt string) (string, error)
+	ListModels(ctx context.Context) ([]string, error)
 	Vision(ctx context.Context, prompt, imageURL string) (string, error)
 	GenerateImage(ctx context.Context, prompt, aspectRatio string) (string, error)
 }
 
 type aiClientGateway struct {
 	client *ai.Client
+
+	modelsMu       sync.RWMutex
+	cachedModels   []string
+	modelsCachedAt time.Time
 }
 
 // NewAIGateway adapts an *ai.Client to the AIGateway interface with per-operation timeouts.
@@ -36,7 +44,7 @@ func NewAIGateway(client *ai.Client) AIGateway {
 	return &aiClientGateway{client: client}
 }
 
-func (g *aiClientGateway) Chat(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (g *aiClientGateway) Chat(ctx context.Context, model, systemPrompt, userPrompt string) (string, error) {
 	if g.client == nil {
 		return "", errors.New("posts: ai client is nil")
 	}
@@ -50,14 +58,84 @@ func (g *aiClientGateway) Chat(ctx context.Context, systemPrompt, userPrompt str
 	messages = append(messages, ai.NewTextMessage(ai.RoleUser, userPrompt))
 
 	maxTokens := chatMaxTokens
-	resp, err := g.client.Chat(reqCtx, &ai.ChatRequest{
+	req := &ai.ChatRequest{
 		Messages:  messages,
 		MaxTokens: &maxTokens,
-	})
+	}
+	if m := strings.TrimSpace(model); m != "" {
+		req.Model = m
+	}
+
+	resp, err := g.client.Chat(reqCtx, req)
 	if err != nil {
 		return "", err
 	}
 	return resp.Content, nil
+}
+
+func (g *aiClientGateway) ListModels(ctx context.Context) ([]string, error) {
+	if g.client == nil {
+		return nil, errors.New("posts: ai client is nil")
+	}
+
+	g.modelsMu.RLock()
+	if len(g.cachedModels) > 0 && time.Since(g.modelsCachedAt) < modelsCacheTTL {
+		out := make([]string, len(g.cachedModels))
+		copy(out, g.cachedModels)
+		g.modelsMu.RUnlock()
+		return out, nil
+	}
+	g.modelsMu.RUnlock()
+
+	reqCtx, cancel := context.WithTimeout(ctx, modelsTimeout)
+	defer cancel()
+
+	modelsURL := strings.TrimRight(g.client.Endpoint(), "/") + "/models"
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("posts: list models request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("posts: list models returned status %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("posts: decode models response: %w", err)
+	}
+
+	models := make([]string, 0, len(payload.Data))
+	seen := make(map[string]struct{}, len(payload.Data))
+	for _, item := range payload.Data {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		models = append(models, id)
+	}
+
+	g.modelsMu.Lock()
+	g.cachedModels = make([]string, len(models))
+	copy(g.cachedModels, models)
+	g.modelsCachedAt = time.Now()
+	g.modelsMu.Unlock()
+
+	return models, nil
 }
 
 func (g *aiClientGateway) Vision(ctx context.Context, prompt, imageURL string) (string, error) {
@@ -124,6 +202,14 @@ func NewPipeline(gw AIGateway) *Pipeline {
 	return &Pipeline{gw: gw}
 }
 
+// ListModels returns available model IDs from the underlying AI gateway.
+func (p *Pipeline) ListModels(ctx context.Context) ([]string, error) {
+	if p.gw == nil {
+		return nil, errors.New("posts: ai gateway is nil")
+	}
+	return p.gw.ListModels(ctx)
+}
+
 // AnalyzeImage inspects a source image URL and returns a concise visual summary for post ideation.
 func (p *Pipeline) AnalyzeImage(ctx context.Context, imageURL string) (string, error) {
 	if p.gw == nil {
@@ -159,7 +245,7 @@ func (p *Pipeline) GenerateHooks(ctx context.Context, draft *PostDraft, profile 
 	appendDraftContext(&b, draft)
 	appendBrandContext(&b, profile)
 
-	resp, err := chatJSON[hooksResponse](ctx, p.gw, systemPrompt, b.String())
+	resp, err := chatJSON[hooksResponse](ctx, p.gw, draft.TextModel, systemPrompt, b.String())
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +286,7 @@ func (p *Pipeline) GeneratePackage(ctx context.Context, draft *PostDraft, profil
 	appendBrandContext(&b, profile)
 	appendPlatformSpecs(&b, specs)
 
-	resp, err := chatJSON[packageResponse](ctx, p.gw, systemPrompt, b.String())
+	resp, err := chatJSON[packageResponse](ctx, p.gw, draft.TextModel, systemPrompt, b.String())
 	if err == nil && len(resp.Variants) > 0 {
 		return resp.Variants, strings.TrimSpace(resp.ImagePrompt), nil
 	}
@@ -250,7 +336,7 @@ func (p *Pipeline) generatePackageParallel(ctx context.Context, draft *PostDraft
 			appendBrandContext(&sb, profile)
 			appendPlatformSpecs(&sb, []PlatformSpec{sp})
 
-			r, err := chatJSON[packageResponse](ctx, p.gw, sysPrompt, sb.String())
+			r, err := chatJSON[packageResponse](ctx, p.gw, draft.TextModel, sysPrompt, sb.String())
 			if err != nil {
 				results[idx].err = err
 				return
@@ -347,7 +433,7 @@ func (p *Pipeline) RefineVariant(ctx context.Context, draft *PostDraft, profile 
 		}
 	}
 
-	resp, err := chatJSON[refineResponse](ctx, p.gw, systemPrompt, b.String())
+	resp, err := chatJSON[refineResponse](ctx, p.gw, draft.TextModel, systemPrompt, b.String())
 	if err != nil {
 		return nil, err
 	}
@@ -389,10 +475,10 @@ func mergeRefinedVariants(existing, refined []PostVariant, target string) []Post
 	return out
 }
 
-func chatJSON[T any](ctx context.Context, gw AIGateway, systemPrompt, userPrompt string) (T, error) {
+func chatJSON[T any](ctx context.Context, gw AIGateway, model, systemPrompt, userPrompt string) (T, error) {
 	var zero T
 
-	raw, err := gw.Chat(ctx, systemPrompt, userPrompt)
+	raw, err := gw.Chat(ctx, model, systemPrompt, userPrompt)
 	if err != nil {
 		return zero, err
 	}
@@ -407,7 +493,7 @@ func chatJSON[T any](ctx context.Context, gw AIGateway, systemPrompt, userPrompt
 				"Верни ТОЛЬКО валидный JSON без markdown-блоков ```json и без какого-либо текста до или после JSON.",
 			userPrompt, err,
 		)
-		retryRaw, retryErr := gw.Chat(ctx, systemPrompt, correctivePrompt)
+		retryRaw, retryErr := gw.Chat(ctx, model, systemPrompt, correctivePrompt)
 		if retryErr != nil {
 			return zero, retryErr
 		}

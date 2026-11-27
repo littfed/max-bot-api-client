@@ -1,0 +1,85 @@
+{
+  "channels": {
+    "-78368186601503": {
+      "chat_id": -78368186601503,
+      "title": "Тест",
+      "type": "channel",
+      "is_admin": true,
+      "permissions": [
+        "write",
+        "edit",
+        "delete",
+        "pin_message",
+        "add_remove_members",
+        "change_chat_info",
+        "read_all_messages"
+      ],
+      "last_updated": "2026-11-27T12:45:17.8904426+05:00"
+    },
+    "-78548596658207": {
+      "chat_id": -78548596658207,
+      "title": "littfed",
+      "type": "channel",
+      "is_admin": true,
+      "permissions": [
+        "write",
+        "edit",
+        "delete",
+        "pin_message",
+        "add_remove_members",
+        "change_chat_info",
+        "read_all_messages"
+      ],
+      "last_updated": "2026-11-27T12:45:17.8904426+05:00"
+    }
+  },
+  "orders": {
+    "BOK-10942": {
+      "id": "BOK-10942",
+      "user_id": 396393759,
+      "user_name": "Федор В",
+      "items": [
+        {
+          "id": "srv_audit",
+          "title": "Архитектурный аудит Go / MAX",
+          "price": 0,
+          "quantity": 1
+        }
+      ],
+      "total": 0,
+      "delivery_type": "booking",
+      "address": "Специалист: Lead Go Архитектор | Время: Завтра, 11:00",
+      "status": "accepted",
+      "verified": true,
+      "created_at": "2026-11-27T08:45:17.8968337+05:00"
+    },
+    "WEB-48201": {
+      "id": "WEB-48201",
+      "user_id": 396393759,
+      "user_name": "Федор В",
+      "items": [
+        {
+          "id": "barista_coffee",
+          "title": "Премиум Кофемашина Barista 15bar",
+          "price": 4990,
+          "quantity": 1
+        },
+        {
+          "id": "gopher_hoodie",
+          "title": "Худи Go Gopher Edition",
+          "price": 3490,
+          "quantity": 1
+        }
+      ],
+      "total": 8480,
+      "delivery_type": "delivery",
+      "address": "г. Москва, ул. Тверская, д. 7",
+      "status": "paid",
+      "verified": true,
+      "created_at": "2026-11-27T10:45:17.8904426+05:00"
+    }
+  },
+  "reactions": {},
+  "polls": {},
+  "giveaways": {}
+}
