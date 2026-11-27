@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/pkg/ai"
@@ -186,8 +187,9 @@ func (p *Pipeline) GeneratePackage(ctx context.Context, draft *PostDraft, profil
 	}
 
 	systemPrompt := `Ты — профессиональный SMM-редактор. Адаптируй пост под каждую указанную платформу с учётом её ограничений, стиля и разметки, а также предложи промпт на английском языке для генерации иллюстрации.
-Отвечай строго валидным JSON без markdown-разметки и пояснений в формате:
-{"variants":[{"platform":"id","text":"Текст поста","hashtags":["#тег"],"cta":"Призыв к действию"}],"image_prompt":"Detailed English prompt for image generation"}`
+Отвечай строго валидным JSON без markdown-разметки и пояснений. Внутри строковых значений JSON не используй неэкранированные двойные кавычки " (используй кавычки-ёлочки «»), переносы строк кодируй как \n.
+Формат ответа:
+{"image_prompt":"Detailed English prompt for image generation","variants":[{"platform":"id","text":"Текст поста","hashtags":["#тег"],"cta":"Призыв к действию"}]}`
 
 	var b strings.Builder
 	b.WriteString("Сгенерируй пакет постов для выбранных платформ.\n")
@@ -199,13 +201,96 @@ func (p *Pipeline) GeneratePackage(ctx context.Context, draft *PostDraft, profil
 	appendPlatformSpecs(&b, specs)
 
 	resp, err := chatJSON[packageResponse](ctx, p.gw, systemPrompt, b.String())
-	if err != nil {
-		return nil, "", err
+	if err == nil && len(resp.Variants) > 0 {
+		return resp.Variants, strings.TrimSpace(resp.ImagePrompt), nil
 	}
-	if len(resp.Variants) == 0 {
+	if len(specs) == 1 {
+		if err != nil {
+			return nil, "", err
+		}
 		return nil, "", errors.New("posts: AI returned no variants")
 	}
-	return resp.Variants, strings.TrimSpace(resp.ImagePrompt), nil
+
+	// Fallback for multi-platform packages when combined JSON output is truncated:
+	// generate each platform variant in parallel so every response fits comfortably within token limits.
+	return p.generatePackageParallel(ctx, draft, profile, specs)
+}
+
+func (p *Pipeline) generatePackageParallel(ctx context.Context, draft *PostDraft, profile *BrandProfile, specs []PlatformSpec) ([]PostVariant, string, error) {
+	type item struct {
+		variant     PostVariant
+		imagePrompt string
+		err         error
+	}
+	results := make([]item, len(specs))
+	var wg sync.WaitGroup
+
+	for i, spec := range specs {
+		wg.Add(1)
+		go func(idx int, sp PlatformSpec) {
+			defer wg.Done()
+			needImg := idx == 0
+			sysPrompt := `Ты — профессиональный SMM-редактор. Адаптируй пост под указанную платформу.
+Отвечай строго валидным JSON без markdown-разметки. Внутри строк не используй неэкранированные двойные кавычки " (используй «»), переносы строк кодируй как \n.
+Формат ответа:
+{"image_prompt":"Detailed English prompt for image generation","variants":[{"platform":"id","text":"Текст поста","hashtags":["#тег"],"cta":"Призыв к действию"}]}`
+			if !needImg {
+				sysPrompt = `Ты — профессиональный SMM-редактор. Адаптируй пост под указанную платформу.
+Отвечай строго валидным JSON без markdown-разметки. Внутри строк не используй неэкранированные двойные кавычки " (используй «»), переносы строк кодируй как \n.
+Формат ответа:
+{"variants":[{"platform":"id","text":"Текст поста","hashtags":["#тег"],"cta":"Призыв к действию"}]}`
+			}
+
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "Сгенерируй пост для одной платформы: %s.\n", sp.ID)
+			appendDraftContext(&sb, draft)
+			if hook := findSelectedHook(draft); hook != nil {
+				fmt.Fprintf(&sb, "Выбранный хук (%s — %s): %s\n", hook.Angle, hook.Title, hook.Text)
+			}
+			appendBrandContext(&sb, profile)
+			appendPlatformSpecs(&sb, []PlatformSpec{sp})
+
+			r, err := chatJSON[packageResponse](ctx, p.gw, sysPrompt, sb.String())
+			if err != nil {
+				results[idx].err = err
+				return
+			}
+			if len(r.Variants) == 0 {
+				results[idx].err = fmt.Errorf("posts: empty variant for %s", sp.ID)
+				return
+			}
+			v := r.Variants[0]
+			if strings.TrimSpace(v.Platform) == "" {
+				v.Platform = sp.ID
+			}
+			results[idx].variant = v
+			results[idx].imagePrompt = strings.TrimSpace(r.ImagePrompt)
+		}(i, spec)
+	}
+	wg.Wait()
+
+	variants := make([]PostVariant, 0, len(specs))
+	var imgPrompt string
+	var firstErr error
+	for _, res := range results {
+		if res.err != nil {
+			if firstErr == nil {
+				firstErr = res.err
+			}
+			continue
+		}
+		variants = append(variants, res.variant)
+		if imgPrompt == "" && res.imagePrompt != "" {
+			imgPrompt = res.imagePrompt
+		}
+	}
+	if len(variants) == 0 {
+		if firstErr != nil {
+			return nil, "", firstErr
+		}
+		return nil, "", errors.New("posts: AI returned no variants")
+	}
+	return variants, imgPrompt, nil
 }
 
 // GenerateVisual generates an image for the given prompt and aspect ratio, returning its URL or data URI.
@@ -336,20 +421,24 @@ func chatJSON[T any](ctx context.Context, gw AIGateway, systemPrompt, userPrompt
 
 func stripCodeFences(s string) string {
 	trimmed := strings.TrimSpace(s)
-	if !strings.HasPrefix(trimmed, "```") {
-		return trimmed
+	if strings.HasPrefix(trimmed, "```") {
+		if idx := strings.Index(trimmed, "\n"); idx != -1 {
+			trimmed = trimmed[idx+1:]
+		} else {
+			trimmed = strings.TrimPrefix(trimmed, "```")
+		}
+		trimmed = strings.TrimSpace(trimmed)
+		if strings.HasSuffix(trimmed, "```") {
+			trimmed = strings.TrimSuffix(trimmed, "```")
+		}
+		trimmed = strings.TrimSpace(trimmed)
 	}
-	// Drop opening fence line (e.g. ```json or ```)
-	if idx := strings.Index(trimmed, "\n"); idx != -1 {
-		trimmed = trimmed[idx+1:]
-	} else {
-		trimmed = strings.TrimPrefix(trimmed, "```")
+	if start := strings.IndexByte(trimmed, '{'); start != -1 {
+		if end := strings.LastIndexByte(trimmed, '}'); end > start {
+			return trimmed[start : end+1]
+		}
 	}
-	trimmed = strings.TrimSpace(trimmed)
-	if strings.HasSuffix(trimmed, "```") {
-		trimmed = strings.TrimSuffix(trimmed, "```")
-	}
-	return strings.TrimSpace(trimmed)
+	return trimmed
 }
 
 func appendDraftContext(b *strings.Builder, draft *PostDraft) {
