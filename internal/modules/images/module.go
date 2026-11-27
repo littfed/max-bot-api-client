@@ -106,7 +106,6 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 			mode = ModeGenerate
 		}
 		var srcBytes []byte
-		useExample := mode == ModeEdit
 		if payload.PendingSourceKey != "" {
 			loaded, _, err := m.service.GetAsset(ctx, payload.PendingSourceKey)
 			if err != nil {
@@ -120,8 +119,17 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 			}
 			srcBytes = loaded
 			mode = ModeEdit
-			useExample = false
 		}
+		if mode == ModeEdit && len(srcBytes) == 0 && payload.PresetID == "" {
+			return &core.ModuleResult{
+				Text:       "🪄 Сначала отправьте фотографию в чат, а затем опишите, что нужно исправить.",
+				Buttons:    [][]core.ResponseButton{{{Text: "🏠 В меню", Data: "img:home"}}},
+				NewStep:    StepAwaitingInput,
+				NewPayload: mustMarshalPayload(payload),
+				Handled:    true,
+			}, nil
+		}
+		useExample := mode == ModeEdit && len(srcBytes) == 0 && payload.PresetID != ""
 		proj, err := m.service.CreateAndRun(ctx, CreateProjectInput{
 			UserID:           u.ID,
 			Mode:             mode,
@@ -130,9 +138,6 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 			SourceImage:      srcBytes,
 			UseExampleSource: useExample,
 		})
-		if payload.PendingSourceKey != "" {
-			_ = m.service.DeleteTempObject(ctx, payload.PendingSourceKey)
-		}
 		if err != nil {
 			return &core.ModuleResult{
 				Text:       fmt.Sprintf("❌ Не удалось выполнить генерацию: %v\nПопробуйте изменить запрос.", err),
@@ -141,6 +146,9 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 				NewPayload: mustMarshalPayload(payload),
 				Handled:    true,
 			}, nil
+		}
+		if payload.PendingSourceKey != "" {
+			_ = m.service.DeleteTempObject(ctx, payload.PendingSourceKey)
 		}
 
 		nextPayload := fsmPayload{
