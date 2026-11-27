@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -232,6 +233,9 @@ func TestService_Refine_SuccessAndFailurePreservesV1(t *testing.T) {
 	if afterFail.CurrentVersion != 1 || afterFail.CurrentImageURL != v1URL || afterFail.CurrentImageKey != v1Key {
 		t.Fatalf("v1 must be preserved on AI failure, got version=%d url=%q", afterFail.CurrentVersion, afterFail.CurrentImageURL)
 	}
+	if afterFail.Status != StatusFailed {
+		t.Fatalf("expected StatusFailed on AI failure, got %q", afterFail.Status)
+	}
 	if afterFail.ErrorMessage == "" {
 		t.Fatal("expected ErrorMessage to be recorded on failure")
 	}
@@ -381,4 +385,231 @@ func TestModule_Callbacks(t *testing.T) {
 	if !strings.Contains(res.Text, "https://cdn.example.com/") {
 		t.Fatalf("expected generated image URL in text, got %q", res.Text)
 	}
+}
+
+func TestService_CreateAndRun_ModeEdit(t *testing.T) {
+	srcPNG := makeTestPNGBytes(t)
+	editedPNG := append(makeTestPNGBytes(t), []byte("edited")...)
+	gw := &mockAIGateway{
+		editImageFn: func(ctx context.Context, imageBytes []byte, prompt, model, size string) ([]byte, string, error) {
+			return editedPNG, "", nil
+		},
+	}
+	svc, _, memStorage := newTestService(t, gw)
+
+	// Invalid image bytes rejected.
+	if _, err := svc.CreateAndRun(context.Background(), CreateProjectInput{
+		UserID:      15,
+		Mode:        ModeEdit,
+		Prompt:      "Clean background",
+		SourceImage: []byte("not-an-image"),
+	}); !errors.Is(err, ErrInvalidImage) {
+		t.Fatalf("expected ErrInvalidImage, got %v", err)
+	}
+
+	// Valid source upload succeeds.
+	proj, err := svc.CreateAndRun(context.Background(), CreateProjectInput{
+		UserID:      15,
+		Mode:        ModeEdit,
+		PresetID:    "bg_replace",
+		Prompt:      "Replace with studio white",
+		SourceImage: srcPNG,
+	})
+	if err != nil {
+		t.Fatalf("CreateAndRun edit failed: %v", err)
+	}
+	if proj.SourceImageKey == "" || proj.SourceImageURL == "" {
+		t.Fatalf("expected source image key and URL, got key=%q url=%q", proj.SourceImageKey, proj.SourceImageURL)
+	}
+	if proj.CurrentVersion != 1 || proj.Status != StatusReady {
+		t.Fatalf("expected ready v1 project, got status=%q ver=%d", proj.Status, proj.CurrentVersion)
+	}
+	if _, _, err := memStorage.GetObject(context.Background(), proj.SourceImageKey); err != nil {
+		t.Fatalf("expected source image in storage: %v", err)
+	}
+}
+
+func TestService_DeleteProject_AndOwnership(t *testing.T) {
+	srcPNG := makeTestPNGBytes(t)
+	v1PNG := append(makeTestPNGBytes(t), []byte("v1")...)
+	v2PNG := append(makeTestPNGBytes(t), []byte("v2")...)
+	gw := &mockAIGateway{
+		editImageFn: func(ctx context.Context, imageBytes []byte, prompt, model, size string) ([]byte, string, error) {
+			if strings.Contains(prompt, "v2") {
+				return v2PNG, "", nil
+			}
+			return v1PNG, "", nil
+		},
+	}
+	svc, st, memStorage := newTestService(t, gw)
+
+	proj, err := svc.CreateAndRun(context.Background(), CreateProjectInput{
+		UserID:      50,
+		Mode:        ModeEdit,
+		Prompt:      "Initial edit",
+		SourceImage: srcPNG,
+	})
+	if err != nil {
+		t.Fatalf("CreateAndRun failed: %v", err)
+	}
+	refined, err := svc.Refine(context.Background(), 50, proj.ID, "Refine v2", "")
+	if err != nil {
+		t.Fatalf("Refine failed: %v", err)
+	}
+
+	// Ownership checks on Refine, Restore, DeleteProject.
+	if _, err := svc.Refine(context.Background(), 99, proj.ID, "Hijack", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden on Refine, got %v", err)
+	}
+	if _, err := svc.Restore(context.Background(), 99, proj.ID, 1); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden on Restore, got %v", err)
+	}
+	if err := svc.DeleteProject(context.Background(), 99, proj.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden on DeleteProject, got %v", err)
+	}
+
+	keys := []string{
+		refined.SourceImageKey,
+		refined.Revisions[0].ImageKey,
+		refined.Revisions[1].ImageKey,
+	}
+
+	if err := svc.DeleteProject(context.Background(), 50, proj.ID); err != nil {
+		t.Fatalf("DeleteProject failed: %v", err)
+	}
+	if _, err := st.GetProject(context.Background(), proj.ID); !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf("expected ErrProjectNotFound after delete, got %v", err)
+	}
+	for _, k := range keys {
+		if _, _, err := memStorage.GetObject(context.Background(), k); !errors.Is(err, storage.ErrObjectNotFound) {
+			t.Fatalf("expected object %q to be deleted from storage, got %v", k, err)
+		}
+	}
+}
+
+func TestModule_HandleMessage_And_ExtendedCallbacks(t *testing.T) {
+	pngOut := makeTestPNGBytes(t)
+	failRefine := false
+	gw := &mockAIGateway{
+		generateImageFn: func(ctx context.Context, prompt, model, size string) ([]byte, string, error) {
+			return pngOut, "", nil
+		},
+		editImageFn: func(ctx context.Context, imageBytes []byte, prompt, model, size string) ([]byte, string, error) {
+			if failRefine {
+				return nil, "", errors.New("ai: refine error")
+			}
+			return pngOut, "", nil
+		},
+	}
+	svc, st, _ := newTestService(t, gw)
+	mod := New(svc, "https://app.example.com/images")
+	user := &store.User{ID: 77}
+
+	// Non-img callback -> Handled: false.
+	res, err := mod.HandleCallback(context.Background(), user, nil, &core.IncomingCallback{Data: "pst:menu"})
+	if err != nil || res.Handled {
+		t.Fatalf("expected Handled=false for non-img callback, got handled=%v err=%v", res.Handled, err)
+	}
+
+	// /start command -> home menu.
+	res, err = mod.HandleMessage(context.Background(), user, nil, &core.IncomingMessage{Command: "start"})
+	if err != nil || !res.Handled || res.NewStep != StepIdle {
+		t.Fatalf("expected home menu on /start, got step=%q err=%v", res.NewStep, err)
+	}
+
+	// img:mode:generate -> StepAwaitingInput.
+	res, err = mod.HandleCallback(context.Background(), user, nil, &core.IncomingCallback{Data: "img:mode:generate"})
+	if err != nil || res.NewStep != StepAwaitingInput {
+		t.Fatalf("expected StepAwaitingInput for img:mode:generate, got %q err=%v", res.NewStep, err)
+	}
+
+	// Text in StepAwaitingInput -> CreateAndRun -> StepReady.
+	awaitState := &core.State{UserID: 77, ModeID: "images", CurrentStep: StepAwaitingInput, Payload: res.NewPayload}
+	res, err = mod.HandleMessage(context.Background(), user, awaitState, &core.IncomingMessage{Text: "Neon cyberpunk fox"})
+	if err != nil || res.NewStep != StepReady {
+		t.Fatalf("expected StepReady after prompt, got %q err=%v", res.NewStep, err)
+	}
+
+	// Text in StepReady -> Refine -> v2.
+	readyState := &core.State{UserID: 77, ModeID: "images", CurrentStep: StepReady, Payload: res.NewPayload}
+	res, err = mod.HandleMessage(context.Background(), user, readyState, &core.IncomingMessage{Text: "Add rain"})
+	if err != nil || res.NewStep != StepReady || !strings.Contains(res.Text, "(v2)") {
+		t.Fatalf("expected v2 after refine, got text=%q err=%v", res.Text, err)
+	}
+
+	// Refine failure at v2 must preserve undo button!
+	failRefine = true
+	res, err = mod.HandleMessage(context.Background(), user, readyState, &core.IncomingMessage{Text: "Broken edit"})
+	if err != nil || res.NewStep != StepReady {
+		t.Fatalf("expected StepReady on refine failure, got %q err=%v", res.NewStep, err)
+	}
+	hasUndo := false
+	for _, row := range res.Buttons {
+		for _, btn := range row {
+			if strings.HasPrefix(btn.Data, "img:undo:") {
+				hasUndo = true
+			}
+		}
+	}
+	if !hasUndo {
+		t.Fatalf("expected undo button to be preserved on v2 refine failure, buttons=%+v", res.Buttons)
+	}
+	failRefine = false
+
+	// img:undo:<id> -> v3 restored.
+	var p fsmPayload
+	_ = json.Unmarshal(readyState.Payload, &p)
+	res, err = mod.HandleCallback(context.Background(), user, readyState, &core.IncomingCallback{Data: "img:undo:" + strconvFormat(p.ActiveProjectID)})
+	if err != nil || !strings.Contains(res.Text, "(v3)") {
+		t.Fatalf("expected v3 after undo, got text=%q err=%v", res.Text, err)
+	}
+
+	// img:use: and img:mode:edit
+	res, err = mod.HandleCallback(context.Background(), user, nil, &core.IncomingCallback{Data: "img:use:bg_replace"})
+	if err != nil || res.NewStep != StepAwaitingInput {
+		t.Fatalf("expected StepAwaitingInput for img:use:bg_replace, got %q err=%v", res.NewStep, err)
+	}
+	res, err = mod.HandleCallback(context.Background(), user, nil, &core.IncomingCallback{Data: "img:mode:edit"})
+	if err != nil || res.NewStep != StepAwaitingInput {
+		t.Fatalf("expected StepAwaitingInput for img:mode:edit, got %q err=%v", res.NewStep, err)
+	}
+
+	// Create a failed/unready project (CurrentVersion == 0) and verify img:history filters it and img:project: rejects it.
+	unready := &Project{
+		UserID:      77,
+		Mode:        ModeGenerate,
+		Title:       "Failed draft",
+		ImageModel:  "flux",
+		AspectRatio: "1:1",
+		Status:      StatusFailed,
+	}
+	if err := st.CreateProject(context.Background(), unready); err != nil {
+		t.Fatalf("create unready project: %v", err)
+	}
+
+	res, err = mod.HandleCallback(context.Background(), user, nil, &core.IncomingCallback{Data: "img:history"})
+	if err != nil || !res.Handled {
+		t.Fatalf("img:history failed: %v", err)
+	}
+	for _, row := range res.Buttons {
+		for _, btn := range row {
+			if strings.Contains(btn.Data, strconvFormat(unready.ID)) {
+				t.Fatalf("expected unready project %d to be filtered from history", unready.ID)
+			}
+		}
+	}
+
+	res, err = mod.HandleCallback(context.Background(), user, nil, &core.IncomingCallback{Data: "img:project:" + strconvFormat(unready.ID)})
+	if err != nil || res.NewStep != StepIdle {
+		t.Fatalf("expected StepIdle for unready project, got %q err=%v", res.NewStep, err)
+	}
+
+	res, err = mod.HandleCallback(context.Background(), user, nil, &core.IncomingCallback{Data: "img:project:" + strconvFormat(p.ActiveProjectID)})
+	if err != nil || res.NewStep != StepReady {
+		t.Fatalf("expected StepReady for ready project, got %q err=%v", res.NewStep, err)
+	}
+}
+
+func strconvFormat(id int64) string {
+	return strconv.FormatInt(id, 10)
 }

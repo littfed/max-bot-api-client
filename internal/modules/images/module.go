@@ -124,9 +124,13 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 		if payload.ActiveProjectID > 0 && text != "" {
 			proj, err := m.service.Refine(ctx, u.ID, payload.ActiveProjectID, text, "")
 			if err != nil {
+				ver := 1
+				if cur, gErr := m.service.GetProject(ctx, u.ID, payload.ActiveProjectID); gErr == nil && cur.CurrentVersion > 0 {
+					ver = cur.CurrentVersion
+				}
 				return &core.ModuleResult{
 					Text:       fmt.Sprintf("❌ Не удалось применить правку: %v\nПредыдущая версия сохранена.", err),
-					Buttons:    m.projectActionButtons(payload.ActiveProjectID, 1),
+					Buttons:    m.projectActionButtons(payload.ActiveProjectID, ver),
 					NewStep:    StepReady,
 					NewPayload: mustMarshalPayload(payload),
 					Handled:    true,
@@ -261,6 +265,14 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 		proj, err := m.service.GetProject(ctx, u.ID, projectID)
 		if err != nil {
 			return m.renderHome(state), nil
+		}
+		if proj.CurrentVersion == 0 || proj.CurrentImageURL == "" {
+			return &core.ModuleResult{
+				Text:    "❌ Эта работа ещё не готова или завершилась с ошибкой.",
+				Buttons: [][]core.ResponseButton{{{Text: "🗂 Мои работы", Data: "img:history"}}, {{Text: "🏠 В меню", Data: "img:home"}}},
+				NewStep: StepIdle,
+				Handled: true,
+			}, nil
 		}
 		nextPayload := fsmPayload{
 			Mode:            proj.Mode,
@@ -398,7 +410,14 @@ func (m *Module) renderPresetDetail(presetID string) *core.ModuleResult {
 }
 
 func (m *Module) renderHistory(projects []Project) *core.ModuleResult {
-	if len(projects) == 0 {
+	var ready []Project
+	for _, p := range projects {
+		if p.CurrentVersion == 0 || p.CurrentImageURL == "" {
+			continue
+		}
+		ready = append(ready, p)
+	}
+	if len(ready) == 0 {
 		return &core.ModuleResult{
 			Text:    "🗂 У вас пока нет сохранённых работ.",
 			Buttons: [][]core.ResponseButton{{{Text: "🏠 В меню", Data: "img:home"}}},
@@ -407,13 +426,13 @@ func (m *Module) renderHistory(projects []Project) *core.ModuleResult {
 		}
 	}
 
-	limit := len(projects)
+	limit := len(ready)
 	if limit > 8 {
 		limit = 8
 	}
 	buttons := make([][]core.ResponseButton, 0, limit+1)
 	for i := 0; i < limit; i++ {
-		p := projects[i]
+		p := ready[i]
 		label := fmt.Sprintf("%s (v%d)", p.Title, p.CurrentVersion)
 		buttons = append(buttons, []core.ResponseButton{
 			{Text: label, Data: fmt.Sprintf("img:project:%d", p.ID)},

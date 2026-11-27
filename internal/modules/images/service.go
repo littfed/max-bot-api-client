@@ -320,8 +320,7 @@ func (s *Service) Refine(ctx context.Context, userID, projectID int64, prompt, m
 
 	resBytes, pipelineUsed, err := s.pipeline.Edit(ctx, currentBytes, cleanPrompt, useModel, proj.AspectRatio)
 	if err != nil {
-		proj.ErrorMessage = err.Error()
-		_ = s.store.UpdateProject(ctx, proj)
+		s.markProjectFailed(ctx, proj, err)
 		return nil, err
 	}
 
@@ -330,8 +329,7 @@ func (s *Service) Refine(ctx context.Context, userID, projectID int64, prompt, m
 	resKey := fmt.Sprintf("images/%d/%d/v%d%s", userID, proj.ID, nextVersion, resExt)
 	resURL, err := s.storage.PutObject(ctx, resKey, resMIME, resBytes)
 	if err != nil {
-		proj.ErrorMessage = err.Error()
-		_ = s.store.UpdateProject(ctx, proj)
+		s.markProjectFailed(ctx, proj, err)
 		return nil, fmt.Errorf("images: upload refined image: %w", err)
 	}
 
