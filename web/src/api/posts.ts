@@ -1,12 +1,12 @@
 import { api } from './client';
 import { BrandProfile, PostDraft, PostVariant, StudioState } from '../types/posts';
 
-const modulesConfig = { baseURL: '/api' };
-const aiModulesConfig = { baseURL: '/api', timeout: 90000 };
+const modulesConfig = {};
+const aiModulesConfig = { timeout: 90000 };
 
 export const postsApi = {
   async getState(draftId?: number): Promise<StudioState> {
-    const res = await api.get<StudioState>('/modules/posts/state', {
+    const res = await api.get<StudioState>('/posts/state', {
       ...modulesConfig,
       params: draftId ? { draft_id: draftId } : undefined,
     });
@@ -15,7 +15,7 @@ export const postsApi = {
 
   async saveProfile(profile: Partial<BrandProfile>): Promise<BrandProfile> {
     const res = await api.post<{ profile: BrandProfile }>(
-      '/modules/posts/profile',
+      '/posts/profile',
       profile,
       modulesConfig
     );
@@ -24,7 +24,7 @@ export const postsApi = {
 
   async createDraft(rawIdea: string, sourceImageUrl?: string): Promise<PostDraft> {
     const res = await api.post<{ draft: PostDraft }>(
-      '/modules/posts/drafts',
+      '/posts/drafts',
       {
         raw_idea: rawIdea,
         source_image_url: sourceImageUrl || undefined,
@@ -41,7 +41,7 @@ export const postsApi = {
     targetPlatforms: string[]
   ): Promise<PostDraft> {
     const res = await api.patch<{ draft: PostDraft }>(
-      `/modules/posts/drafts/${draftId}/brief`,
+      `/posts/drafts/${draftId}/brief`,
       {
         goal,
         tone,
@@ -54,7 +54,7 @@ export const postsApi = {
 
   async generateHooks(draftId: number): Promise<PostDraft> {
     const res = await api.post<{ draft: PostDraft }>(
-      `/modules/posts/drafts/${draftId}/hooks`,
+      `/posts/drafts/${draftId}/hooks`,
       {},
       aiModulesConfig
     );
@@ -63,7 +63,7 @@ export const postsApi = {
 
   async generatePackage(draftId: number, hookId: string): Promise<PostDraft> {
     const res = await api.post<{ draft: PostDraft }>(
-      `/modules/posts/drafts/${draftId}/generate`,
+      `/posts/drafts/${draftId}/generate`,
       { hook_id: hookId },
       aiModulesConfig
     );
@@ -76,7 +76,7 @@ export const postsApi = {
     instruction: string
   ): Promise<PostDraft> {
     const res = await api.post<{ draft: PostDraft }>(
-      `/modules/posts/drafts/${draftId}/refine`,
+      `/posts/drafts/${draftId}/refine`,
       { platform, instruction },
       aiModulesConfig
     );
@@ -89,7 +89,7 @@ export const postsApi = {
     variant: PostVariant
   ): Promise<PostDraft> {
     const res = await api.patch<{ draft: PostDraft }>(
-      `/modules/posts/drafts/${draftId}/variants/${encodeURIComponent(platform)}`,
+      `/posts/drafts/${draftId}/variants/${encodeURIComponent(platform)}`,
       variant,
       modulesConfig
     );
@@ -98,7 +98,7 @@ export const postsApi = {
 
   async regenerateImage(draftId: number, customPrompt?: string): Promise<PostDraft> {
     const res = await api.post<{ draft: PostDraft }>(
-      `/modules/posts/drafts/${draftId}/image`,
+      `/posts/drafts/${draftId}/image`,
       customPrompt ? { prompt: customPrompt } : {},
       aiModulesConfig
     );

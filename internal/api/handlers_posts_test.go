@@ -117,15 +117,15 @@ func TestPostsAPI_Unauthorized(t *testing.T) {
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/api/modules/posts/state"},
-		{http.MethodPost, "/api/modules/posts/profile"},
-		{http.MethodPost, "/api/modules/posts/drafts"},
-		{http.MethodPatch, "/api/modules/posts/drafts/1/brief"},
-		{http.MethodPost, "/api/modules/posts/drafts/1/hooks"},
-		{http.MethodPost, "/api/modules/posts/drafts/1/generate"},
-		{http.MethodPost, "/api/modules/posts/drafts/1/refine"},
-		{http.MethodPatch, "/api/modules/posts/drafts/1/variants/max"},
-		{http.MethodPost, "/api/modules/posts/drafts/1/image"},
+		{http.MethodGet, "/api/v1/posts/state"},
+		{http.MethodPost, "/api/v1/posts/profile"},
+		{http.MethodPost, "/api/v1/posts/drafts"},
+		{http.MethodPatch, "/api/v1/posts/drafts/1/brief"},
+		{http.MethodPost, "/api/v1/posts/drafts/1/hooks"},
+		{http.MethodPost, "/api/v1/posts/drafts/1/generate"},
+		{http.MethodPost, "/api/v1/posts/drafts/1/refine"},
+		{http.MethodPatch, "/api/v1/posts/drafts/1/variants/max"},
+		{http.MethodPost, "/api/v1/posts/drafts/1/image"},
 	}
 
 	for _, ep := range endpoints {
@@ -149,7 +149,7 @@ func TestPostsAPI_ValidationAndOwnership(t *testing.T) {
 	client := ts.Client()
 
 	// 1. Validation error (400) when raw_idea and source_image_url are both empty
-	badReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/modules/posts/drafts", bytes.NewReader([]byte(`{"raw_idea":"","source_image_url":""}`)))
+	badReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/posts/drafts", bytes.NewReader([]byte(`{"raw_idea":"","source_image_url":""}`)))
 	badReq.Header.Set("Content-Type", "application/json")
 	badReq.Header.Set("X-Init-Data", testMAXInitData())
 	badResp, err := client.Do(badReq)
@@ -163,7 +163,7 @@ func TestPostsAPI_ValidationAndOwnership(t *testing.T) {
 
 	// 2. User A (testMAXInitData -> user 999) creates a draft
 	createBody, _ := json.Marshal(map[string]any{"raw_idea": "Идея пользователя A"})
-	createReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/modules/posts/drafts", bytes.NewReader(createBody))
+	createReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/posts/drafts", bytes.NewReader(createBody))
 	createReq.Header.Set("Content-Type", "application/json")
 	createReq.Header.Set("X-Init-Data", testMAXInitData())
 	createResp, err := client.Do(createReq)
@@ -190,13 +190,13 @@ func TestPostsAPI_ValidationAndOwnership(t *testing.T) {
 		path   string
 		body   any
 	}{
-		{http.MethodGet, fmt.Sprintf("/api/modules/posts/state?draft_id=%d", draftID), nil},
-		{http.MethodPatch, fmt.Sprintf("/api/modules/posts/drafts/%d/brief", draftID), map[string]any{"goal": "leads"}},
-		{http.MethodPost, fmt.Sprintf("/api/modules/posts/drafts/%d/hooks", draftID), nil},
-		{http.MethodPost, fmt.Sprintf("/api/modules/posts/drafts/%d/generate", draftID), map[string]any{"hook_id": "h1"}},
-		{http.MethodPost, fmt.Sprintf("/api/modules/posts/drafts/%d/refine", draftID), map[string]any{"platform": "max", "instruction": "shorter"}},
-		{http.MethodPatch, fmt.Sprintf("/api/modules/posts/drafts/%d/variants/max", draftID), map[string]any{"text": "hacked"}},
-		{http.MethodPost, fmt.Sprintf("/api/modules/posts/drafts/%d/image", draftID), map[string]any{"prompt": "hacked"}},
+		{http.MethodGet, fmt.Sprintf("/api/v1/posts/state?draft_id=%d", draftID), nil},
+		{http.MethodPatch, fmt.Sprintf("/api/v1/posts/drafts/%d/brief", draftID), map[string]any{"goal": "leads"}},
+		{http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/hooks", draftID), nil},
+		{http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/generate", draftID), map[string]any{"hook_id": "h1"}},
+		{http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/refine", draftID), map[string]any{"platform": "max", "instruction": "shorter"}},
+		{http.MethodPatch, fmt.Sprintf("/api/v1/posts/drafts/%d/variants/max", draftID), map[string]any{"text": "hacked"}},
+		{http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/image", draftID), map[string]any{"prompt": "hacked"}},
 	}
 
 	for _, tc := range crossChecks {
@@ -250,8 +250,8 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 		return resp
 	}
 
-	// 1. POST /api/modules/posts/profile
-	profResp := doJSON(http.MethodPost, "/api/modules/posts/profile", map[string]any{
+	// 1. POST /api/v1/posts/profile
+	profResp := doJSON(http.MethodPost, "/api/v1/posts/profile", map[string]any{
 		"name":              "Studio",
 		"niche":             "SaaS",
 		"target_audience":   "Founders",
@@ -271,8 +271,8 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected profile: %+v", profOut.Profile)
 	}
 
-	// 2. POST /api/modules/posts/drafts
-	draftResp := doJSON(http.MethodPost, "/api/modules/posts/drafts", map[string]any{
+	// 2. POST /api/v1/posts/drafts
+	draftResp := doJSON(http.MethodPost, "/api/v1/posts/drafts", map[string]any{
 		"raw_idea": "Запуск новой фичи",
 	}, http.StatusCreated)
 	var draftOut struct {
@@ -301,8 +301,8 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 		t.Fatalf("expected FSM active_draft_id=%d, got %d", draftID, fsmPayload.ActiveDraftID)
 	}
 
-	// 3. GET /api/modules/posts/state
-	stateResp := doJSON(http.MethodGet, "/api/modules/posts/state", nil, http.StatusOK)
+	// 3. GET /api/v1/posts/state
+	stateResp := doJSON(http.MethodGet, "/api/v1/posts/state", nil, http.StatusOK)
 	var stateOut posts.StudioState
 	if err := json.NewDecoder(stateResp.Body).Decode(&stateOut); err != nil {
 		stateResp.Body.Close()
@@ -316,16 +316,16 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 		t.Fatalf("expected 1 draft and 1 profile, got drafts=%d profiles=%d", len(stateOut.Drafts), len(stateOut.Profiles))
 	}
 
-	// 4. PATCH /api/modules/posts/drafts/{id}/brief
-	briefResp := doJSON(http.MethodPatch, fmt.Sprintf("/api/modules/posts/drafts/%d/brief", draftID), map[string]any{
+	// 4. PATCH /api/v1/posts/drafts/{id}/brief
+	briefResp := doJSON(http.MethodPatch, fmt.Sprintf("/api/v1/posts/drafts/%d/brief", draftID), map[string]any{
 		"goal":             "engagement",
 		"tone":             "friendly",
 		"target_platforms": []string{"max"},
 	}, http.StatusOK)
 	briefResp.Body.Close()
 
-	// 5. POST /api/modules/posts/drafts/{id}/hooks
-	hooksResp := doJSON(http.MethodPost, fmt.Sprintf("/api/modules/posts/drafts/%d/hooks", draftID), nil, http.StatusOK)
+	// 5. POST /api/v1/posts/drafts/{id}/hooks
+	hooksResp := doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/hooks", draftID), nil, http.StatusOK)
 	var hooksOut struct {
 		Draft posts.PostDraft `json:"draft"`
 	}
@@ -338,8 +338,8 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 		t.Fatal("expected generated hooks")
 	}
 
-	// 6. POST /api/modules/posts/drafts/{id}/generate
-	genResp := doJSON(http.MethodPost, fmt.Sprintf("/api/modules/posts/drafts/%d/generate", draftID), map[string]any{
+	// 6. POST /api/v1/posts/drafts/{id}/generate
+	genResp := doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/generate", draftID), map[string]any{
 		"hook_id": hooksOut.Draft.Hooks[0].ID,
 	}, http.StatusOK)
 	var genOut struct {
@@ -354,8 +354,8 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected generated draft: %+v", genOut.Draft)
 	}
 
-	// 7. POST /api/modules/posts/drafts/{id}/refine
-	refResp := doJSON(http.MethodPost, fmt.Sprintf("/api/modules/posts/drafts/%d/refine", draftID), map[string]any{
+	// 7. POST /api/v1/posts/drafts/{id}/refine
+	refResp := doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/refine", draftID), map[string]any{
 		"platform":    "max",
 		"instruction": "Сделай короче",
 	}, http.StatusOK)
@@ -371,8 +371,8 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected refined variants: %+v", refOut.Draft.Variants)
 	}
 
-	// 8. PATCH /api/modules/posts/drafts/{id}/variants/{platform}
-	varResp := doJSON(http.MethodPatch, fmt.Sprintf("/api/modules/posts/drafts/%d/variants/max", draftID), map[string]any{
+	// 8. PATCH /api/v1/posts/drafts/{id}/variants/{platform}
+	varResp := doJSON(http.MethodPatch, fmt.Sprintf("/api/v1/posts/drafts/%d/variants/max", draftID), map[string]any{
 		"text":     "Ручная правка текста",
 		"hashtags": []string{"#manual"},
 		"cta":      "Жми",
@@ -389,8 +389,8 @@ func TestPostsAPI_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected manual variant: %+v", varOut.Draft.Variants)
 	}
 
-	// 9. POST /api/modules/posts/drafts/{id}/image
-	imgResp := doJSON(http.MethodPost, fmt.Sprintf("/api/modules/posts/drafts/%d/image", draftID), map[string]any{
+	// 9. POST /api/v1/posts/drafts/{id}/image
+	imgResp := doJSON(http.MethodPost, fmt.Sprintf("/api/v1/posts/drafts/%d/image", draftID), map[string]any{
 		"prompt": "Bright isometric studio",
 	}, http.StatusOK)
 	var imgOut struct {
