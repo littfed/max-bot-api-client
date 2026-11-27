@@ -22,6 +22,7 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/admin"
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/modules/chat"
+	"github.com/littfed/max-bot-api-client/internal/modules/posts"
 	"github.com/littfed/max-bot-api-client/internal/modules/reception"
 	"github.com/littfed/max-bot-api-client/internal/modules/reminders"
 	"github.com/littfed/max-bot-api-client/internal/modules/shop"
@@ -50,6 +51,7 @@ type RouterConfig struct {
 	SupportModule   *support.Module
 	ChatModule      *chat.Module
 	RemindersModule *reminders.Module
+	PostsModule     *posts.Module
 	BotToken        string
 	JWTSecret       string
 	PlatformAdapter platform.PlatformAdapter
@@ -183,6 +185,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	modH := newModulesHandler(cfg)
 	admH := newAdminHandler(cfg)
 	remH := newRemindersHandler(cfg)
+	postsH := newPostsHandler(cfg)
 
 	// Hub Endpoints
 	mux.HandleFunc("GET /api/v1/bootstrap", hubH.handleBootstrap)
@@ -225,6 +228,17 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/reminders/{id}", remH.handleDeleteReminder)
 	mux.HandleFunc("POST /api/v1/reminders/simulate", remH.handleSimulateReminder)
 	mux.HandleFunc("GET /api/v1/admin/notifications/ab-stats", requireAdmin(remH.handleAdminABStats))
+
+	// Posts (Content Studio) Module Endpoints
+	mux.HandleFunc("GET /api/modules/posts/state", postsH.handleGetState)
+	mux.HandleFunc("POST /api/modules/posts/profile", postsH.handleSaveProfile)
+	mux.HandleFunc("POST /api/modules/posts/drafts", postsH.handleStartDraft)
+	mux.HandleFunc("PATCH /api/modules/posts/drafts/{id}/brief", postsH.handleUpdateBrief)
+	mux.HandleFunc("POST /api/modules/posts/drafts/{id}/hooks", postsH.handleGenerateHooks)
+	mux.HandleFunc("POST /api/modules/posts/drafts/{id}/generate", postsH.handleGeneratePackage)
+	mux.HandleFunc("POST /api/modules/posts/drafts/{id}/refine", postsH.handleRefine)
+	mux.HandleFunc("PATCH /api/modules/posts/drafts/{id}/variants/{platform}", postsH.handleUpdateVariant)
+	mux.HandleFunc("POST /api/modules/posts/drafts/{id}/image", postsH.handleRegenerateImage)
 
 	// Admin Endpoints (protected by requireAdmin middleware)
 	mux.HandleFunc("GET /api/v1/admin/modes", requireAdmin(admH.handleAdminModes))
