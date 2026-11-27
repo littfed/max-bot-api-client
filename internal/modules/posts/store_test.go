@@ -86,8 +86,22 @@ func TestInMemoryStore_DraftOwnershipAndProfile(t *testing.T) {
 	}
 
 	got.Status = DraftStatusReady
+	got.TextModel = "claude-sonnet-5-5"
+	got.ImageHistory = []ImageRevision{
+		{Version: 1, URL: "https://img.example/1.png", Prompt: "prompt 1"},
+	}
+	got.TextHistory = []TextRevision{
+		{Version: 1, Platform: "telegram", Text: "Hello v1", Source: "generate", Model: "claude-sonnet-5-5"},
+	}
 	if err := repo.UpdateDraft(ctx, got); err != nil {
 		t.Fatalf("owner UpdateDraft failed: %v", err)
+	}
+	reloaded, err := repo.GetDraft(ctx, 101, got.ID)
+	if err != nil {
+		t.Fatalf("reload GetDraft failed: %v", err)
+	}
+	if reloaded.TextModel != "claude-sonnet-5-5" || len(reloaded.ImageHistory) != 1 || len(reloaded.TextHistory) != 1 {
+		t.Fatalf("expected history and text_model persisted, got %+v", reloaded)
 	}
 
 	// 4. ListDrafts returns only owner's drafts

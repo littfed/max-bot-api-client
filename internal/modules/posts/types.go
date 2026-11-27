@@ -53,6 +53,42 @@ type PostVariant struct {
 	CTA      string   `json:"cta,omitempty"`
 }
 
+// ImageRevision records a generated or uploaded visual version for a draft.
+type ImageRevision struct {
+	Version   int       `json:"version"`
+	URL       string    `json:"url"`
+	Prompt    string    `json:"prompt,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TextRevision records a historical snapshot of a platform variant.
+type TextRevision struct {
+	Version     int       `json:"version"`
+	Platform    string    `json:"platform"`
+	Text        string    `json:"text"`
+	Hashtags    []string  `json:"hashtags,omitempty"`
+	CTA         string    `json:"cta,omitempty"`
+	Source      string    `json:"source"` // "generate" | "refine" | "manual" | "restore"
+	Instruction string    `json:"instruction,omitempty"`
+	Model       string    `json:"model,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ModelOption describes an available text model from GMA.
+type ModelOption struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Tier        string `json:"tier"` // "auto" | "balanced" | "pro" | "other"
+	Description string `json:"description,omitempty"`
+}
+
+// ModelsCatalog holds curated and full lists of text models available in GMA.
+type ModelsCatalog struct {
+	DefaultModel string        `json:"default_model"`
+	Curated      []ModelOption `json:"curated"`
+	All          []string      `json:"all"`
+}
+
 // PostDraft represents a single content studio post draft.
 type PostDraft struct {
 	ID                int64         `json:"id"`
@@ -67,9 +103,12 @@ type PostDraft struct {
 	TargetPlatforms   []string      `json:"target_platforms"`
 	Hooks             []PostHook    `json:"hooks"`
 	SelectedHookID    string        `json:"selected_hook_id,omitempty"`
-	ImagePrompt       string        `json:"image_prompt,omitempty"`
-	GeneratedImageURL string        `json:"generated_image_url,omitempty"`
-	Variants          []PostVariant `json:"variants"`
+	ImagePrompt       string          `json:"image_prompt,omitempty"`
+	GeneratedImageURL string          `json:"generated_image_url,omitempty"`
+	TextModel         string          `json:"text_model,omitempty"`
+	ImageHistory      []ImageRevision `json:"image_history,omitempty"`
+	TextHistory       []TextRevision  `json:"text_history,omitempty"`
+	Variants          []PostVariant   `json:"variants"`
 	CreatedAt         time.Time     `json:"created_at"`
 	UpdatedAt         time.Time     `json:"updated_at"`
 }

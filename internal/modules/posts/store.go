@@ -170,20 +170,28 @@ func (s *PGStore) CreateDraft(ctx context.Context, d *PostDraft) error {
 	if err != nil {
 		return fmt.Errorf("posts: marshal variants: %w", err)
 	}
+	imageHistoryJSON, err := marshalJSONSlice(d.ImageHistory)
+	if err != nil {
+		return fmt.Errorf("posts: marshal image_history: %w", err)
+	}
+	textHistoryJSON, err := marshalJSONSlice(d.TextHistory)
+	if err != nil {
+		return fmt.Errorf("posts: marshal text_history: %w", err)
+	}
 
 	const q = `
 		INSERT INTO post_drafts (
 			user_id, profile_id, status, raw_idea, source_image_url, vision_summary,
 			goal, tone, target_platforms, hooks, selected_hook_id,
-			image_prompt, generated_image_url, variants
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			image_prompt, generated_image_url, text_model, image_history, text_history, variants
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id, created_at, updated_at`
 
 	err = s.db.QueryRowContext(
 		ctx, q,
 		d.UserID, d.ProfileID, d.Status, d.RawIdea, d.SourceImageURL, d.VisionSummary,
 		d.Goal, d.Tone, platformsJSON, hooksJSON, d.SelectedHookID,
-		d.ImagePrompt, d.GeneratedImageURL, variantsJSON,
+		d.ImagePrompt, d.GeneratedImageURL, d.TextModel, imageHistoryJSON, textHistoryJSON, variantsJSON,
 	).Scan(&d.ID, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("posts: create draft: %w", err)
@@ -195,7 +203,7 @@ func (s *PGStore) GetDraft(ctx context.Context, userID, draftID int64) (*PostDra
 	const q = `
 		SELECT id, user_id, profile_id, status, raw_idea, source_image_url, vision_summary,
 		       goal, tone, target_platforms, hooks, selected_hook_id,
-		       image_prompt, generated_image_url, variants, created_at, updated_at
+		       image_prompt, generated_image_url, text_model, image_history, text_history, variants, created_at, updated_at
 		FROM post_drafts
 		WHERE id = $1 AND user_id = $2`
 
@@ -213,7 +221,7 @@ func (s *PGStore) ListDrafts(ctx context.Context, userID int64) ([]PostDraft, er
 	const q = `
 		SELECT id, user_id, profile_id, status, raw_idea, source_image_url, vision_summary,
 		       goal, tone, target_platforms, hooks, selected_hook_id,
-		       image_prompt, generated_image_url, variants, created_at, updated_at
+		       image_prompt, generated_image_url, text_model, image_history, text_history, variants, created_at, updated_at
 		FROM post_drafts
 		WHERE user_id = $1
 		ORDER BY updated_at DESC, id DESC`
@@ -255,6 +263,14 @@ func (s *PGStore) UpdateDraft(ctx context.Context, d *PostDraft) error {
 	if err != nil {
 		return fmt.Errorf("posts: marshal variants: %w", err)
 	}
+	imageHistoryJSON, err := marshalJSONSlice(d.ImageHistory)
+	if err != nil {
+		return fmt.Errorf("posts: marshal image_history: %w", err)
+	}
+	textHistoryJSON, err := marshalJSONSlice(d.TextHistory)
+	if err != nil {
+		return fmt.Errorf("posts: marshal text_history: %w", err)
+	}
 
 	const q = `
 		UPDATE post_drafts
@@ -270,7 +286,10 @@ func (s *PGStore) UpdateDraft(ctx context.Context, d *PostDraft) error {
 		    selected_hook_id = $12,
 		    image_prompt = $13,
 		    generated_image_url = $14,
-		    variants = $15,
+		    text_model = $15,
+		    image_history = $16,
+		    text_history = $17,
+		    variants = $18,
 		    updated_at = NOW()
 		WHERE id = $1 AND user_id = $2
 		RETURNING updated_at`
@@ -279,7 +298,7 @@ func (s *PGStore) UpdateDraft(ctx context.Context, d *PostDraft) error {
 		ctx, q,
 		d.ID, d.UserID, d.ProfileID, d.Status, d.RawIdea, d.SourceImageURL, d.VisionSummary,
 		d.Goal, d.Tone, platformsJSON, hooksJSON, d.SelectedHookID,
-		d.ImagePrompt, d.GeneratedImageURL, variantsJSON,
+		d.ImagePrompt, d.GeneratedImageURL, d.TextModel, imageHistoryJSON, textHistoryJSON, variantsJSON,
 	).Scan(&d.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
@@ -315,11 +334,11 @@ func scanProfile(row rowScanner) (*BrandProfile, error) {
 func scanDraft(row rowScanner) (*PostDraft, error) {
 	var d PostDraft
 	var profileID sql.NullInt64
-	var platformsRaw, hooksRaw, variantsRaw []byte
+	var platformsRaw, hooksRaw, imageHistoryRaw, textHistoryRaw, variantsRaw []byte
 	err := row.Scan(
 		&d.ID, &d.UserID, &profileID, &d.Status, &d.RawIdea, &d.SourceImageURL, &d.VisionSummary,
 		&d.Goal, &d.Tone, &platformsRaw, &hooksRaw, &d.SelectedHookID,
-		&d.ImagePrompt, &d.GeneratedImageURL, &variantsRaw, &d.CreatedAt, &d.UpdatedAt,
+		&d.ImagePrompt, &d.GeneratedImageURL, &d.TextModel, &imageHistoryRaw, &textHistoryRaw, &variantsRaw, &d.CreatedAt, &d.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -336,6 +355,16 @@ func scanDraft(row rowScanner) (*PostDraft, error) {
 	if len(hooksRaw) > 0 {
 		if err := json.Unmarshal(hooksRaw, &d.Hooks); err != nil {
 			return nil, fmt.Errorf("unmarshal hooks: %w", err)
+		}
+	}
+	if len(imageHistoryRaw) > 0 {
+		if err := json.Unmarshal(imageHistoryRaw, &d.ImageHistory); err != nil {
+			return nil, fmt.Errorf("unmarshal image_history: %w", err)
+		}
+	}
+	if len(textHistoryRaw) > 0 {
+		if err := json.Unmarshal(textHistoryRaw, &d.TextHistory); err != nil {
+			return nil, fmt.Errorf("unmarshal text_history: %w", err)
 		}
 	}
 	if len(variantsRaw) > 0 {
@@ -548,6 +577,23 @@ func cloneDraft(d PostDraft) PostDraft {
 		cp := make([]PostHook, len(d.Hooks))
 		copy(cp, d.Hooks)
 		d.Hooks = cp
+	}
+	if d.ImageHistory != nil {
+		cp := make([]ImageRevision, len(d.ImageHistory))
+		copy(cp, d.ImageHistory)
+		d.ImageHistory = cp
+	}
+	if d.TextHistory != nil {
+		cp := make([]TextRevision, len(d.TextHistory))
+		for i, r := range d.TextHistory {
+			if r.Hashtags != nil {
+				hc := make([]string, len(r.Hashtags))
+				copy(hc, r.Hashtags)
+				r.Hashtags = hc
+			}
+			cp[i] = r
+		}
+		d.TextHistory = cp
 	}
 	if d.Variants != nil {
 		cp := make([]PostVariant, len(d.Variants))
