@@ -39,8 +39,7 @@ type AIGateway interface {
 }
 
 type aiClientGateway struct {
-	client     *ai.Client
-	httpClient *http.Client
+	client *ai.Client
 
 	modelsMu       sync.RWMutex
 	cachedModels   []string
@@ -50,8 +49,7 @@ type aiClientGateway struct {
 // NewAIClientGateway adapts *ai.Client to AIGateway with per-operation timeouts and model caching.
 func NewAIClientGateway(client *ai.Client) AIGateway {
 	return &aiClientGateway{
-		client:     client,
-		httpClient: &http.Client{Timeout: imageTimeout},
+		client: client,
 	}
 }
 
@@ -162,7 +160,7 @@ func (g *aiClientGateway) GenerateImage(ctx context.Context, prompt, model, size
 	if err != nil {
 		return nil, "", err
 	}
-	return g.unwrapImageResponse(reqCtx, resp)
+	return unwrapImageResponse(resp)
 }
 
 func (g *aiClientGateway) EditImage(ctx context.Context, imageBytes []byte, prompt, model, size string) ([]byte, string, error) {
@@ -183,24 +181,14 @@ func (g *aiClientGateway) EditImage(ctx context.Context, imageBytes []byte, prom
 	if err != nil {
 		return nil, "", err
 	}
-	return g.unwrapImageResponse(reqCtx, resp)
+	return unwrapImageResponse(resp)
 }
 
-func (g *aiClientGateway) unwrapImageResponse(ctx context.Context, resp *ai.ImageResponse) ([]byte, string, error) {
-	if resp == nil {
+func unwrapImageResponse(resp *ai.ImageResponse) ([]byte, string, error) {
+	if resp == nil || (len(resp.Data) == 0 && resp.URL == "") {
 		return nil, "", errors.New("images: empty image response from AI gateway")
 	}
-	if len(resp.Data) > 0 {
-		return resp.Data, resp.URL, nil
-	}
-	if resp.URL != "" {
-		data, err := downloadImageURL(ctx, g.httpClient, resp.URL)
-		if err == nil && len(data) > 0 {
-			return data, resp.URL, nil
-		}
-		return nil, resp.URL, nil
-	}
-	return nil, "", errors.New("images: empty image response from AI gateway")
+	return resp.Data, resp.URL, nil
 }
 
 // Pipeline orchestrates image model discovery, generation, and hybrid editing.
@@ -398,9 +386,6 @@ func isEditUnsupportedError(err error) bool {
 		"status 404",
 		"status 405",
 		"status 501",
-		"404",
-		"405",
-		"501",
 		"not supported",
 		"unsupported",
 		"unknown endpoint",
