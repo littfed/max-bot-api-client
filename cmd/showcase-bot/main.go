@@ -22,6 +22,7 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/api"
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/modules/chat"
+	"github.com/littfed/max-bot-api-client/internal/modules/images"
 	"github.com/littfed/max-bot-api-client/internal/modules/posts"
 	"github.com/littfed/max-bot-api-client/internal/modules/reception"
 	"github.com/littfed/max-bot-api-client/internal/modules/reminders"
@@ -29,6 +30,7 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/modules/support"
 	"github.com/littfed/max-bot-api-client/internal/platform"
 	"github.com/littfed/max-bot-api-client/internal/platform/max"
+	"github.com/littfed/max-bot-api-client/internal/storage"
 	"github.com/littfed/max-bot-api-client/pkg/ai"
 	"github.com/littfed/max-bot-api-client/pkg/bot"
 	"github.com/littfed/max-bot-api-client/pkg/fsm"
@@ -301,12 +303,28 @@ func main() {
 	postsService := posts.NewService(postsStore, postsPipeline)
 	postsMod := posts.New(postsService, webAppURL)
 
+	objStorage, storageErr := storage.NewObjectStorageFromEnv(ctx)
+	if storageErr != nil {
+		logger.Warn("не удалось инициализировать S3 хранилище, используем in-memory fallback", slog.Any("error", storageErr))
+		objStorage = storage.NewMemoryStorage("/api/v1/images/assets")
+	}
+	var imagesStore images.Store
+	if sqlStore != nil && sqlStore.DB() != nil && sqlStore.Dialect() == "postgres" {
+		imagesStore = images.NewSQLStore(sqlStore.DB())
+	} else {
+		imagesStore = images.NewMemoryStore()
+	}
+	imagesPipeline := images.NewPipeline(images.NewAIClientGateway(aiClient))
+	imagesService := images.NewService(imagesStore, imagesPipeline, objStorage)
+	imagesMod := images.New(imagesService, webAppURL)
+
 	orchestrator.RegisterModule(shopMod)
 	orchestrator.RegisterModule(receptionMod)
 	orchestrator.RegisterModule(supportMod)
 	orchestrator.RegisterModule(chatMod)
 	orchestrator.RegisterModule(remindersMod)
 	orchestrator.RegisterModule(postsMod)
+	orchestrator.RegisterModule(imagesMod)
 
 	adapters := map[string]platform.PlatformAdapter{
 		"max": maxAdapter,
@@ -347,6 +365,7 @@ func main() {
 		ChatModule:      chatMod,
 		RemindersModule: remindersMod,
 		PostsModule:     postsMod,
+		ImagesModule:    imagesMod,
 		BotToken:        token,
 		JWTSecret:       jwtSecret,
 		PlatformAdapter: maxAdapter,

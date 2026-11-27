@@ -22,6 +22,7 @@ import (
 	"github.com/littfed/max-bot-api-client/internal/admin"
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/modules/chat"
+	"github.com/littfed/max-bot-api-client/internal/modules/images"
 	"github.com/littfed/max-bot-api-client/internal/modules/posts"
 	"github.com/littfed/max-bot-api-client/internal/modules/reception"
 	"github.com/littfed/max-bot-api-client/internal/modules/reminders"
@@ -52,6 +53,7 @@ type RouterConfig struct {
 	ChatModule      *chat.Module
 	RemindersModule *reminders.Module
 	PostsModule     *posts.Module
+	ImagesModule    *images.Module
 	BotToken        string
 	JWTSecret       string
 	PlatformAdapter platform.PlatformAdapter
@@ -186,6 +188,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	admH := newAdminHandler(cfg)
 	remH := newRemindersHandler(cfg)
 	postsH := newPostsHandler(cfg)
+	imgH := newImagesHandler(cfg)
 
 	// Hub Endpoints
 	mux.HandleFunc("GET /api/v1/bootstrap", hubH.handleBootstrap)
@@ -242,6 +245,16 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/posts/drafts/{id}/image", postsH.handleRegenerateImage)
 	mux.HandleFunc("POST /api/v1/posts/drafts/{id}/restore", postsH.handleRestoreRevision)
 
+	// Images (Image Studio) Module Endpoints
+	mux.HandleFunc("GET /api/v1/images/presets", imgH.handleListPresets)
+	mux.HandleFunc("GET /api/v1/images/models", imgH.handleListModels)
+	mux.HandleFunc("GET /api/v1/images/projects", imgH.handleListProjects)
+	mux.HandleFunc("GET /api/v1/images/projects/{id}", imgH.handleGetProject)
+	mux.HandleFunc("POST /api/v1/images/projects", imgH.handleCreateProject)
+	mux.HandleFunc("POST /api/v1/images/projects/{id}/refine", imgH.handleRefineProject)
+	mux.HandleFunc("POST /api/v1/images/projects/{id}/restore", imgH.handleRestoreProject)
+	mux.HandleFunc("DELETE /api/v1/images/projects/{id}", imgH.handleDeleteProject)
+
 	// Admin Endpoints (protected by requireAdmin middleware)
 	mux.HandleFunc("GET /api/v1/admin/modes", requireAdmin(admH.handleAdminModes))
 	mux.HandleFunc("POST /api/v1/admin/modes/{id}/toggle", requireAdmin(admH.handleAdminToggleMode))
@@ -251,8 +264,14 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/admin/tickets/{id}/reply", requireAdmin(admH.handleAdminTicketReply))
 	mux.HandleFunc("GET /api/v1/admin/audit-logs", requireAdmin(admH.handleAdminAuditLogs))
 
-	// Middleware chaining: CORS -> RateLimit -> MaxBody -> Auth -> Handler
-	return corsMiddleware(cfg, rateLimitMiddleware(cfg, maxBodyMiddleware(1<<20, authMiddleware(cfg, mux))))
+	// Public asset route (for browser <img> tags when MemoryStorage fallback is active)
+	authed := maxBodyMiddleware(1<<20, authMiddleware(cfg, mux))
+	rootMux := http.NewServeMux()
+	rootMux.HandleFunc("GET /api/v1/images/assets/{key...}", imgH.handleGetAsset)
+	rootMux.Handle("/", authed)
+
+	// Middleware chaining: CORS -> RateLimit -> (Asset | MaxBody -> Auth -> Handler)
+	return corsMiddleware(cfg, rateLimitMiddleware(cfg, rootMux))
 }
 
 func rateLimitMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
@@ -315,7 +334,12 @@ func rateLimitMiddleware(cfg RouterConfig, next http.Handler) http.Handler {
 func maxBodyMiddleware(limit int64, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			effectiveLimit := limit
+			if r.Method == http.MethodPost && r.URL.Path == "/api/v1/images/projects" &&
+				strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+				effectiveLimit = 12 << 20 // 12 MiB (10 MiB image + multipart form overhead)
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, effectiveLimit)
 		}
 		next.ServeHTTP(w, r)
 	})
