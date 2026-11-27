@@ -150,7 +150,6 @@ export const PostsView: React.FC<PostsViewProps> = ({
   // Text model selector
   const [modelsCatalog, setModelsCatalog] = useState<ModelsCatalog | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>('');
-  const [showAllModels, setShowAllModels] = useState(false);
 
   // Brand Profile form
   const [profileName, setProfileName] = useState('Мой бренд');
@@ -465,81 +464,54 @@ export const PostsView: React.FC<PostsViewProps> = ({
     const allModels = modelsCatalog.all || [];
     if (curated.length === 0 && allModels.length === 0) return null;
 
-    const currentInCurated = curated.some((m) => m.id === selectedModel);
-    const shouldShowSelect = showAllModels || curated.length === 0;
-    const selectOptions = Array.from(
-      new Set([
-        ...curated.map((m) => m.id),
-        ...allModels,
-        ...(selectedModel ? [selectedModel] : []),
-      ])
-    ).filter(Boolean);
+    const curatedIds = new Set(curated.map((m) => m.id));
+    const extraModels = allModels.filter((id) => id && !curatedIds.has(id));
+    const hasCustomSelected =
+      Boolean(selectedModel) &&
+      !curatedIds.has(selectedModel) &&
+      !extraModels.includes(selectedModel);
+    const selectedCurated = curated.find((m) => m.id === selectedModel);
 
     return (
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <label className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700">
-            <Cpu className="w-3.5 h-3.5 text-teal-600" />
-            Модель текста
-          </label>
-          {allModels.length > 0 && curated.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowAllModels((prev) => !prev)}
-              className="text-[11px] font-medium text-teal-700 hover:text-teal-800 underline underline-offset-2"
-            >
-              {showAllModels ? 'Основные модели' : `Все модели (${allModels.length})`}
-            </button>
-          )}
-        </div>
+      <div className="space-y-1">
+        <label className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700">
+          <Cpu className="w-3.5 h-3.5 text-teal-600" />
+          Модель текста
+        </label>
 
-        {shouldShowSelect ? (
-          <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500"
-          >
-            {selectOptions.map((id) => {
-              const curatedMeta = curated.find((m) => m.id === id);
-              return (
+        <select
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500"
+        >
+          {curated.length > 0 && (
+            <optgroup label="Рекомендуемые">
+              {curated.map((opt) => {
+                const tierLabel = (TIER_BADGES[opt.tier] || TIER_BADGES.other).label;
+                return (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label} ({tierLabel})
+                  </option>
+                );
+              })}
+            </optgroup>
+          )}
+          {extraModels.length > 0 && (
+            <optgroup label={`Все модели шлюза (${extraModels.length})`}>
+              {extraModels.map((id) => (
                 <option key={id} value={id}>
-                  {curatedMeta ? `${curatedMeta.label} (${curatedMeta.tier})` : id}
+                  {id}
                 </option>
-              );
-            })}
-          </select>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {curated.map((opt) => {
-              const isSelected = selectedModel === opt.id;
-              const tierMeta = TIER_BADGES[opt.tier] || TIER_BADGES.other;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  title={opt.description || opt.id}
-                  onClick={() => setSelectedModel(opt.id)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-medium border transition-all ${
-                    isSelected
-                      ? 'bg-teal-50 border-teal-500 text-teal-800 shadow-sm'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-teal-400'
-                  }`}
-                >
-                  <span>{opt.label}</span>
-                  <span
-                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md border ${tierMeta.cls}`}
-                  >
-                    {tierMeta.label}
-                  </span>
-                </button>
-              );
-            })}
-            {selectedModel && !currentInCurated && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-medium border bg-teal-50 border-teal-500 text-teal-800">
-                {selectedModel}
-              </span>
-            )}
-          </div>
+              ))}
+            </optgroup>
+          )}
+          {hasCustomSelected && (
+            <option value={selectedModel}>{selectedModel}</option>
+          )}
+        </select>
+
+        {selectedCurated?.description && (
+          <p className="text-[11px] text-slate-500">{selectedCurated.description}</p>
         )}
       </div>
     );
