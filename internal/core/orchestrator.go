@@ -58,6 +58,18 @@ func (o *Orchestrator) RegisterModule(mod BotModule) {
 	o.modules[mod.ID()] = mod
 }
 
+// ActiveModeForUser returns the user's current active mode ID, defaulting to "chat".
+func (o *Orchestrator) ActiveModeForUser(ctx context.Context, platform, platformUserID, username, firstName, phone string) string {
+	if o.store == nil {
+		return "chat"
+	}
+	u, err := o.store.ResolveUserIdentity(ctx, platform, platformUserID, username, firstName, phone)
+	if err != nil || u == nil || u.ActiveModeID == "" {
+		return "chat"
+	}
+	return u.ActiveModeID
+}
+
 // ProcessEvent executes the complete 7-step Bot Hub event pipeline.
 func (o *Orchestrator) ProcessEvent(ctx context.Context, event *DomainEvent) (*DomainResponse, error) {
 	if event == nil {

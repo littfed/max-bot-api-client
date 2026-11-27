@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -39,6 +40,7 @@ import (
 	"github.com/littfed/max-bot-api-client/pkg/payments"
 	"github.com/littfed/max-bot-api-client/pkg/store"
 	"github.com/littfed/max-bot-api-client/pkg/telemetry"
+	"github.com/littfed/max-bot-api-client/web"
 )
 
 func main() {
@@ -316,6 +318,11 @@ func main() {
 	}
 	imagesPipeline := images.NewPipeline(images.NewAIClientGateway(aiClient))
 	imagesService := images.NewService(imagesStore, imagesPipeline, objStorage)
+	if distFS, err := fs.Sub(web.DistFS, "dist"); err == nil {
+		imagesService.SetExampleAssetsFS(distFS)
+	} else {
+		imagesService.SetExampleAssetsFS(os.DirFS("web/public"))
+	}
 	imagesMod := images.New(imagesService, webAppURL)
 
 	orchestrator.RegisterModule(shopMod)

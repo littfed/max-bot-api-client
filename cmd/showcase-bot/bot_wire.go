@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/littfed/max-bot-api-client/internal/core"
@@ -68,6 +69,7 @@ func convertContextToDomainEvent(c *bot.Context) *core.DomainEvent {
 			chatID = c.Update.Message.Recipient.ChatID
 		}
 		text := c.Update.Message.Body.Text
+		imageURL := extractFirstImageURL(c.Update.Message.Body.Attachments)
 		event.PlatformUserID = strconv.FormatInt(userID, 10)
 		event.Username = username
 		event.FirstName = firstName
@@ -79,6 +81,7 @@ func convertContextToDomainEvent(c *bot.Context) *core.DomainEvent {
 			Username:       username,
 			FirstName:      firstName,
 			Text:           text,
+			ImageURL:       imageURL,
 			CreatedAt:      time.Now(),
 		}
 		return event
@@ -129,6 +132,42 @@ func sendDomainResponse(c *bot.Context, resp *core.DomainResponse) error {
 	}
 	_, err := c.Reply(resp.Text)
 	return err
+}
+
+func extractFirstImageURL(attachments []maxbot.Attachment) string {
+	for _, att := range attachments {
+		if att.Type != maxbot.UploadTypeImage && att.Type != "image" && att.Type != "photo" && att.Type != "picture" {
+			continue
+		}
+		switch p := att.Payload.(type) {
+		case map[string]any:
+			if u, ok := p["url"].(string); ok && strings.TrimSpace(u) != "" {
+				return strings.TrimSpace(u)
+			}
+		case map[string]string:
+			if u := strings.TrimSpace(p["url"]); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
+}
+
+var globalOrchestratorImageHandler atomic.Pointer[func(c *bot.Context) (bool, error)]
+
+func getGlobalOrchestratorImageHandler() func(c *bot.Context) (bool, error) {
+	if fn := globalOrchestratorImageHandler.Load(); fn != nil {
+		return *fn
+	}
+	return nil
+}
+
+func setGlobalOrchestratorImageHandler(fn func(c *bot.Context) (bool, error)) {
+	if fn == nil {
+		globalOrchestratorImageHandler.Store(nil)
+		return
+	}
+	globalOrchestratorImageHandler.Store(&fn)
 }
 
 // wireBotToOrchestrator registers Bot Hub commands and callbacks to dispatch to Core Orchestrator.
@@ -185,6 +224,27 @@ func wireBotToOrchestrator(b *bot.Bot, orchestrator *core.Orchestrator, logger *
 	b.OnCallbackPrefix("chat:", dispatchHandler)
 	b.OnCallbackPrefix("lead:", dispatchHandler)
 	b.OnCallbackPrefix("rmd:", dispatchHandler)
+	b.OnCallbackPrefix("img:", dispatchHandler)
+
+	setGlobalOrchestratorImageHandler(func(c *bot.Context) (bool, error) {
+		event := convertContextToDomainEvent(c)
+		if event == nil || event.Message == nil {
+			return false, nil
+		}
+		ctx := c.Ctx()
+		if orchestrator.ActiveModeForUser(ctx, event.Platform, event.PlatformUserID, event.Username, event.FirstName, event.Phone) != "images" {
+			return false, nil
+		}
+		resp, err := orchestrator.ProcessEvent(ctx, event)
+		if err != nil {
+			logger.Error("orchestrator: error processing image message", slog.Any("error", err))
+			return true, err
+		}
+		if resp != nil && resp.Handled {
+			return true, sendDomainResponse(c, resp)
+		}
+		return false, nil
+	})
 
 	// Plain text messages in active conversational modes (Reception, Support, Chat, etc.)
 	b.OnIdleMessage(func(c *bot.Context) error {

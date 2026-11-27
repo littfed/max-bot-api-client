@@ -160,6 +160,8 @@ export const ImagesView: React.FC<ImagesViewProps> = ({
   };
 
   const handleTryExample = async (preset: ImagePreset) => {
+    setActiveProject(null);
+    setSelectedRevisionVersion(null);
     setSelectedPresetId(preset.id);
     setMode(preset.mode);
     setPrompt(preset.example_prompt);
@@ -700,8 +702,24 @@ export const ImagesView: React.FC<ImagesViewProps> = ({
                 </button>
               </div>
 
+              {/* Failed Project Error Banner */}
+              {activeProject && activeProject.status === 'failed' && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+                  <span className="font-semibold">Ошибка генерации: </span>
+                  {activeProject.error_message || 'Не удалось выполнить операцию.'}
+                </div>
+              )}
+
               {/* Active Project Result Viewer */}
-              {activeProject && activeProject.current_image_url && (
+              {activeProject && activeProject.current_image_url && (() => {
+                const selectedRevision = activeProject.revisions?.find(
+                  (r) => r.version === selectedRevisionVersion
+                );
+                const previewImageUrl =
+                  selectedRevision?.image_url || activeProject.current_image_url;
+                const previewVersion =
+                  selectedRevision?.version ?? activeProject.current_version;
+                return (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-4">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -709,7 +727,7 @@ export const ImagesView: React.FC<ImagesViewProps> = ({
                         {activeProject.title || 'Результат'}
                       </h3>
                       <p className="text-[11px] text-slate-500">
-                        Версия v{activeProject.current_version} •{' '}
+                        Версия v{previewVersion} •{' '}
                         {activeProject.aspect_ratio}
                       </p>
                     </div>
@@ -728,8 +746,8 @@ export const ImagesView: React.FC<ImagesViewProps> = ({
                         </button>
                       )}
                       <a
-                        href={activeProject.current_image_url}
-                        download={`image-v${activeProject.current_version}.png`}
+                        href={previewImageUrl}
+                        download={`image-v${previewVersion}.png`}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-semibold transition-colors"
@@ -746,7 +764,7 @@ export const ImagesView: React.FC<ImagesViewProps> = ({
                       src={
                         showBeforeResult && activeProject.source_image_url
                           ? activeProject.source_image_url
-                          : activeProject.current_image_url
+                          : previewImageUrl
                       }
                       alt={activeProject.title}
                       className="w-full max-h-[420px] object-contain mx-auto"
@@ -838,9 +856,10 @@ export const ImagesView: React.FC<ImagesViewProps> = ({
                               <button
                                 key={rev.id || rev.version}
                                 type="button"
-                                onClick={() =>
-                                  setSelectedRevisionVersion(rev.version)
-                                }
+                                onClick={() => {
+                                  setShowBeforeResult(false);
+                                  setSelectedRevisionVersion(rev.version);
+                                }}
                                 title={rev.prompt}
                                 className={`flex items-center gap-2 p-1.5 rounded-xl border shrink-0 transition-all ${
                                   isSelected
@@ -871,7 +890,8 @@ export const ImagesView: React.FC<ImagesViewProps> = ({
                       </div>
                     )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
 

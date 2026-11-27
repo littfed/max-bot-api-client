@@ -8,9 +8,13 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/storage"
@@ -612,4 +616,180 @@ func TestModule_HandleMessage_And_ExtendedCallbacks(t *testing.T) {
 
 func strconvFormat(id int64) string {
 	return strconv.FormatInt(id, 10)
+}
+
+func TestService_UUIDKeysAndExampleAssetsFS(t *testing.T) {
+	st := NewMemoryStore()
+	obj := storage.NewMemoryStorage("/api/v1/images/assets")
+	customExample := makeTestPNGBytes(t)
+
+	var seenSrc []byte
+	gw := &mockAIGateway{
+		editImageFn: func(_ context.Context, imgBytes []byte, prompt, model, size string) ([]byte, string, error) {
+			seenSrc = append([]byte(nil), imgBytes...)
+			return makeTestPNGBytes(t), "edit", nil
+		},
+	}
+	svc := NewService(st, NewPipeline(gw), obj)
+	svc.SetExampleAssetsFS(fstest.MapFS{
+		"presets/bg_replace_before.png": &fstest.MapFile{Data: customExample},
+	})
+
+	proj, err := svc.CreateAndRun(context.Background(), CreateProjectInput{
+		UserID:           10,
+		Mode:             ModeEdit,
+		PresetID:         "bg_replace",
+		Prompt:           "White studio background",
+		UseExampleSource: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAndRun failed: %v", err)
+	}
+
+	if !bytes.Equal(seenSrc, customExample) {
+		t.Fatalf("expected CreateAndRun to load example image from exampleAssetsFS (got %d bytes, want %d)", len(seenSrc), len(customExample))
+	}
+
+	srcKeyRe := regexp.MustCompile(`^images/10/\d+/source_[0-9a-f]{32}\.png$`)
+	v1KeyRe := regexp.MustCompile(`^images/10/\d+/v1_[0-9a-f]{32}\.png$`)
+	if !srcKeyRe.MatchString(proj.SourceImageKey) {
+		t.Fatalf("expected UUID source key, got %q", proj.SourceImageKey)
+	}
+	if !v1KeyRe.MatchString(proj.CurrentImageKey) {
+		t.Fatalf("expected UUID v1 key, got %q", proj.CurrentImageKey)
+	}
+}
+
+func TestValidateCreateProjectInput_ExtendedChecks(t *testing.T) {
+	longModel := strings.Repeat("m", 129)
+	cases := []struct {
+		name    string
+		input   CreateProjectInput
+		wantErr bool
+	}{
+		{
+			name: "valid aspect ratio and model",
+			input: CreateProjectInput{
+				Mode:        ModeGenerate,
+				Prompt:      "A cat",
+				AspectRatio: "16:9",
+				ImageModel:  "flux",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid aspect ratio",
+			input: CreateProjectInput{
+				Mode:        ModeGenerate,
+				Prompt:      "A cat",
+				AspectRatio: "21:9",
+			},
+			wantErr: true,
+		},
+		{
+			name: "image model too long",
+			input: CreateProjectInput{
+				Mode:       ModeGenerate,
+				Prompt:     "A cat",
+				ImageModel: longModel,
+			},
+			wantErr: true,
+		},
+		{
+			name: "mismatched mode and preset_id",
+			input: CreateProjectInput{
+				Mode:     ModeGenerate,
+				PresetID: "bg_replace", // ModeEdit preset
+				Prompt:   "A cat",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateCreateProjectInput(tc.input)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestModule_ChatPhotoUploadAndPresetUX(t *testing.T) {
+	st := NewMemoryStore()
+	obj := storage.NewMemoryStorage("/api/v1/images/assets")
+	samplePNG := makeTestPNGBytes(t)
+
+	imgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(samplePNG)
+	}))
+	defer imgSrv.Close()
+
+	var editCalled int
+	gw := &mockAIGateway{
+		editImageFn: func(_ context.Context, imgBytes []byte, prompt, model, size string) ([]byte, string, error) {
+			editCalled++
+			if !bytes.Equal(imgBytes, samplePNG) {
+				t.Fatalf("expected uploaded photo bytes in edit pipeline")
+			}
+			return makeTestPNGBytes(t), "edit", nil
+		},
+	}
+	svc := NewService(st, NewPipeline(gw), obj)
+	mod := New(svc, "https://app.example.com")
+	user := &store.User{ID: 88}
+
+	// 1. renderPresetDetail must use StepPresetBrowse
+	detailRes, err := mod.HandleCallback(context.Background(), user, nil, &core.IncomingCallback{Data: "img:preset:bg_replace"})
+	if err != nil || detailRes.NewStep != StepPresetBrowse {
+		t.Fatalf("expected StepPresetBrowse for renderPresetDetail, got %q err=%v", detailRes.NewStep, err)
+	}
+
+	// 2. Photo with caption -> immediate CreateAndRun in edit mode
+	res, err := mod.HandleMessage(context.Background(), user, nil, &core.IncomingMessage{
+		Text:     "Сделай фон белым",
+		ImageURL: imgSrv.URL + "/photo.png",
+	})
+	if err != nil || !res.Handled || res.NewStep != StepReady {
+		t.Fatalf("expected StepReady after photo+caption, got step=%q err=%v", res.NewStep, err)
+	}
+	if editCalled != 1 {
+		t.Fatalf("expected edit pipeline to be called once, got %d", editCalled)
+	}
+
+	// Verify projectActionButtons includes "Другой сценарий" (img:presets)
+	hasPresetsBtn := false
+	for _, row := range res.Buttons {
+		for _, btn := range row {
+			if btn.Data == "img:presets" {
+				hasPresetsBtn = true
+			}
+		}
+	}
+	if !hasPresetsBtn {
+		t.Fatalf("expected img:presets button in projectActionButtons, got %+v", res.Buttons)
+	}
+
+	// 3. Photo without caption -> StepAwaitingInput, then text -> CreateAndRun
+	res2, err := mod.HandleMessage(context.Background(), user, nil, &core.IncomingMessage{
+		ImageBytes: samplePNG,
+	})
+	if err != nil || !res2.Handled || res2.NewStep != StepAwaitingInput {
+		t.Fatalf("expected StepAwaitingInput after photo without caption, got step=%q err=%v", res2.NewStep, err)
+	}
+	awaitState := &core.State{UserID: 88, ModeID: "images", CurrentStep: StepAwaitingInput, Payload: res2.NewPayload}
+	res3, err := mod.HandleMessage(context.Background(), user, awaitState, &core.IncomingMessage{
+		Text: "Убери тень",
+	})
+	if err != nil || !res3.Handled || res3.NewStep != StepReady {
+		t.Fatalf("expected StepReady after follow-up text, got step=%q err=%v", res3.NewStep, err)
+	}
+	if editCalled != 2 {
+		t.Fatalf("expected edit pipeline to be called twice, got %d", editCalled)
+	}
 }

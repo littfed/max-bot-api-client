@@ -26,7 +26,7 @@ func TestRunMigrations_SQLite(t *testing.T) {
 		"mascot_phrases", "products", "services", "time_slots", "bookings",
 		"events", "event_registrations", "onboarding_submissions", "knowledge_documents",
 		"knowledge_chunks", "support_tickets", "support_messages", "chat_sessions",
-		"admin_audit_logs",
+		"admin_audit_logs", "image_projects", "image_revisions",
 	}
 	for _, tbl := range tables {
 		var name string
@@ -35,6 +35,11 @@ func TestRunMigrations_SQLite(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected table %q to exist in sqlite schema, got error: %v", tbl, err)
 		}
+	}
+
+	var modeTitle string
+	if err := db.QueryRow("SELECT title FROM mode_configs WHERE mode_id='images';").Scan(&modeTitle); err != nil {
+		t.Errorf("expected mode_configs row for 'images' to exist, got error: %v", err)
 	}
 
 	// Verify idempotency: running migrations again should not fail

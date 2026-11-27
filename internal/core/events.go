@@ -18,6 +18,8 @@ type IncomingMessage struct {
 	FirstName      string    `json:"first_name,omitempty"`
 	Phone          string    `json:"phone,omitempty"`
 	Text           string    `json:"text"`
+	ImageURL       string    `json:"image_url,omitempty"`
+	ImageBytes     []byte    `json:"-"`
 	Command        string    `json:"command,omitempty"`
 	Payload        string    `json:"payload,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`

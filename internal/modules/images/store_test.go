@@ -2,8 +2,13 @@ package images
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"io"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestListPresets(t *testing.T) {
@@ -225,5 +230,133 @@ func TestMemoryStore_CRUDAndRevisions(t *testing.T) {
 	}
 	if len(revsAfterDelete) != 0 {
 		t.Fatalf("expected 0 revisions after project delete, got %d", len(revsAfterDelete))
+	}
+}
+
+type stubSQLDriver struct {
+	queries *[]string
+}
+
+func (d *stubSQLDriver) Open(name string) (driver.Conn, error) {
+	return &stubSQLConn{queries: d.queries}, nil
+}
+
+type stubSQLConn struct {
+	queries *[]string
+}
+
+func (c *stubSQLConn) Prepare(query string) (driver.Stmt, error) {
+	return &stubSQLStmt{query: query, queries: c.queries}, nil
+}
+func (c *stubSQLConn) Close() error              { return nil }
+func (c *stubSQLConn) Begin() (driver.Tx, error) { return &stubSQLTx{}, nil }
+
+func (c *stubSQLConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	*c.queries = append(*c.queries, query)
+	now := time.Unix(1700000000, 0).UTC()
+	switch {
+	case strings.Contains(query, "INSERT INTO image_projects"):
+		return &stubSQLRows{
+			cols: []string{"id", "created_at", "updated_at"},
+			data: [][]driver.Value{{int64(42), now, now}},
+		}, nil
+	case strings.Contains(query, "FROM image_projects"):
+		return &stubSQLRows{
+			cols: []string{
+				"id", "user_id", "mode", "preset_id", "title",
+				"source_image_key", "source_image_url",
+				"current_image_key", "current_image_url",
+				"current_version", "image_model", "aspect_ratio", "status", "error_message",
+				"created_at", "updated_at",
+			},
+			data: [][]driver.Value{{
+				int64(42), int64(7), ModeGenerate, "social_poster", "Poster",
+				"", "",
+				"images/7/42/v1.png", "https://cdn.example.com/v1.png",
+				int64(1), "flux", "1:1", StatusReady, "",
+				now, now,
+			}},
+		}, nil
+	default:
+		return &stubSQLRows{cols: []string{}}, nil
+	}
+}
+
+type stubSQLTx struct{}
+
+func (t *stubSQLTx) Commit() error   { return nil }
+func (t *stubSQLTx) Rollback() error { return nil }
+
+type stubSQLStmt struct {
+	query   string
+	queries *[]string
+}
+
+func (s *stubSQLStmt) Close() error  { return nil }
+func (s *stubSQLStmt) NumInput() int { return -1 }
+func (s *stubSQLStmt) Exec(args []driver.Value) (driver.Result, error) {
+	*s.queries = append(*s.queries, s.query)
+	return driver.RowsAffected(1), nil
+}
+func (s *stubSQLStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return &stubSQLRows{cols: []string{}}, nil
+}
+
+type stubSQLRows struct {
+	cols []string
+	data [][]driver.Value
+	idx  int
+}
+
+func (r *stubSQLRows) Columns() []string { return r.cols }
+func (r *stubSQLRows) Close() error      { return nil }
+func (r *stubSQLRows) Next(dest []driver.Value) error {
+	if r.idx >= len(r.data) {
+		return io.EOF
+	}
+	copy(dest, r.data[r.idx])
+	r.idx++
+	return nil
+}
+
+func TestSQLStore_CreateAndGetProject(t *testing.T) {
+	var queries []string
+	driverName := "images_stub_driver"
+	sql.Register(driverName, &stubSQLDriver{queries: &queries})
+
+	dbConn, err := sql.Open(driverName, "")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer dbConn.Close()
+
+	st := NewSQLStore(dbConn)
+	ctx := context.Background()
+
+	p := &Project{
+		UserID:      7,
+		Mode:        ModeGenerate,
+		PresetID:    "social_poster",
+		Title:       "Poster",
+		ImageModel:  "flux",
+		AspectRatio: "1:1",
+		Status:      StatusProcessing,
+	}
+	if err := st.CreateProject(ctx, p); err != nil {
+		t.Fatalf("CreateProject failed: %v", err)
+	}
+	if p.ID != 42 || p.CreatedAt.IsZero() || p.UpdatedAt.IsZero() {
+		t.Fatalf("unexpected project after CreateProject: %+v", p)
+	}
+
+	got, err := st.GetProject(ctx, 42)
+	if err != nil {
+		t.Fatalf("GetProject failed: %v", err)
+	}
+	if got.ID != 42 || got.UserID != 7 || got.Status != StatusReady {
+		t.Fatalf("unexpected project from GetProject: %+v", got)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("expected 2 SQL queries executed, got %d", len(queries))
 	}
 }

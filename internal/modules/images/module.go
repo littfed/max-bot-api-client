@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/littfed/max-bot-api-client/internal/core"
 	"github.com/littfed/max-bot-api-client/internal/modules"
@@ -21,14 +24,16 @@ var (
 // FSM step constants for the Image Studio chat flow.
 const (
 	StepIdle          = "idle"
+	StepPresetBrowse  = "preset_browse"
 	StepAwaitingInput = "awaiting_input"
 	StepReady         = "ready"
 )
 
 type fsmPayload struct {
-	Mode            string `json:"mode,omitempty"`
-	PresetID        string `json:"preset_id,omitempty"`
-	ActiveProjectID int64  `json:"active_project_id,omitempty"`
+	Mode             string `json:"mode,omitempty"`
+	PresetID         string `json:"preset_id,omitempty"`
+	ActiveProjectID  int64  `json:"active_project_id,omitempty"`
+	PendingSourceKey string `json:"pending_source_key,omitempty"`
 }
 
 // Module implements modules.BotModule for the Image Studio ("Фотостудия").
@@ -80,6 +85,10 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 	payload := parseFSMPayload(state)
 	text := strings.TrimSpace(msg.Text)
 
+	if len(msg.ImageBytes) > 0 || strings.TrimSpace(msg.ImageURL) != "" {
+		return m.handlePhotoMessage(ctx, u, payload, msg.ImageBytes, msg.ImageURL, text)
+	}
+
 	switch step {
 	case StepAwaitingInput:
 		if text == "" {
@@ -96,12 +105,30 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 		if mode == "" {
 			mode = ModeGenerate
 		}
+		var srcBytes []byte
+		useExample := mode == ModeEdit
+		if payload.PendingSourceKey != "" {
+			loaded, _, err := m.service.GetAsset(ctx, payload.PendingSourceKey)
+			if err != nil {
+				return &core.ModuleResult{
+					Text:       fmt.Sprintf("❌ Не удалось загрузить ранее отправленное фото: %v\nПришлите фото ещё раз.", err),
+					Buttons:    [][]core.ResponseButton{{{Text: "🏠 В меню", Data: "img:home"}}},
+					NewStep:    StepAwaitingInput,
+					NewPayload: mustMarshalPayload(fsmPayload{Mode: ModeEdit, PresetID: payload.PresetID}),
+					Handled:    true,
+				}, nil
+			}
+			srcBytes = loaded
+			mode = ModeEdit
+			useExample = false
+		}
 		proj, err := m.service.CreateAndRun(ctx, CreateProjectInput{
 			UserID:           u.ID,
 			Mode:             mode,
 			PresetID:         payload.PresetID,
 			Prompt:           text,
-			UseExampleSource: mode == ModeEdit,
+			SourceImage:      srcBytes,
+			UseExampleSource: useExample,
 		})
 		if err != nil {
 			return &core.ModuleResult{
@@ -404,7 +431,7 @@ func (m *Module) renderPresetDetail(presetID string) *core.ModuleResult {
 			{{Text: "✨ Использовать сценарий", Data: "img:use:" + preset.ID}},
 			{{Text: "⬅️ Назад", Data: backTarget}},
 		},
-		NewStep: StepIdle,
+		NewStep: StepPresetBrowse,
 		Handled: true,
 	}
 }
@@ -477,6 +504,7 @@ func (m *Module) projectActionButtons(projectID int64, version int) [][]core.Res
 		})
 	}
 	buttons = append(buttons, []core.ResponseButton{
+		{Text: "📚 Другой сценарий", Data: "img:presets"},
 		{Text: "🗂 Мои работы", Data: "img:history"},
 		{Text: "🏠 В меню", Data: "img:home"},
 	})
@@ -498,6 +526,108 @@ func (m *Module) editModePromptButtons() [][]core.ResponseButton {
 		}, buttons...)
 	}
 	return buttons
+}
+
+func (m *Module) handlePhotoMessage(
+	ctx context.Context,
+	u *store.User,
+	payload fsmPayload,
+	imageBytes []byte,
+	imageURL string,
+	caption string,
+) (*core.ModuleResult, error) {
+	imgData := imageBytes
+	if len(imgData) == 0 {
+		downloaded, err := downloadImageWithLimit(ctx, imageURL)
+		if err != nil {
+			return &core.ModuleResult{
+				Text:       fmt.Sprintf("❌ Не удалось загрузить фото: %v", err),
+				Buttons:    [][]core.ResponseButton{{{Text: "🏠 В меню", Data: "img:home"}}},
+				NewStep:    StepAwaitingInput,
+				NewPayload: mustMarshalPayload(payload),
+				Handled:    true,
+			}, nil
+		}
+		imgData = downloaded
+	}
+
+	if _, _, err := ValidateImageBytes(imgData); err != nil {
+		return &core.ModuleResult{
+			Text:       fmt.Sprintf("❌ Неподдерживаемый формат или размер фото: %v", err),
+			Buttons:    [][]core.ResponseButton{{{Text: "🏠 В меню", Data: "img:home"}}},
+			NewStep:    StepAwaitingInput,
+			NewPayload: mustMarshalPayload(payload),
+			Handled:    true,
+		}, nil
+	}
+
+	if caption == "" {
+		key, err := m.service.SaveTempSourceImage(ctx, u.ID, imgData)
+		if err != nil {
+			return nil, err
+		}
+		nextPayload := fsmPayload{
+			Mode:             ModeEdit,
+			PresetID:         payload.PresetID,
+			PendingSourceKey: key,
+		}
+		return &core.ModuleResult{
+			Text:       "📸 Фото получено! Теперь напишите, что нужно изменить на изображении.",
+			Buttons:    [][]core.ResponseButton{{{Text: "⬅️ В меню", Data: "img:home"}}},
+			NewStep:    StepAwaitingInput,
+			NewPayload: mustMarshalPayload(nextPayload),
+			Handled:    true,
+		}, nil
+	}
+
+	proj, err := m.service.CreateAndRun(ctx, CreateProjectInput{
+		UserID:      u.ID,
+		Mode:        ModeEdit,
+		PresetID:    payload.PresetID,
+		Prompt:      caption,
+		SourceImage: imgData,
+	})
+	if err != nil {
+		return &core.ModuleResult{
+			Text:       fmt.Sprintf("❌ Не удалось обработать фото: %v\nПопробуйте изменить запрос.", err),
+			Buttons:    [][]core.ResponseButton{{{Text: "🏠 В меню", Data: "img:home"}}},
+			NewStep:    StepAwaitingInput,
+			NewPayload: mustMarshalPayload(payload),
+			Handled:    true,
+		}, nil
+	}
+
+	nextPayload := fsmPayload{
+		Mode:            proj.Mode,
+		PresetID:        proj.PresetID,
+		ActiveProjectID: proj.ID,
+	}
+	return m.renderProjectResult(proj, mustMarshalPayload(nextPayload)), nil
+}
+
+func downloadImageWithLimit(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxUploadBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxUploadBytes {
+		return nil, ErrImageTooLarge
+	}
+	return data, nil
 }
 
 func parseFSMPayload(state *core.State) fsmPayload {

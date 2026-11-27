@@ -469,6 +469,24 @@ func TestImagesAPI_QuotaExceeded(t *testing.T) {
 		t.Fatalf("expected 400 for empty prompt, got %d", badCreate.StatusCode)
 	}
 
+	badAR := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(`{"mode":"generate","prompt":"cat","aspect_ratio":"21:9"}`), "application/json")
+	badAR.Body.Close()
+	if badAR.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid aspect_ratio, got %d", badAR.StatusCode)
+	}
+
+	badModel := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(fmt.Sprintf(`{"mode":"generate","prompt":"cat","image_model":%q}`, strings.Repeat("m", 129))), "application/json")
+	badModel.Body.Close()
+	if badModel.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for too long image_model, got %d", badModel.StatusCode)
+	}
+
+	badMismatch := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects", "1", strings.NewReader(`{"mode":"generate","preset_id":"bg_replace","prompt":"cat"}`), "application/json")
+	badMismatch.Body.Close()
+	if badMismatch.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for mode/preset_id mismatch, got %d", badMismatch.StatusCode)
+	}
+
 	badRefine := doImagesReq(t, http.MethodPost, srv.URL+"/api/v1/images/projects/999999/refine", "1", strings.NewReader(`{"prompt":"test"}`), "application/json")
 	badRefine.Body.Close()
 	if badRefine.StatusCode != http.StatusNotFound {

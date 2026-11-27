@@ -173,6 +173,11 @@ func (h *imagesHandler) handleCreateProject(w http.ResponseWriter, r *http.Reque
 
 	contentType := strings.ToLower(r.Header.Get("Content-Type"))
 	if strings.HasPrefix(contentType, "multipart/form-data") {
+		defer func() {
+			if r.MultipartForm != nil {
+				_ = r.MultipartForm.RemoveAll()
+			}
+		}()
 		if err := r.ParseMultipartForm(images.MaxUploadBytes + (1 << 20)); err != nil {
 			var maxBytesErr *http.MaxBytesError
 			if errors.As(err, &maxBytesErr) {
@@ -235,7 +240,7 @@ func (h *imagesHandler) handleCreateProject(w http.ResponseWriter, r *http.Reque
 		input.UseExampleSource = req.UseExampleSource
 	}
 
-	if err := validateCreateProjectInput(input); err != nil {
+	if err := images.ValidateCreateProjectInput(input); err != nil {
 		writeImagesServiceError(w, "failed to create project", err)
 		return
 	}
@@ -249,46 +254,6 @@ func (h *imagesHandler) handleCreateProject(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusCreated, proj)
-}
-
-func validateCreateProjectInput(input images.CreateProjectInput) error {
-	var preset images.Preset
-	hasPreset := false
-	if presetID := strings.TrimSpace(input.PresetID); presetID != "" {
-		p, ok := images.GetPreset(presetID)
-		if !ok {
-			return fmt.Errorf("%w: unknown preset %q", images.ErrInvalidInput, presetID)
-		}
-		preset = p
-		hasPreset = true
-	}
-
-	mode := strings.TrimSpace(input.Mode)
-	if mode == "" && hasPreset {
-		mode = preset.Mode
-	}
-	if mode == "" {
-		mode = images.ModeGenerate
-	}
-	if mode != images.ModeGenerate && mode != images.ModeEdit {
-		return fmt.Errorf("%w: unsupported mode %q", images.ErrInvalidInput, mode)
-	}
-
-	if strings.TrimSpace(input.Prompt) == "" {
-		return fmt.Errorf("%w: prompt is required", images.ErrInvalidInput)
-	}
-
-	if mode == images.ModeEdit {
-		switch {
-		case len(input.SourceImage) > 0:
-			if _, _, err := images.ValidateImageBytes(input.SourceImage); err != nil {
-				return err
-			}
-		case !input.UseExampleSource:
-			return fmt.Errorf("%w: source image is required for edit mode", images.ErrInvalidInput)
-		}
-	}
-	return nil
 }
 
 func (h *imagesHandler) handleRefineProject(w http.ResponseWriter, r *http.Request) {
@@ -316,15 +281,20 @@ func (h *imagesHandler) handleRefineProject(w http.ResponseWriter, r *http.Reque
 		writeImagesServiceError(w, "failed to refine project", fmt.Errorf("%w: prompt is required", images.ErrInvalidInput))
 		return
 	}
-	if _, err := svc.GetProject(r.Context(), user.ID, projectID); err != nil {
+	proj, err := svc.GetProject(r.Context(), user.ID, projectID)
+	if err != nil {
 		writeImagesServiceError(w, "failed to refine project", err)
+		return
+	}
+	if proj.CurrentImageKey == "" {
+		writeError(w, http.StatusBadRequest, "project has no current image")
 		return
 	}
 	if !h.consumeQuota(w, r, user.ID) {
 		return
 	}
 
-	proj, err := svc.Refine(r.Context(), user.ID, projectID, req.Prompt, req.ImageModel)
+	proj, err = svc.Refine(r.Context(), user.ID, projectID, req.Prompt, req.ImageModel)
 	if err != nil {
 		writeImagesServiceError(w, "failed to refine project", err)
 		return

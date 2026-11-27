@@ -3,11 +3,14 @@ package images
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"io/fs"
 	"net/http"
 	"strings"
 
@@ -64,9 +67,10 @@ type CreateProjectInput struct {
 
 // Service orchestrates image studio projects, revisions, AI pipeline calls, and S3 storage.
 type Service struct {
-	store    Store
-	pipeline *Pipeline
-	storage  storage.ObjectStorage
+	store           Store
+	pipeline        *Pipeline
+	storage         storage.ObjectStorage
+	exampleAssetsFS fs.FS
 }
 
 // NewService creates a new image studio Service.
@@ -76,6 +80,86 @@ func NewService(store Store, pipeline *Pipeline, objStorage storage.ObjectStorag
 		pipeline: pipeline,
 		storage:  objStorage,
 	}
+}
+
+// SetExampleAssetsFS configures the filesystem used to load preset example source images.
+func (s *Service) SetExampleAssetsFS(fsys fs.FS) {
+	s.exampleAssetsFS = fsys
+}
+
+// SaveTempSourceImage validates and stores an uploaded chat photo for a pending edit flow.
+func (s *Service) SaveTempSourceImage(ctx context.Context, userID int64, data []byte) (string, error) {
+	if s.storage == nil {
+		return "", errors.New("images: storage is nil")
+	}
+	if userID <= 0 {
+		return "", ErrInvalidInput
+	}
+	mimeType, ext, err := ValidateImageBytes(data)
+	if err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("images/%d/pending/source_%s%s", userID, newRandomHexUUID(), ext)
+	if _, err := s.storage.PutObject(ctx, key, mimeType, data); err != nil {
+		return "", fmt.Errorf("images: save pending source image: %w", err)
+	}
+	return key, nil
+}
+
+// ValidateCreateProjectInput validates input parameters for creating a new image project.
+func ValidateCreateProjectInput(input CreateProjectInput) error {
+	var preset Preset
+	hasPreset := false
+	if presetID := strings.TrimSpace(input.PresetID); presetID != "" {
+		p, ok := GetPreset(presetID)
+		if !ok {
+			return fmt.Errorf("%w: unknown preset %q", ErrInvalidInput, presetID)
+		}
+		preset = p
+		hasPreset = true
+	}
+
+	rawMode := strings.TrimSpace(input.Mode)
+	if rawMode != "" && hasPreset && rawMode != preset.Mode {
+		return fmt.Errorf("%w: mode %q does not match preset %q mode %q", ErrInvalidInput, rawMode, preset.ID, preset.Mode)
+	}
+
+	mode := rawMode
+	if mode == "" && hasPreset {
+		mode = preset.Mode
+	}
+	if mode == "" {
+		mode = ModeGenerate
+	}
+	if mode != ModeGenerate && mode != ModeEdit {
+		return fmt.Errorf("%w: unsupported mode %q", ErrInvalidInput, mode)
+	}
+
+	if strings.TrimSpace(input.Prompt) == "" {
+		return fmt.Errorf("%w: prompt is required", ErrInvalidInput)
+	}
+
+	switch strings.TrimSpace(input.AspectRatio) {
+	case "", "1:1", "16:9", "9:16", "4:3":
+	default:
+		return fmt.Errorf("%w: unsupported aspect_ratio %q", ErrInvalidInput, input.AspectRatio)
+	}
+
+	if len(strings.TrimSpace(input.ImageModel)) > 128 {
+		return fmt.Errorf("%w: image_model exceeds 128 characters", ErrInvalidInput)
+	}
+
+	if mode == ModeEdit {
+		switch {
+		case len(input.SourceImage) > 0:
+			if _, _, err := ValidateImageBytes(input.SourceImage); err != nil {
+				return err
+			}
+		case !input.UseExampleSource:
+			return fmt.Errorf("%w: source image is required for edit mode", ErrInvalidInput)
+		}
+	}
+	return nil
 }
 
 // ListPresets returns all available studio presets.
@@ -136,6 +220,9 @@ func (s *Service) CreateAndRun(ctx context.Context, input CreateProjectInput) (*
 	if input.UserID <= 0 {
 		return nil, ErrInvalidInput
 	}
+	if err := ValidateCreateProjectInput(input); err != nil {
+		return nil, err
+	}
 
 	var preset Preset
 	hasPreset := false
@@ -191,9 +278,27 @@ func (s *Service) CreateAndRun(ctx context.Context, input CreateProjectInput) (*
 			}
 			srcBytes = input.SourceImage
 		case input.UseExampleSource:
-			srcBytes = generateExampleSourcePNG()
-			srcMIME = "image/png"
-			srcExt = ".png"
+			if s.exampleAssetsFS != nil {
+				relPath := strings.TrimPrefix(preset.ExampleBeforeURL, "/")
+				if relPath == "" {
+					return nil, fmt.Errorf("%w: preset %q has no example source", ErrInvalidInput, preset.ID)
+				}
+				data, err := fs.ReadFile(s.exampleAssetsFS, relPath)
+				if err != nil {
+					return nil, fmt.Errorf("images: load example source %q: %w", relPath, err)
+				}
+				mimeType, ext, err := ValidateImageBytes(data)
+				if err != nil {
+					return nil, err
+				}
+				srcBytes = data
+				srcMIME = mimeType
+				srcExt = ext
+			} else {
+				srcBytes = generateExampleSourcePNG()
+				srcMIME = "image/png"
+				srcExt = ".png"
+			}
 		default:
 			return nil, fmt.Errorf("%w: source image is required for edit mode", ErrInvalidInput)
 		}
@@ -215,7 +320,7 @@ func (s *Service) CreateAndRun(ctx context.Context, input CreateProjectInput) (*
 	}
 
 	if mode == ModeEdit {
-		srcKey := fmt.Sprintf("images/%d/%d/source%s", input.UserID, proj.ID, srcExt)
+		srcKey := fmt.Sprintf("images/%d/%d/source_%s%s", input.UserID, proj.ID, newRandomHexUUID(), srcExt)
 		srcURL, err := s.storage.PutObject(ctx, srcKey, srcMIME, srcBytes)
 		if err != nil {
 			s.markProjectFailed(ctx, proj, err)
@@ -252,7 +357,7 @@ func (s *Service) CreateAndRun(ctx context.Context, input CreateProjectInput) (*
 	}
 
 	resMIME, resExt := detectOutputImageFormat(resBytes)
-	resKey := fmt.Sprintf("images/%d/%d/v1%s", input.UserID, proj.ID, resExt)
+	resKey := fmt.Sprintf("images/%d/%d/v1_%s%s", input.UserID, proj.ID, newRandomHexUUID(), resExt)
 	resURL, err := s.storage.PutObject(ctx, resKey, resMIME, resBytes)
 	if err != nil {
 		s.markProjectFailed(ctx, proj, err)
@@ -326,7 +431,7 @@ func (s *Service) Refine(ctx context.Context, userID, projectID int64, prompt, m
 
 	nextVersion := nextRevisionVersion(proj)
 	resMIME, resExt := detectOutputImageFormat(resBytes)
-	resKey := fmt.Sprintf("images/%d/%d/v%d%s", userID, proj.ID, nextVersion, resExt)
+	resKey := fmt.Sprintf("images/%d/%d/v%d_%s%s", userID, proj.ID, nextVersion, newRandomHexUUID(), resExt)
 	resURL, err := s.storage.PutObject(ctx, resKey, resMIME, resBytes)
 	if err != nil {
 		s.markProjectFailed(ctx, proj, err)
@@ -523,6 +628,12 @@ func buildProjectTitle(prompt, fallback string) string {
 		return clean
 	}
 	return string(runes[:57]) + "..."
+}
+
+func newRandomHexUUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func generateExampleSourcePNG() []byte {

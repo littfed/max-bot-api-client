@@ -1841,6 +1841,11 @@ func RegisterAIScenario(b *bot.Bot, hood *HoodEngine, aiClient *ai.Client, cfg .
 		if fsmCtx := fsm.FromContext(c); fsmCtx != nil && fsmCtx.State() == "OPERATOR_PAUSED" {
 			return nil
 		}
+		if imgHandler := getGlobalOrchestratorImageHandler(); imgHandler != nil {
+			if handled, err := imgHandler(c); handled || err != nil {
+				return err
+			}
+		}
 		prompt := strings.TrimSpace(c.Text())
 		return processVisionImage(c, prompt)
 	})
