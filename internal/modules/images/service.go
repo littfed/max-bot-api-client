@@ -106,6 +106,14 @@ func (s *Service) SaveTempSourceImage(ctx context.Context, userID int64, data []
 	return key, nil
 }
 
+// DeleteTempObject removes a temporary object from storage (best-effort cleanup).
+func (s *Service) DeleteTempObject(ctx context.Context, key string) error {
+	if s.storage == nil || strings.TrimSpace(key) == "" {
+		return nil
+	}
+	return s.storage.DeleteObject(ctx, key)
+}
+
 // ValidateCreateProjectInput validates input parameters for creating a new image project.
 func ValidateCreateProjectInput(input CreateProjectInput) error {
 	var preset Preset
@@ -155,7 +163,11 @@ func ValidateCreateProjectInput(input CreateProjectInput) error {
 			if _, _, err := ValidateImageBytes(input.SourceImage); err != nil {
 				return err
 			}
-		case !input.UseExampleSource:
+		case input.UseExampleSource:
+			if strings.TrimSpace(input.PresetID) == "" {
+				return fmt.Errorf("%w: preset_id is required when use_example_source is true", ErrInvalidInput)
+			}
+		default:
 			return fmt.Errorf("%w: source image is required for edit mode", ErrInvalidInput)
 		}
 	}

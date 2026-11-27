@@ -69,7 +69,13 @@ func convertContextToDomainEvent(c *bot.Context) *core.DomainEvent {
 			chatID = c.Update.Message.Recipient.ChatID
 		}
 		text := c.Update.Message.Body.Text
-		imageURL := extractFirstImageURL(c.Update.Message.Body.Attachments)
+		imageURL, _ := c.ImageURL()
+		var imageBytes []byte
+		if _, hasImg := c.ImageAttachment(); hasImg && imageURL == "" {
+			if data, _, err := c.ImageBytes(); err == nil && len(data) <= 10*1024*1024 {
+				imageBytes = data
+			}
+		}
 		event.PlatformUserID = strconv.FormatInt(userID, 10)
 		event.Username = username
 		event.FirstName = firstName
@@ -82,6 +88,7 @@ func convertContextToDomainEvent(c *bot.Context) *core.DomainEvent {
 			FirstName:      firstName,
 			Text:           text,
 			ImageURL:       imageURL,
+			ImageBytes:     imageBytes,
 			CreatedAt:      time.Now(),
 		}
 		return event
@@ -132,25 +139,6 @@ func sendDomainResponse(c *bot.Context, resp *core.DomainResponse) error {
 	}
 	_, err := c.Reply(resp.Text)
 	return err
-}
-
-func extractFirstImageURL(attachments []maxbot.Attachment) string {
-	for _, att := range attachments {
-		if att.Type != maxbot.UploadTypeImage && att.Type != "image" && att.Type != "photo" && att.Type != "picture" {
-			continue
-		}
-		switch p := att.Payload.(type) {
-		case map[string]any:
-			if u, ok := p["url"].(string); ok && strings.TrimSpace(u) != "" {
-				return strings.TrimSpace(u)
-			}
-		case map[string]string:
-			if u := strings.TrimSpace(p["url"]); u != "" {
-				return u
-			}
-		}
-	}
-	return ""
 }
 
 var globalOrchestratorImageHandler atomic.Pointer[func(c *bot.Context) (bool, error)]

@@ -704,6 +704,15 @@ func TestValidateCreateProjectInput_ExtendedChecks(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "edit use_example_source without preset_id",
+			input: CreateProjectInput{
+				Mode:             ModeEdit,
+				UseExampleSource: true,
+				Prompt:           "White background",
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -775,12 +784,17 @@ func TestModule_ChatPhotoUploadAndPresetUX(t *testing.T) {
 		t.Fatalf("expected img:presets button in projectActionButtons, got %+v", res.Buttons)
 	}
 
-	// 3. Photo without caption -> StepAwaitingInput, then text -> CreateAndRun
+	// 3. Photo without caption -> StepAwaitingInput, then text -> CreateAndRun (and cleanup PendingSourceKey)
 	res2, err := mod.HandleMessage(context.Background(), user, nil, &core.IncomingMessage{
 		ImageBytes: samplePNG,
 	})
 	if err != nil || !res2.Handled || res2.NewStep != StepAwaitingInput {
 		t.Fatalf("expected StepAwaitingInput after photo without caption, got step=%q err=%v", res2.NewStep, err)
+	}
+	var pendingPayload fsmPayload
+	_ = json.Unmarshal(res2.NewPayload, &pendingPayload)
+	if pendingPayload.PendingSourceKey == "" {
+		t.Fatalf("expected PendingSourceKey in payload")
 	}
 	awaitState := &core.State{UserID: 88, ModeID: "images", CurrentStep: StepAwaitingInput, Payload: res2.NewPayload}
 	res3, err := mod.HandleMessage(context.Background(), user, awaitState, &core.IncomingMessage{
@@ -791,5 +805,23 @@ func TestModule_ChatPhotoUploadAndPresetUX(t *testing.T) {
 	}
 	if editCalled != 2 {
 		t.Fatalf("expected edit pipeline to be called twice, got %d", editCalled)
+	}
+	if _, _, err := obj.GetObject(context.Background(), pendingPayload.PendingSourceKey); err == nil {
+		t.Fatalf("expected PendingSourceKey %q to be deleted after CreateAndRun", pendingPayload.PendingSourceKey)
+	}
+
+	// 4. Photo uploaded while state has a generate preset ("social_poster") -> clears PresetID so edit succeeds
+	genPresetState := &core.State{
+		UserID:      88,
+		ModeID:      "images",
+		CurrentStep: StepAwaitingInput,
+		Payload:     mustMarshalPayload(fsmPayload{Mode: ModeGenerate, PresetID: "social_poster"}),
+	}
+	res4, err := mod.HandleMessage(context.Background(), user, genPresetState, &core.IncomingMessage{
+		Text:       "Сделай фон светлее",
+		ImageBytes: samplePNG,
+	})
+	if err != nil || !res4.Handled || res4.NewStep != StepReady {
+		t.Fatalf("expected StepReady when uploading photo with prior generate preset, got step=%q text=%q err=%v", res4.NewStep, res4.Text, err)
 	}
 }

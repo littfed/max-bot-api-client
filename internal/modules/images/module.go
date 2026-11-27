@@ -130,6 +130,9 @@ func (m *Module) HandleMessage(ctx context.Context, u *store.User, state *core.S
 			SourceImage:      srcBytes,
 			UseExampleSource: useExample,
 		})
+		if payload.PendingSourceKey != "" {
+			_ = m.service.DeleteTempObject(ctx, payload.PendingSourceKey)
+		}
 		if err != nil {
 			return &core.ModuleResult{
 				Text:       fmt.Sprintf("❌ Не удалось выполнить генерацию: %v\nПопробуйте изменить запрос.", err),
@@ -269,7 +272,7 @@ func (m *Module) HandleCallback(ctx context.Context, u *store.User, state *core.
 	case data == "img:mode:edit":
 		nextPayload := fsmPayload{Mode: ModeEdit}
 		return &core.ModuleResult{
-			Text:       "🪄 Опишите, как отредактировать фото (для загрузки своего фото откройте мини-приложение Фотостудии).",
+			Text:       "🪄 Отправьте фото прямо в чат (можно сразу с подписью) или загрузите его в мини-приложении Фотостудии.",
 			Buttons:    m.editModePromptButtons(),
 			NewStep:    StepAwaitingInput,
 			NewPayload: mustMarshalPayload(nextPayload),
@@ -536,6 +539,11 @@ func (m *Module) handlePhotoMessage(
 	imageURL string,
 	caption string,
 ) (*core.ModuleResult, error) {
+	if payload.PresetID != "" {
+		if p, ok := GetPreset(payload.PresetID); !ok || p.Mode != ModeEdit {
+			payload.PresetID = ""
+		}
+	}
 	imgData := imageBytes
 	if len(imgData) == 0 {
 		downloaded, err := downloadImageWithLimit(ctx, imageURL)

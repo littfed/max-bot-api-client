@@ -119,6 +119,50 @@ func TestConvertContextToDomainEvent(t *testing.T) {
 	if imgEvt.Message.ImageURL != "https://cdn.example.com/photo.jpg" {
 		t.Errorf("expected ImageURL https://cdn.example.com/photo.jpg, got %q", imgEvt.Message.ImageURL)
 	}
+
+	// File attachment with .png extension -> c.ImageURL() detects it
+	fileImgUpdate := &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			MessageID: "msg_file_img",
+			Sender:    &maxbot.User{UserID: 12345},
+			Recipient: &maxbot.MessageRecipient{ChatID: 67890},
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type:    "file",
+						Payload: map[string]any{"filename": "photo.png", "url": "https://cdn.example.com/uncompressed.png"},
+					},
+				},
+			},
+		},
+	}
+	fileImgEvt := convertContextToDomainEvent(bot.NewContext(context.Background(), nil, fileImgUpdate))
+	if fileImgEvt == nil || fileImgEvt.Message == nil || fileImgEvt.Message.ImageURL != "https://cdn.example.com/uncompressed.png" {
+		t.Fatalf("expected file image attachment URL to be extracted, got %+v", fileImgEvt)
+	}
+
+	// Base64 image attachment without URL -> ImageBytes populated
+	b64Update := &maxbot.Update{
+		UpdateType: maxbot.UpdateTypeMessageCreated,
+		Message: &maxbot.Message{
+			MessageID: "msg_b64_img",
+			Sender:    &maxbot.User{UserID: 12345},
+			Recipient: &maxbot.MessageRecipient{ChatID: 67890},
+			Body: maxbot.MessageBody{
+				Attachments: []maxbot.Attachment{
+					{
+						Type:    "image",
+						Payload: map[string]any{"b64_json": "iVBORw0KGgo="},
+					},
+				},
+			},
+		},
+	}
+	b64Evt := convertContextToDomainEvent(bot.NewContext(context.Background(), nil, b64Update))
+	if b64Evt == nil || b64Evt.Message == nil || len(b64Evt.Message.ImageBytes) == 0 {
+		t.Fatalf("expected ImageBytes to be populated for base64 image attachment, got %+v", b64Evt)
+	}
 }
 
 func TestWireBotToOrchestrator(t *testing.T) {
